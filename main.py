@@ -5,27 +5,23 @@ import requests
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-# Gemini è opzionale.
-try:
-    from google import genai
-except ImportError:
-    genai = None
-
 
 # ---------------------------------------------------------------------
 # CONFIGURAZIONE
 # ---------------------------------------------------------------------
 
-GEMINI_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 TG_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 TG_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
 
-# Range di una griglia già attiva su Pionex, se configurato.
+# Range di una griglia già attiva su Pionex, facoltativo.
 ACTIVE_LOWER = os.getenv("ACTIVE_LOWER", "").strip()
 ACTIVE_UPPER = os.getenv("ACTIVE_UPPER", "").strip()
 
-# Alias per abbinare i codici del feed e quelli configurabili.
-# Il feed pubblico usa normalmente codici come USD, EUR, GBP.
+# Feed pubblico del calendario economico: non richiede API key.
+CALENDAR_URL = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
+
+# Paesi da includere nel calendario. Default: USD.
+# Puoi impostare, ad esempio, NEWS_COUNTRIES=USD,EUR
 COUNTRY_ALIASES = {
     "us": "usd",
     "usa": "usd",
@@ -57,17 +53,11 @@ def normalize_country(value):
     return COUNTRY_ALIASES.get(value, value)
 
 
-# Il feed Forex Factory/Fair Economy usa normalmente USD.
-# Puoi cambiare il valore, per esempio: NEWS_COUNTRIES=USD,EUR
 NEWS_COUNTRIES = {
     normalize_country(country)
     for country in os.getenv("NEWS_COUNTRIES", "USD").split(",")
     if country.strip()
 } or {"usd"}
-
-NEWS_COUNTRIES_LABEL = ", ".join(
-    country.upper() for country in sorted(NEWS_COUNTRIES)
-)
 
 LOCAL_TZ_NAME = os.getenv("LOCAL_TZ", "Europe/Rome").strip()
 
@@ -78,13 +68,12 @@ except Exception:
     LOCAL_TZ = timezone.utc
     LOCAL_TZ_NAME = "UTC"
 
-# Filtro news.
+# Filtro calendario.
 NEWS_BLOCK_BEFORE_MIN = int(os.getenv("NEWS_BLOCK_BEFORE_MIN", "120"))
 NEWS_COOLDOWN_MIN = int(os.getenv("NEWS_COOLDOWN_MIN", "45"))
 NEWS_LOOKBACK_HOURS = int(os.getenv("NEWS_LOOKBACK_HOURS", "4"))
 
-# Soglie iniziali per valutare se la reazione di SOL si è calmata.
-# Non sono soglie universali: vanno verificate e calibrate.
+# Soglie per valutare se la reazione di SOL dopo una news si è calmata.
 NEWS_MAX_15M_RANGE_PCT = float(
     os.getenv("NEWS_MAX_15M_RANGE_PCT", "1.0")
 )
@@ -98,19 +87,13 @@ MIN_ORDER_USDT = 5.0
 TARGET_STEP_PCT = 0.30
 MIN_STEP_PCT = 0.25
 
-# Feed pubblico del calendario economico settimanale.
-CALENDAR_URL = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
-
 
 # ---------------------------------------------------------------------
 # DATI DI MERCATO
 # ---------------------------------------------------------------------
 
 def get_candles(interval=60):
-    """
-    Scarica candele SOL/USD da Kraken.
-    Scarta l'ultima candela, che potrebbe essere ancora aperta.
-    """
+    """Scarica candele SOL/USD da Kraken e scarta l'ultima candela."""
     response = requests.get(
         "https://api.kraken.com/0/public/OHLC",
         params={"pair": "SOLUSD", "interval": interval},
@@ -132,7 +115,7 @@ def get_candles(interval=60):
     rows = result[key][:-1]
 
     if not rows:
-        raise RuntimeError("Kraken ha restituito una lista di candele vuota.")
+        raise RuntimeError("Kraken ha restituito candele vuote.")
 
     return {
         "time": [int(float(row[0])) for row in rows],
@@ -208,18 +191,18 @@ def atr_adx(high, low, close, n=14):
     if len(close) <= n:
         raise ValueError("Dati insufficienti per ATR/ADX.")
 
-    tr = []
-    pdm = []
-    mdm = []
+    true_ranges = []
+    positive_dm = []
+    negative_dm = []
 
     for i in range(1, len(close)):
         up = high[i] - high[i - 1]
         down = low[i - 1] - low[i]
 
-        pdm.append(up if up > down and up > 0 else 0)
-        mdm.append(down if down > up and down > 0 else 0)
+        positive_dm.append(up if up > down and up > 0 else 0)
+        negative_dm.append(down if down > up and down > 0 else 0)
 
-        tr.append(
+        true_ranges.append(
             max(
                 high[i] - low[i],
                 abs(high[i] - close[i - 1]),
@@ -227,39 +210,41 @@ def atr_adx(high, low, close, n=14):
             )
         )
 
-    s_tr = sum(tr[:n])
-    s_p = sum(pdm[:n])
-    s_m = sum(mdm[:n])
-    dxs = []
+    smoothed_tr = sum(true_ranges[:n])
+    smoothed_p = sum(positive_dm[:n])
+    smoothed_m = sum(negative_dm[:n])
+    dx_values = []
 
-    for i in range(n, len(tr) + 1):
+    for i in range(n, len(true_ranges) + 1):
         if i > n:
-            s_tr = s_tr - s_tr / n + tr[i - 1]
-            s_p = s_p - s_p / n + pdm[i - 1]
-            s_m = s_m - s_m / n + mdm[i - 1]
+            smoothed_tr = smoothed_tr - smoothed_tr / n + true_ranges[i - 1]
+            smoothed_p = smoothed_p - smoothed_p / n + positive_dm[i - 1]
+            smoothed_m = smoothed_m - smoothed_m / n + negative_dm[i - 1]
 
-        if s_tr <= 0:
-            dxs.append(0.0)
+        if smoothed_tr <= 0:
+            dx_values.append(0.0)
             continue
 
-        pdi = 100 * s_p / s_tr
-        mdi = 100 * s_m / s_tr
+        pdi = 100 * smoothed_p / smoothed_tr
+        mdi = 100 * smoothed_m / smoothed_tr
 
         if pdi + mdi == 0:
-            dxs.append(0.0)
+            dx_values.append(0.0)
         else:
-            dxs.append(100 * abs(pdi - mdi) / (pdi + mdi))
+            dx_values.append(
+                100 * abs(pdi - mdi) / (pdi + mdi)
+            )
 
-    if not dxs:
+    if not dx_values:
         return 0.0, 0.0
 
-    seed = dxs[:n]
+    seed = dx_values[:n]
     adx_value = sum(seed) / len(seed)
 
-    for dx in dxs[n:]:
+    for dx in dx_values[n:]:
         adx_value = (adx_value * (n - 1) + dx) / n
 
-    return s_tr / n, adx_value
+    return smoothed_tr / n, adx_value
 
 
 def percentile(values, p):
@@ -275,7 +260,7 @@ def percentile(values, p):
 
 
 # ---------------------------------------------------------------------
-# ANALISI TECNICA
+# ANALISI E PUNTEGGIO TECNICO 1-10
 # ---------------------------------------------------------------------
 
 def analyze():
@@ -304,20 +289,25 @@ def analyze():
     chg24 = (price / close[-25] - 1) * 100
     chg7d = (price / close[-169] - 1) * 100
 
-    h24, l24 = max(high[-24:]), min(low[-24:])
-    h7, l7 = max(high[-168:]), min(low[-168:])
+    h24 = max(high[-24:])
+    l24 = min(low[-24:])
+    h7 = max(high[-168:])
+    l7 = min(low[-168:])
 
-    # Escursione giornaliera media degli ultimi 7 giorni.
-    daily = []
+    # Escursione media giornaliera degli ultimi 7 giorni.
+    daily_ranges = []
 
     for day in range(7):
-        seg_high = high[-(day + 1) * 24: len(high) - day * 24]
-        seg_low = low[-(day + 1) * 24: len(low) - day * 24]
-        daily.append((max(seg_high) - min(seg_low)) / price * 100)
+        segment_high = high[-(day + 1) * 24: len(high) - day * 24]
+        segment_low = low[-(day + 1) * 24: len(low) - day * 24]
 
-    avg_daily = sum(daily) / len(daily)
+        daily_ranges.append(
+            (max(segment_high) - min(segment_low)) / price * 100
+        )
 
-    # Range proposto: percentili degli ultimi 7 giorni, con limiti di larghezza.
+    avg_daily = sum(daily_ranges) / len(daily_ranges)
+
+    # Range suggerito in base ai percentili degli ultimi 7 giorni.
     lower = percentile(low[-168:], 0.10)
     upper = percentile(high[-168:], 0.90)
 
@@ -327,107 +317,69 @@ def analyze():
     width_pct = (upper - lower) / price * 100
     invest_usdt = INVEST_EUR * get_eurusd()
 
-    max_by_money = max(1, int(invest_usdt // MIN_ORDER_USDT))
-    target_grids = max(5, min(50, round(width_pct / TARGET_STEP_PCT)))
-    grids = min(target_grids, max_by_money)
+    max_grids_by_money = max(
+        1,
+        int(invest_usdt // MIN_ORDER_USDT),
+    )
 
+    target_grids = max(
+        5,
+        min(50, round(width_pct / TARGET_STEP_PCT)),
+    )
+
+    grids = min(target_grids, max_grids_by_money)
     step_pct = width_pct / grids
     stop_loss = lower * 0.975
-    pos = (price - lower) / (upper - lower) * 100
+    position_in_range = (price - lower) / (upper - lower) * 100
 
-    # Punteggio tecnico.
-    score = 0
-    why = []
+    # Cinque indicatori, ognuno con un massimo di 2 punti.
+    technical_score = 0
+    ema_gap_pct = abs(ema20 - ema50) / price * 100
 
+    # ADX: preferenza per un mercato senza trend forte.
     if adx < 20:
-        score += 2
-        why.append(
-            f"✅ ADX {adx:.0f}: mercato laterale, ideale per la griglia"
-        )
+        technical_score += 2
     elif adx < 25:
-        score += 1
-        why.append(f"🟡 ADX {adx:.0f}: trend debole, accettabile")
-    elif adx < 30:
-        score -= 1
-        why.append(
-            f"⚠️ ADX {adx:.0f}: trend in formazione, "
-            "rischio uscita dal range"
-        )
-    else:
-        score -= 3
-        why.append(f"❌ ADX {adx:.0f}: trend forte, la griglia soffre")
+        technical_score += 1
 
-    gap = abs(ema20 - ema50) / price * 100
-    direction = "rialzista" if ema20 > ema50 else "ribassista"
+    # EMA: preferenza per EMA20 ed EMA50 vicine.
+    if ema_gap_pct < 1:
+        technical_score += 2
+    elif ema_gap_pct < 3:
+        technical_score += 1
 
-    if gap < 1:
-        score += 1
-        why.append(
-            f"✅ EMA20 ed EMA50 vicine ({gap:.1f}%): nessun trend netto"
-        )
-    elif gap > 3:
-        score -= 2
-        why.append(
-            f"❌ Trend {direction} marcato "
-            f"(EMA20/50 distanti {gap:.1f}%)"
-        )
-    else:
-        why.append(
-            f"🟡 Leggera tendenza {direction} "
-            f"(EMA20/50 distanti {gap:.1f}%)"
-        )
-
+    # RSI: preferenza per una condizione neutra.
     if 40 <= rsi14 <= 60:
-        score += 1
-        why.append(f"✅ RSI {rsi14:.0f}: neutro")
-    elif rsi14 > 70 or rsi14 < 30:
-        score -= 2
-        state = "ipercomprato" if rsi14 > 70 else "ipervenduto"
-        why.append(
-            f"❌ RSI {rsi14:.0f}: {state}, possibile movimento brusco"
-        )
-    else:
-        why.append(f"🟡 RSI {rsi14:.0f}: lievemente sbilanciato")
+        technical_score += 2
+    elif 30 <= rsi14 <= 70:
+        technical_score += 1
 
-    if 25 <= pos <= 75:
-        score += 1
-        why.append(f"✅ Prezzo in zona centrale del range ({pos:.0f}%)")
-    else:
-        score -= 1
-        why.append(f"⚠️ Prezzo vicino a un estremo del range ({pos:.0f}%)")
+    # Posizione del prezzo nel range suggerito.
+    if 35 <= position_in_range <= 65:
+        technical_score += 2
+    elif 25 <= position_in_range <= 75:
+        technical_score += 1
 
-    if avg_daily >= 3:
-        score += 1
-        why.append(
-            f"✅ Escursione media giornaliera {avg_daily:.1f}%: "
-            "abbastanza movimento"
-        )
-    elif avg_daily < 1.5:
-        score -= 1
-        why.append(
-            f"⚠️ Escursione media giornaliera {avg_daily:.1f}%: "
-            "poco movimento, profitti bassi"
-        )
-    else:
-        why.append(f"🟡 Escursione media giornaliera {avg_daily:.1f}%")
+    # Movimento sufficiente, ma non eccessivo.
+    if 3 <= avg_daily <= 8:
+        technical_score += 2
+    elif 1.5 <= avg_daily < 3:
+        technical_score += 1
 
+    # Penalità per mercato molto nervoso o griglia troppo stretta.
     if abs(chg24) > 8:
-        score -= 2
-        why.append(
-            f"❌ Variazione 24h {chg24:+.1f}%: mercato troppo nervoso"
-        )
+        technical_score -= 2
 
     if step_pct < MIN_STEP_PCT:
-        score -= 1
-        why.append(
-            f"⚠️ Passo griglia {step_pct:.2f}%: troppo stretto con "
-            f"{INVEST_EUR}€, le fee lo erodono"
-        )
+        technical_score -= 1
+
+    technical_score = max(1, min(10, technical_score))
 
     return {
         "price": price,
         "ema20": ema20,
         "ema50": ema50,
+        "ema_gap_pct": ema_gap_pct,
         "rsi": rsi14,
         "adx": adx,
         "atr_pct": atr_pct,
@@ -443,11 +395,9 @@ def analyze():
         "grids": grids,
         "step_pct": step_pct,
         "stop": stop_loss,
-        "pos": pos,
-        "score": score,
-        "why": why,
+        "pos": position_in_range,
+        "score": technical_score,
         "invest_usdt": invest_usdt,
-        "width_pct": width_pct,
         "per_grid": invest_usdt / grids,
         "candle_times": candles["time"],
     }
@@ -458,18 +408,17 @@ def analyze():
 # ---------------------------------------------------------------------
 
 def parse_calendar_time(value):
-    """Converte l'orario ISO del feed in UTC."""
+    """Converte l'orario del feed in UTC."""
     raw = str(value or "").strip()
 
     if not raw:
-        raise ValueError("Orario evento mancante")
+        raise ValueError("Orario evento mancante.")
 
     if raw.endswith("Z"):
         raw = raw[:-1] + "+00:00"
 
     event_time = datetime.fromisoformat(raw)
 
-    # Se il feed non specifica un fuso, assumiamo UTC.
     if event_time.tzinfo is None:
         event_time = event_time.replace(tzinfo=timezone.utc)
 
@@ -477,10 +426,7 @@ def parse_calendar_time(value):
 
 
 def fetch_macro_events(now):
-    """
-    Scarica gli eventi economici della settimana corrente.
-    Il feed pubblico non richiede una chiave API.
-    """
+    """Scarica il calendario settimanale pubblico, senza API key."""
     headers = {
         "Accept": "application/json",
         "User-Agent": "Mozilla/5.0 (compatible; GridBot/1.0)",
@@ -493,13 +439,10 @@ def fetch_macro_events(now):
             timeout=20,
         )
     except requests.Timeout:
-        raise RuntimeError(
-            "Timeout durante la richiesta al calendario pubblico."
-        ) from None
+        raise RuntimeError("Timeout del feed calendario.") from None
     except requests.RequestException as exc:
         raise RuntimeError(
-            f"Errore di rete verso il calendario "
-            f"({type(exc).__name__})."
+            f"Errore di rete calendario ({type(exc).__name__})."
         ) from None
 
     if response.status_code != 200:
@@ -510,14 +453,10 @@ def fetch_macro_events(now):
     try:
         payload = response.json()
     except ValueError:
-        raise RuntimeError(
-            "Il feed calendario non ha restituito JSON valido."
-        ) from None
+        raise RuntimeError("Il feed calendario non ha restituito JSON valido.") from None
 
     if not isinstance(payload, list):
-        raise RuntimeError(
-            "Il formato del feed calendario non è quello atteso."
-        )
+        raise RuntimeError("Formato del feed calendario non riconosciuto.")
 
     today_local = now.astimezone(LOCAL_TZ).date()
     events = []
@@ -531,12 +470,11 @@ def fetch_macro_events(now):
         if normalize_country(country) not in NEWS_COUNTRIES:
             continue
 
-        date_value = item.get("date")
-        if not date_value:
+        if not item.get("date"):
             continue
 
         try:
-            event_time = parse_calendar_time(date_value)
+            event_time = parse_calendar_time(item["date"])
         except (TypeError, ValueError):
             continue
 
@@ -550,8 +488,6 @@ def fetch_macro_events(now):
             <= NEWS_BLOCK_BEFORE_MIN
         )
 
-        # Conserva gli eventi di oggi e quelli recenti o imminenti
-        # necessari al filtro di entrata.
         if not is_today and not relevant_for_filter:
             continue
 
@@ -575,16 +511,13 @@ def fetch_macro_events(now):
         )
 
     events.sort(key=lambda event: event["dt"])
-    print(f"✅ Feed calendario caricato: {len(events)} eventi pertinenti.")
+    print(f"Calendario caricato: {len(events)} eventi pertinenti.")
 
     return events
 
 
 def get_post_news_reaction(event):
-    """
-    Misura la reazione di SOL dopo l'evento usando candele da 5 minuti.
-    Non interpreta il testo della notizia.
-    """
+    """Valuta la reazione recente di SOL dopo una news."""
     candles = get_candles(interval=5)
     times = candles["time"]
     closes = candles["close"]
@@ -595,7 +528,6 @@ def get_post_news_reaction(event):
     interval_seconds = 5 * 60
     release_ts = event["dt"].timestamp()
 
-    # Prima candela da 5 minuti che inizia all'orario della notizia o dopo.
     first_post_ts = (
         math.ceil(release_ts / interval_seconds) * interval_seconds
     )
@@ -615,7 +547,7 @@ def get_post_news_reaction(event):
 
     last_four = post_indices[-4:]
 
-    # Se ci sono buchi nei dati, la misurazione non è affidabile.
+    # Non usare dati con intervalli mancanti.
     if any(
         times[b] - times[a] != interval_seconds
         for a, b in zip(last_four, last_four[1:])
@@ -625,7 +557,6 @@ def get_post_news_reaction(event):
     latest_bar_close_time = times[-1] + interval_seconds
     now_ts = datetime.now(timezone.utc).timestamp()
 
-    # Non usare candele troppo vecchie come conferma.
     if now_ts - latest_bar_close_time > 15 * 60:
         return None
 
@@ -636,11 +567,11 @@ def get_post_news_reaction(event):
         return None
 
     reaction_pct = (current_price / pre_price - 1) * 100
+
     move_15m_pct = (
         closes[last_four[-1]] / closes[last_four[0]] - 1
     ) * 100
 
-    # Le ultime tre candele coprono 15 minuti.
     last_three = last_four[-3:]
     high_15m = max(candles["high"][i] for i in last_three)
     low_15m = min(candles["low"][i] for i in last_three)
@@ -674,14 +605,12 @@ def get_news_context(hourly_times):
         events = fetch_macro_events(now)
     except Exception as exc:
         if isinstance(exc, RuntimeError):
-            error = str(exc)
+            print(f"Calendario non disponibile: {exc}")
         else:
-            error = (
-                "Errore durante la lettura del calendario "
+            print(
+                "Calendario non disponibile "
                 f"({type(exc).__name__})."
             )
-
-        print(f"⚠️ Calendario pubblico non disponibile: {error}")
 
         return {
             "ok": False,
@@ -690,7 +619,6 @@ def get_news_context(hourly_times):
             "event": None,
             "reaction": None,
             "now": now,
-            "error": error,
         }
 
     result = {
@@ -700,7 +628,6 @@ def get_news_context(hourly_times):
         "event": None,
         "reaction": None,
         "now": now,
-        "error": None,
     }
 
     high_impact = [
@@ -708,7 +635,7 @@ def get_news_context(hourly_times):
         if event["impact"] == "high"
     ]
 
-    # Non aprire una nuova griglia nei minuti prima di una news importante.
+    # Blocca nuove aperture prima di una news importante.
     upcoming = [
         event for event in high_impact
         if timedelta(0) <= event["dt"] - now
@@ -722,7 +649,7 @@ def get_news_context(hourly_times):
         )
         return result
 
-    # Attendi il cooldown subito dopo l'uscita della notizia.
+    # Attendi il cooldown dopo l'uscita della news.
     recent = [
         event for event in high_impact
         if timedelta(0) <= now - event["dt"]
@@ -736,7 +663,7 @@ def get_news_context(hourly_times):
         )
         return result
 
-    # Dopo il cooldown, aspetta una candela oraria completa successiva alla news.
+    # Dopo il cooldown, attendi una candela oraria completa successiva.
     post_events = [
         event for event in high_impact
         if timedelta(minutes=NEWS_COOLDOWN_MIN)
@@ -767,7 +694,7 @@ def get_news_context(hourly_times):
             reaction = get_post_news_reaction(event)
         except Exception as exc:
             print(
-                "⚠️ Reazione post-news non disponibile "
+                "Reazione post-news non disponibile "
                 f"({type(exc).__name__})."
             )
             reaction = None
@@ -789,15 +716,15 @@ def get_news_context(hourly_times):
 
 
 # ---------------------------------------------------------------------
-# DECISIONE
+# DECISIONE E MESSAGGIO
 # ---------------------------------------------------------------------
 
-def decide(analysis, news):
-    """Verdetto e istruzioni. Il filtro news riguarda le nuove aperture."""
+def evaluate_signal(analysis, news):
+    """
+    Restituisce punteggio, decisione e indicazione se mostrare i parametri.
+    """
 
-    active_outside = None
-
-    # Se esiste una griglia attiva, controlla prima il suo range.
+    # Se è già impostato un bot, non suggerire di aprirne un altro.
     if ACTIVE_LOWER and ACTIVE_UPPER:
         try:
             active_lower = float(ACTIVE_LOWER)
@@ -805,52 +732,45 @@ def decide(analysis, news):
             price = analysis["price"]
 
             if active_lower >= active_upper:
-                raise ValueError("Range attivo non valido")
+                raise ValueError("Range attivo non valido.")
 
             if price < active_lower or price > active_upper:
-                active_outside = (
-                    f"Il prezzo ({price:.2f}) è fuori dal range attivo "
-                    f"({active_lower:.2f}–{active_upper:.2f})."
-                )
-            else:
-                edge = min(
-                    price - active_lower,
-                    active_upper - price,
-                ) / price * 100
-
-                if edge < 1.5:
-                    return (
-                        "🟠 VALUTA DI RICENTRARE",
-                        f"Prezzo a {edge:.1f}% da un estremo del tuo range "
-                        f"({active_lower:.2f}–{active_upper:.2f}). "
-                        "Controlla il bot su Pionex. Per una nuova apertura, "
-                        "rispetta anche il filtro news.",
-                    )
-
                 return (
-                    "🟢 NON TOCCARE NULLA",
-                    f"Il prezzo è dentro il tuo range attivo "
-                    f"({active_lower:.2f}–{active_upper:.2f}) e lontano "
-                    "dai bordi. Questo script non modifica il bot su Pionex.",
+                    2,
+                    "🔴 BOT ATTIVO FUORI RANGE — controlla Pionex",
+                    False,
                 )
+
+            edge_pct = min(
+                price - active_lower,
+                active_upper - price,
+            ) / price * 100
+
+            if edge_pct < 1.5:
+                return (
+                    2,
+                    f"🟠 MONITORA — bot attivo a {edge_pct:.1f}% dal bordo",
+                    False,
+                )
+
+            return (
+                1,
+                "✅ NON FARE NULLA — bot attivo nel range",
+                False,
+            )
 
         except (ValueError, TypeError):
-            active_outside = None
+            print("Range attivo non valido; valuto il punteggio di ingresso.")
 
-    def add_active_context(text):
-        if active_outside:
-            return active_outside + "\n\n" + text
-        return text
-
+    score = analysis["score"]
     state = news.get("state") if news else "unknown"
 
+    # Se il calendario non è verificabile, non dare il via libera.
     if state == "unknown":
         return (
-            "🟠 CALENDARIO NEWS NON VERIFICATO",
-            add_active_context(
-                "Non avviare una nuova griglia: il calendario pubblico "
-                "non è stato verificato. Controlla la connessione al feed."
-            ),
+            1,
+            "🔴 NON APRIRE — calendario news non verificato",
+            False,
         )
 
     if state == "before":
@@ -863,299 +783,85 @@ def decide(analysis, news):
         )
 
         return (
-            "⏸️ ATTESA NEWS",
-            add_active_context(
-                f"Evento ad alto impatto: {event['name']} alle "
-                f"{event['local_dt'].strftime('%d/%m %H:%M')} "
-                f"({LOCAL_TZ_NAME}), tra circa {minutes} minuti. "
-                "Non avviare una nuova griglia prima dell'evento."
-            ),
+            min(score, 3),
+            f"🔴 NON APRIRE — {event['name']} alle "
+            f"{event['local_dt'].strftime('%H:%M')} "
+            f"(tra {minutes} min)",
+            False,
         )
 
     if state == "cooldown":
         event = news["event"]
         elapsed = (news["now"] - event["dt"]).total_seconds() / 60
-        remaining = max(0, math.ceil(NEWS_COOLDOWN_MIN - elapsed))
+        remaining = max(
+            0,
+            math.ceil(NEWS_COOLDOWN_MIN - elapsed),
+        )
 
         return (
-            "⏸️ ATTESA REAZIONE POST-NEWS",
-            add_active_context(
-                f"È appena uscito {event['name']}. Attendi ancora circa "
-                f"{remaining} minuti prima di valutare una nuova griglia."
-            ),
+            min(score, 2),
+            f"⏸️ ATTENDI — news appena uscita; rivaluta tra {remaining} min",
+            False,
         )
 
     if state == "wait_hour":
         return (
-            "⏸️ ATTESA CHIUSURA ORARIA",
-            add_active_context(
-                "È passato il cooldown, ma manca ancora una candela oraria "
-                "completa successiva alla news. Rivaluta alla prossima "
-                "esecuzione."
-            ),
+            min(score, 2),
+            "⏸️ ATTENDI — manca la candela oraria post-news",
+            False,
         )
 
     if state == "unstable":
-        reaction = news["reaction"]
-
         return (
-            "🟠 ATTESA: MERCATO ANCORA VOLATILE",
-            add_active_context(
-                f"Reazione SOL dal prezzo pre-news: "
-                f"{reaction['reaction_pct']:+.2f}%. Ultimi 15 minuti: "
-                f"movimento {reaction['move_15m_pct']:+.2f}%, range "
-                f"{reaction['range_15m_pct']:.2f}%. Aspetta che il "
-                "movimento si calmi."
-            ),
+            min(score, 3),
+            "🔴 NON APRIRE — SOL ancora volatile dopo la news",
+            False,
         )
 
     if state == "reaction_unknown":
         return (
-            "🟠 REAZIONE NEWS NON VERIFICATA",
-            add_active_context(
-                "Non è stato possibile leggere le candele SOL/USD successive "
-                "alla news. Per prudenza non avviare una nuova griglia."
-            ),
+            min(score, 2),
+            "🔴 NON APRIRE — reazione post-news non verificata",
+            False,
         )
 
     if state not in ("clear", "post_clear"):
         return (
-            "🟠 ATTESA NEWS",
-            add_active_context(
-                "Stato del calendario non verificato: non avviare una "
-                "nuova griglia."
-            ),
+            1,
+            "🔴 NON APRIRE — stato news non verificato",
+            False,
         )
 
-    score = analysis["score"]
+    if score == 10:
+        return score, "🟢 APRI ORA SU PIONEX", True
 
-    if active_outside:
-        if score >= 4:
-            verdict = "🔴 FUORI RANGE — VALUTA IL RIAVVIO"
-            instructions = (
-                f"{active_outside}\n"
-                "Il punteggio tecnico della nuova analisi è favorevole, "
-                "ma questo script non chiude né ricrea bot su Pionex. "
-                "Verifica manualmente ordini e posizione."
-            )
-        elif score >= 1:
-            verdict = "🟠 FUORI RANGE — ASPETTA"
-            instructions = (
-                f"{active_outside}\n"
-                "Le condizioni tecniche sono miste: rivaluta al prossimo "
-                "report prima di creare una nuova griglia."
-            )
-        else:
-            verdict = "🔴 FUORI RANGE — NON RIAVVIARE"
-            instructions = (
-                f"{active_outside}\n"
-                "Le condizioni sono sfavorevoli per una nuova griglia. "
-                "Controlla manualmente il bot su Pionex."
-            )
+    if score >= 7:
+        return score, "🟡 VALUTA APERTURA", True
 
-    elif score >= 4:
-        verdict = "🟢 AVVIA IL GRID BOT"
-        instructions = (
-            "Condizioni favorevoli. Puoi valutare la creazione del bot "
-            "su Pionex con i parametri riportati."
-        )
-    elif score >= 1:
-        verdict = "🟡 ASPETTA"
-        instructions = (
-            "Condizioni miste: aspetta il prossimo report. Se decidi di "
-            "entrare comunque, valuta meno capitale e uno stop loss."
-        )
-    else:
-        verdict = "🔴 NON AVVIARE"
-        instructions = (
-            "Condizioni sfavorevoli per una griglia. Rivaluta al prossimo "
-            "report."
-        )
+    if score >= 4:
+        return score, "⏸️ ATTENDI", False
 
-    if state == "post_clear":
-        reaction = news["reaction"]
-        instructions += (
-            f"\nConferma post-news: reazione SOL "
-            f"{reaction['direction']} "
-            f"({reaction['reaction_pct']:+.2f}% dal prezzo pre-evento); "
-            "ultimi 15 minuti classificati come stabili."
-        )
-
-    return verdict, instructions
-
-
-# ---------------------------------------------------------------------
-# COMMENTO GEMINI
-# ---------------------------------------------------------------------
-
-def ai_comment(analysis, verdict):
-    if not GEMINI_KEY or genai is None:
-        return "n/d"
-
-    try:
-        client = genai.Client(api_key=GEMINI_KEY)
-
-        prompt = (
-            "Sei un analista di trading prudente. Dati SOL/USD: "
-            f"prezzo {analysis['price']:.2f}, "
-            f"var 24h {analysis['chg24']:+.1f}%, "
-            f"var 7g {analysis['chg7d']:+.1f}%, "
-            f"ADX {analysis['adx']:.0f}, RSI {analysis['rsi']:.0f}, "
-            f"EMA20 {analysis['ema20']:.2f}, "
-            f"EMA50 {analysis['ema50']:.2f}, min/max 7g "
-            f"{analysis['l7']:.2f}/{analysis['h7']:.2f}. "
-            f"Verdetto del sistema: {verdict}. "
-            "In 3 frasi in italiano spiega il contesto di mercato e il "
-            "principale rischio per un grid bot. Non inventare numeri e non "
-            "contraddire il verdetto. Niente markdown."
-        )
-
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=prompt,
-        )
-
-        text = getattr(response, "text", None)
-        return text.strip() if text else "n/d"
-
-    except Exception as exc:
-        print(f"⚠️ Gemini non disponibile ({type(exc).__name__}).")
-        return "n/d"
-
-
-# ---------------------------------------------------------------------
-# REPORT
-# ---------------------------------------------------------------------
-
-def calendar_report_lines(news):
-    if not news or not news.get("ok"):
-        error = (
-            news.get("error", "errore non specificato")
-            if news
-            else "calendario non disponibile"
-        )
-
-        return [
-            "• Fonte: feed pubblico Forex Factory / Fair Economy.",
-            f"• Calendario non disponibile: {error}",
-            "• Il calendario non è stato verificato.",
-        ]
-
-    now = news["now"]
-    today = now.astimezone(LOCAL_TZ).date()
-
-    today_events = [
-        event for event in news.get("events", [])
-        if event["local_dt"].date() == today
-    ]
-
-    upcoming = sorted(
-        [event for event in today_events if event["dt"] >= now],
-        key=lambda event: event["dt"],
-    )
-    past = sorted(
-        [event for event in today_events if event["dt"] < now],
-        key=lambda event: event["dt"],
-        reverse=True,
-    )
-
-    display_events = (upcoming + past)[:8]
-
-    lines = [
-        "• Fonte: feed pubblico Forex Factory / Fair Economy."
-    ]
-
-    if not display_events:
-        lines.append(
-            f"• Feed caricato correttamente, ma non risultano eventi "
-            f"{NEWS_COUNTRIES_LABEL} per oggi."
-        )
-    else:
-        for event in display_events:
-            line = (
-                f"• {event['local_dt'].strftime('%H:%M')} "
-                f"{event['country']} {event['impact'].upper()} — "
-                f"{event['name']}"
-            )
-
-            details = []
-
-            if event["estimate"] not in (None, ""):
-                details.append(f"stima {event['estimate']}")
-
-            if event["actual"] not in (None, ""):
-                details.append(f"effettivo {event['actual']}")
-
-            if event["previous"] not in (None, ""):
-                details.append(f"precedente {event['previous']}")
-
-            if details:
-                line += " (" + ", ".join(details) + ")"
-
-            lines.append(line)
-
-        if len(today_events) > len(display_events):
-            lines.append(
-                f"• Altri {len(today_events) - len(display_events)} "
-                "eventi non mostrati."
-            )
-
-    reaction = news.get("reaction")
-
-    if reaction:
-        stability = "stabile" if reaction["stable"] else "ancora volatile"
-        lines.append(
-            f"• Reazione SOL post-news: {reaction['direction']} "
-            f"{reaction['reaction_pct']:+.2f}%; ultimi 15m "
-            f"{reaction['move_15m_pct']:+.2f}%, range "
-            f"{reaction['range_15m_pct']:.2f}% ({stability})."
-        )
-
-    return lines
+    return score, "🔴 NON APRIRE", False
 
 
 def build_report(analysis, news):
-    verdict, instructions = decide(analysis, news)
-    comment = ai_comment(analysis, verdict)
+    score, action, show_parameters = evaluate_signal(analysis, news)
 
     lines = [
-        "🤖 PIONEX GRID – SOL/USDT",
-        "",
-        verdict,
-        instructions,
-        "",
-        "📋 PARAMETRI (solo se il verdetto consente l'avvio)",
-        f"• Lower: {analysis['lower']:.2f}",
-        f"• Upper: {analysis['upper']:.2f}",
-        f"• Grids: {analysis['grids']} "
-        f"(passo ~{analysis['step_pct']:.2f}%)",
-        f"• Investimento: ~{analysis['invest_usdt']:.0f} USDT "
-        f"(≈{analysis['per_grid']:.1f} USDT per griglia)",
-        f"• Stop loss indicativo: {analysis['stop']:.2f}",
-        "",
-        f"📰 CALENDARIO ECONOMICO "
-        f"({NEWS_COUNTRIES_LABEL}, {LOCAL_TZ_NAME})",
-        *calendar_report_lines(news),
-        "",
-        "📊 MERCATO",
-        f"• Prezzo: ${analysis['price']:.2f} "
-        f"({analysis['chg24']:+.1f}% 24h | "
-        f"{analysis['chg7d']:+.1f}% 7g)",
-        f"• Min/Max 24h: {analysis['l24']:.2f} / {analysis['h24']:.2f}",
-        f"• Min/Max 7g: {analysis['l7']:.2f} / {analysis['h7']:.2f}",
-        f"• Posizione nel range proposto: {analysis['pos']:.0f}% "
-        "(0=basso, 100=alto)",
-        "",
-        f"🔎 PERCHÉ (punteggio {analysis['score']}/6)",
-        *analysis["why"],
-        "",
-        f"📝 {comment}",
-        "",
-        "ℹ️ Questo script invia una valutazione: non invia ordini a Pionex.",
-        "⚠️ Non è un consiglio finanziario. Se il prezzo esce dal range, "
-        "il bot può restare con monete o USDT bloccati: usa solo soldi che "
-        "puoi permetterti di perdere.",
+        f"SOL/USDT — {score}/10",
+        action,
     ]
+
+    if show_parameters:
+        lines.extend(
+            [
+                f"Lower: {analysis['lower']:.2f} | "
+                f"Upper: {analysis['upper']:.2f}",
+                f"Griglie: {analysis['grids']} | "
+                f"Investimento: ~{analysis['invest_usdt']:.0f} USDT",
+                f"Stop loss indicativo: {analysis['stop']:.2f}",
+            ]
+        )
 
     return "\n".join(lines)
 
@@ -1165,16 +871,10 @@ def build_report(analysis, news):
 # ---------------------------------------------------------------------
 
 def main():
-    print("Calendario: feed pubblico, non serve una chiave Finnhub.")
-    print(
-        "Telegram configurato:",
-        "sì" if TG_TOKEN and TG_ID else "no",
-    )
-
     try:
         analysis = analyze()
     except Exception as exc:
-        print(f"❌ Errore analisi ({type(exc).__name__}): {exc}")
+        print(f"Errore analisi ({type(exc).__name__}): {exc}")
         sys.exit(1)
 
     news = get_news_context(analysis.get("candle_times"))
@@ -1182,31 +882,32 @@ def main():
 
     print(report)
 
-    if TG_TOKEN and TG_ID:
-        try:
-            response = requests.post(
-                f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage",
-                json={
-                    "chat_id": TG_ID,
-                    "text": report,
-                },
-                timeout=15,
-            )
-
-            print(f"Telegram: HTTP {response.status_code}")
-
-            if response.status_code != 200:
-                print(f"Errore Telegram: {response.text}")
-                sys.exit(1)
-
-        except requests.RequestException as exc:
-            print(f"❌ Errore Telegram ({type(exc).__name__}).")
-            sys.exit(1)
-    else:
+    if not TG_TOKEN or not TG_ID:
         print(
-            "⚠️ Telegram non configurato: imposta "
+            "Telegram non configurato: imposta "
             "TELEGRAM_BOT_TOKEN e TELEGRAM_CHAT_ID."
         )
+        return
+
+    try:
+        response = requests.post(
+            f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage",
+            json={
+                "chat_id": TG_ID,
+                "text": report,
+            },
+            timeout=15,
+        )
+
+        print(f"Telegram HTTP {response.status_code}")
+
+        if response.status_code != 200:
+            print("Invio Telegram non riuscito.")
+            sys.exit(1)
+
+    except requests.RequestException as exc:
+        print(f"Errore Telegram ({type(exc).__name__}).")
+        sys.exit(1)
 
 
 if __name__ == "__main__":
