@@ -1,7 +1,6 @@
 import os
 import sys
 import math
-import re
 import requests
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -18,7 +17,6 @@ except ImportError:
 # ---------------------------------------------------------------------
 
 GEMINI_KEY = os.getenv("GEMINI_API_KEY", "").strip()
-FINNHUB_API_KEY = os.getenv("FINNHUB_API_KEY", "").strip()
 TG_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 TG_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
 
@@ -26,12 +24,31 @@ TG_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
 ACTIVE_LOWER = os.getenv("ACTIVE_LOWER", "").strip()
 ACTIVE_UPPER = os.getenv("ACTIVE_UPPER", "").strip()
 
-# Paesi del calendario economico. Default: USA.
-# Esempio: NEWS_COUNTRIES=US,CA,GB
+# Alias per abbinare i codici del feed e quelli configurabili.
+# Il feed pubblico usa normalmente codici come USD, EUR, GBP.
 COUNTRY_ALIASES = {
-    "usa": "us",
-    "united states": "us",
-    "united states of america": "us",
+    "us": "usd",
+    "usa": "usd",
+    "united states": "usd",
+    "united states of america": "usd",
+    "eu": "eur",
+    "eurozone": "eur",
+    "european union": "eur",
+    "uk": "gbp",
+    "gb": "gbp",
+    "united kingdom": "gbp",
+    "japan": "jpy",
+    "jp": "jpy",
+    "switzerland": "chf",
+    "ch": "chf",
+    "canada": "cad",
+    "ca": "cad",
+    "australia": "aud",
+    "au": "aud",
+    "new zealand": "nzd",
+    "nz": "nzd",
+    "china": "cny",
+    "cn": "cny",
 }
 
 
@@ -40,11 +57,13 @@ def normalize_country(value):
     return COUNTRY_ALIASES.get(value, value)
 
 
+# Il feed Forex Factory/Fair Economy usa normalmente USD.
+# Puoi cambiare il valore, per esempio: NEWS_COUNTRIES=USD,EUR
 NEWS_COUNTRIES = {
     normalize_country(country)
-    for country in os.getenv("NEWS_COUNTRIES", "US").split(",")
+    for country in os.getenv("NEWS_COUNTRIES", "USD").split(",")
     if country.strip()
-} or {"us"}
+} or {"usd"}
 
 NEWS_COUNTRIES_LABEL = ", ".join(
     country.upper() for country in sorted(NEWS_COUNTRIES)
@@ -64,7 +83,7 @@ NEWS_BLOCK_BEFORE_MIN = int(os.getenv("NEWS_BLOCK_BEFORE_MIN", "120"))
 NEWS_COOLDOWN_MIN = int(os.getenv("NEWS_COOLDOWN_MIN", "45"))
 NEWS_LOOKBACK_HOURS = int(os.getenv("NEWS_LOOKBACK_HOURS", "4"))
 
-# Soglie iniziali per valutare la volatilità post-news.
+# Soglie iniziali per valutare se la reazione di SOL si è calmata.
 # Non sono soglie universali: vanno verificate e calibrate.
 NEWS_MAX_15M_RANGE_PCT = float(
     os.getenv("NEWS_MAX_15M_RANGE_PCT", "1.0")
@@ -78,6 +97,9 @@ INVEST_EUR = 50
 MIN_ORDER_USDT = 5.0
 TARGET_STEP_PCT = 0.30
 MIN_STEP_PCT = 0.25
+
+# Feed pubblico del calendario economico settimanale.
+CALENDAR_URL = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
 
 
 # ---------------------------------------------------------------------
@@ -295,7 +317,7 @@ def analyze():
 
     avg_daily = sum(daily) / len(daily)
 
-    # Range suggerito usando i percentili degli ultimi 7 giorni.
+    # Range proposto: percentili degli ultimi 7 giorni, con limiti di larghezza.
     lower = percentile(low[-168:], 0.10)
     upper = percentile(high[-168:], 0.90)
 
@@ -432,152 +454,89 @@ def analyze():
 
 
 # ---------------------------------------------------------------------
-# CALENDARIO FINNHUB
+# CALENDARIO ECONOMICO PUBBLICO
 # ---------------------------------------------------------------------
 
-def safe_finnhub_detail(value):
-    """Pulisce il messaggio Finnhub prima di inserirlo nel log."""
-    text = str(value or "").strip()
-
-    if FINNHUB_API_KEY:
-        text = text.replace(FINNHUB_API_KEY, "[chiave omessa]")
-
-    text = re.sub(
-        r"([?&]token=)[^&\s\"']+",
-        r"\1[omesso]",
-        text,
-        flags=re.IGNORECASE,
-    )
-    text = re.sub(r"[\r\n\t]+", " ", text)
-
-    return text[:300] or "nessun dettaglio fornito"
-
-
-def finnhub_http_error(status_code, payload):
-    detail = None
-
-    if isinstance(payload, dict):
-        detail = (
-            payload.get("error")
-            or payload.get("message")
-            or payload.get("detail")
-        )
-
-    if not detail:
-        detail = "risposta non JSON o senza dettagli"
-
-    hints = {
-        401: (
-            "Controlla la validità della chiave e che il workflow la passi "
-            "come FINNHUB_API_KEY."
-        ),
-        403: (
-            "L'account o il piano Finnhub potrebbe non avere accesso "
-            "a questo endpoint."
-        ),
-        429: "È stato raggiunto il limite di richieste Finnhub.",
-    }
-
-    detail = safe_finnhub_detail(detail)
-    hint = hints.get(status_code, "")
-
-    if hint:
-        return f"Finnhub HTTP {status_code}: {detail}. {hint}"
-
-    return f"Finnhub HTTP {status_code}: {detail}"
-
-
 def parse_calendar_time(value):
-    """Interpreta l'orario Finnhub come UTC se non ha un fuso esplicito."""
-    raw = str(value).strip()
+    """Converte l'orario ISO del feed in UTC."""
+    raw = str(value or "").strip()
+
+    if not raw:
+        raise ValueError("Orario evento mancante")
 
     if raw.endswith("Z"):
         raw = raw[:-1] + "+00:00"
 
-    result = datetime.fromisoformat(raw)
+    event_time = datetime.fromisoformat(raw)
 
-    if result.tzinfo is None:
-        result = result.replace(tzinfo=timezone.utc)
+    # Se il feed non specifica un fuso, assumiamo UTC.
+    if event_time.tzinfo is None:
+        event_time = event_time.replace(tzinfo=timezone.utc)
 
-    return result.astimezone(timezone.utc)
+    return event_time.astimezone(timezone.utc)
 
 
 def fetch_macro_events(now):
     """
-    Recupera il calendario economico Finnhub per i paesi configurati.
+    Scarica gli eventi economici della settimana corrente.
+    Il feed pubblico non richiede una chiave API.
     """
-    if not FINNHUB_API_KEY:
-        raise RuntimeError(
-            "FINNHUB_API_KEY assente nell'ambiente. "
-            "Controlla che il workflow GitHub Actions la passi al job."
-        )
-
-    today_local = now.astimezone(LOCAL_TZ).date()
-
-    params = {
-        "from": (today_local - timedelta(days=1)).isoformat(),
-        "to": (today_local + timedelta(days=1)).isoformat(),
-        "token": FINNHUB_API_KEY,
+    headers = {
+        "Accept": "application/json",
+        "User-Agent": "Mozilla/5.0 (compatible; GridBot/1.0)",
     }
 
     try:
         response = requests.get(
-            "https://finnhub.io/api/v1/calendar/economic",
-            params=params,
-            timeout=15,
+            CALENDAR_URL,
+            headers=headers,
+            timeout=20,
         )
     except requests.Timeout:
-        raise RuntimeError("Timeout durante la richiesta a Finnhub.") from None
-    except requests.RequestException as exc:
-        # Non stampare il testo della richiesta: potrebbe contenere la chiave.
         raise RuntimeError(
-            f"Errore di rete verso Finnhub ({type(exc).__name__})."
+            "Timeout durante la richiesta al calendario pubblico."
         ) from None
+    except requests.RequestException as exc:
+        raise RuntimeError(
+            f"Errore di rete verso il calendario "
+            f"({type(exc).__name__})."
+        ) from None
+
+    if response.status_code != 200:
+        raise RuntimeError(
+            f"Feed calendario HTTP {response.status_code}."
+        )
 
     try:
         payload = response.json()
     except ValueError:
         raise RuntimeError(
-            finnhub_http_error(response.status_code, None)
+            "Il feed calendario non ha restituito JSON valido."
         ) from None
 
-    if response.status_code != 200:
+    if not isinstance(payload, list):
         raise RuntimeError(
-            finnhub_http_error(response.status_code, payload)
+            "Il formato del feed calendario non è quello atteso."
         )
 
-    if not isinstance(payload, dict):
-        raise RuntimeError(
-            "Finnhub HTTP 200: formato della risposta non valido."
-        )
-
-    if payload.get("error"):
-        raise RuntimeError(
-            "Finnhub: " + safe_finnhub_detail(payload["error"])
-        )
-
-    calendar = payload.get("economicCalendar")
-
-    if not isinstance(calendar, list):
-        received_keys = ", ".join(str(key) for key in payload.keys())
-        raise RuntimeError(
-            "Finnhub HTTP 200: campo 'economicCalendar' assente o non valido. "
-            f"Campi ricevuti: {received_keys or 'nessuno'}."
-        )
-
+    today_local = now.astimezone(LOCAL_TZ).date()
     events = []
 
-    for item in calendar:
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+
         country = str(item.get("country") or "").strip()
 
         if normalize_country(country) not in NEWS_COUNTRIES:
             continue
 
-        if not item.get("time"):
+        date_value = item.get("date")
+        if not date_value:
             continue
 
         try:
-            event_time = parse_calendar_time(item["time"])
+            event_time = parse_calendar_time(date_value)
         except (TypeError, ValueError):
             continue
 
@@ -591,6 +550,8 @@ def fetch_macro_events(now):
             <= NEWS_BLOCK_BEFORE_MIN
         )
 
+        # Conserva gli eventi di oggi e quelli recenti o imminenti
+        # necessari al filtro di entrata.
         if not is_today and not relevant_for_filter:
             continue
 
@@ -598,24 +559,31 @@ def fetch_macro_events(now):
             {
                 "dt": event_time,
                 "local_dt": local_time,
-                "country": country,
+                "country": country.upper(),
                 "impact": str(item.get("impact") or "unknown")
                 .strip()
                 .lower(),
-                "name": str(item.get("event") or "Evento"),
+                "name": str(
+                    item.get("title")
+                    or item.get("event")
+                    or "Evento"
+                ),
                 "actual": item.get("actual"),
-                "estimate": item.get("estimate"),
-                "previous": item.get("prev"),
+                "estimate": item.get("forecast") or item.get("estimate"),
+                "previous": item.get("previous") or item.get("prev"),
             }
         )
 
-    return sorted(events, key=lambda event: event["dt"])
+    events.sort(key=lambda event: event["dt"])
+    print(f"✅ Feed calendario caricato: {len(events)} eventi pertinenti.")
+
+    return events
 
 
 def get_post_news_reaction(event):
     """
-    Misura la reazione di SOL dopo l'evento con candele da 5 minuti.
-    Non prova a interpretare il testo della notizia.
+    Misura la reazione di SOL dopo l'evento usando candele da 5 minuti.
+    Non interpreta il testo della notizia.
     """
     candles = get_candles(interval=5)
     times = candles["time"]
@@ -627,7 +595,7 @@ def get_post_news_reaction(event):
     interval_seconds = 5 * 60
     release_ts = event["dt"].timestamp()
 
-    # Prima candela da 5 minuti che inizia all'orario dell'evento o dopo.
+    # Prima candela da 5 minuti che inizia all'orario della notizia o dopo.
     first_post_ts = (
         math.ceil(release_ts / interval_seconds) * interval_seconds
     )
@@ -647,7 +615,7 @@ def get_post_news_reaction(event):
 
     last_four = post_indices[-4:]
 
-    # Non usare dati con intervalli mancanti.
+    # Se ci sono buchi nei dati, la misurazione non è affidabile.
     if any(
         times[b] - times[a] != interval_seconds
         for a, b in zip(last_four, last_four[1:])
@@ -657,7 +625,7 @@ def get_post_news_reaction(event):
     latest_bar_close_time = times[-1] + interval_seconds
     now_ts = datetime.now(timezone.utc).timestamp()
 
-    # Se i dati sono troppo vecchi, non usarli come conferma.
+    # Non usare candele troppo vecchie come conferma.
     if now_ts - latest_bar_close_time > 15 * 60:
         return None
 
@@ -713,11 +681,10 @@ def get_news_context(hourly_times):
                 f"({type(exc).__name__})."
             )
 
-        print(f"⚠️ Calendario Finnhub: {error}")
+        print(f"⚠️ Calendario pubblico non disponibile: {error}")
 
         return {
             "ok": False,
-            "key_configured": bool(FINNHUB_API_KEY),
             "state": "unknown",
             "events": [],
             "event": None,
@@ -728,7 +695,6 @@ def get_news_context(hourly_times):
 
     result = {
         "ok": True,
-        "key_configured": True,
         "state": "clear",
         "events": events,
         "event": None,
@@ -742,7 +708,7 @@ def get_news_context(hourly_times):
         if event["impact"] == "high"
     ]
 
-    # Blocca nuove aperture nei minuti prima di una news importante.
+    # Non aprire una nuova griglia nei minuti prima di una news importante.
     upcoming = [
         event for event in high_impact
         if timedelta(0) <= event["dt"] - now
@@ -770,7 +736,7 @@ def get_news_context(hourly_times):
         )
         return result
 
-    # Dopo il cooldown aspetta una candela oraria completa successiva alla news.
+    # Dopo il cooldown, aspetta una candela oraria completa successiva alla news.
     post_events = [
         event for event in high_impact
         if timedelta(minutes=NEWS_COOLDOWN_MIN)
@@ -831,7 +797,7 @@ def decide(analysis, news):
 
     active_outside = None
 
-    # Se esiste una griglia attiva, controlla prima il range.
+    # Se esiste una griglia attiva, controlla prima il suo range.
     if ACTIVE_LOWER and ACTIVE_UPPER:
         try:
             active_lower = float(ACTIVE_LOWER)
@@ -882,9 +848,8 @@ def decide(analysis, news):
         return (
             "🟠 CALENDARIO NEWS NON VERIFICATO",
             add_active_context(
-                "Non avviare una nuova griglia: il calendario non è stato "
-                "verificato. Controlla FINNHUB_API_KEY e il workflow "
-                "GitHub Actions."
+                "Non avviare una nuova griglia: il calendario pubblico "
+                "non è stato verificato. Controlla la connessione al feed."
             ),
         )
 
@@ -1064,7 +1029,6 @@ def ai_comment(analysis, verdict):
 
 def calendar_report_lines(news):
     if not news or not news.get("ok"):
-        key_configured = bool(news and news.get("key_configured"))
         error = (
             news.get("error", "errore non specificato")
             if news
@@ -1072,28 +1036,42 @@ def calendar_report_lines(news):
         )
 
         return [
-            "• FINNHUB_API_KEY presente nel job: "
-            f"{'sì' if key_configured else 'no'}",
-            f"• Errore: {error}",
+            "• Fonte: feed pubblico Forex Factory / Fair Economy.",
+            f"• Calendario non disponibile: {error}",
             "• Il calendario non è stato verificato.",
         ]
 
-    today = news["now"].astimezone(LOCAL_TZ).date()
+    now = news["now"]
+    today = now.astimezone(LOCAL_TZ).date()
 
     today_events = [
         event for event in news.get("events", [])
         if event["local_dt"].date() == today
     ]
 
-    lines = []
+    upcoming = sorted(
+        [event for event in today_events if event["dt"] >= now],
+        key=lambda event: event["dt"],
+    )
+    past = sorted(
+        [event for event in today_events if event["dt"] < now],
+        key=lambda event: event["dt"],
+        reverse=True,
+    )
 
-    if not today_events:
+    display_events = (upcoming + past)[:8]
+
+    lines = [
+        "• Fonte: feed pubblico Forex Factory / Fair Economy."
+    ]
+
+    if not display_events:
         lines.append(
-            "• Finnhub ha risposto correttamente, ma non ha restituito "
-            f"eventi per {NEWS_COUNTRIES_LABEL} oggi."
+            f"• Feed caricato correttamente, ma non risultano eventi "
+            f"{NEWS_COUNTRIES_LABEL} per oggi."
         )
     else:
-        for event in today_events[:8]:
+        for event in display_events:
             line = (
                 f"• {event['local_dt'].strftime('%H:%M')} "
                 f"{event['country']} {event['impact'].upper()} — "
@@ -1116,9 +1094,10 @@ def calendar_report_lines(news):
 
             lines.append(line)
 
-        if len(today_events) > 8:
+        if len(today_events) > len(display_events):
             lines.append(
-                f"• Altri {len(today_events) - 8} eventi non mostrati."
+                f"• Altri {len(today_events) - len(display_events)} "
+                "eventi non mostrati."
             )
 
     reaction = news.get("reaction")
@@ -1160,7 +1139,8 @@ def build_report(analysis, news):
         "",
         "📊 MERCATO",
         f"• Prezzo: ${analysis['price']:.2f} "
-        f"({analysis['chg24']:+.1f}% 24h | {analysis['chg7d']:+.1f}% 7g)",
+        f"({analysis['chg24']:+.1f}% 24h | "
+        f"{analysis['chg7d']:+.1f}% 7g)",
         f"• Min/Max 24h: {analysis['l24']:.2f} / {analysis['h24']:.2f}",
         f"• Min/Max 7g: {analysis['l7']:.2f} / {analysis['h7']:.2f}",
         f"• Posizione nel range proposto: {analysis['pos']:.0f}% "
@@ -1185,10 +1165,10 @@ def build_report(analysis, news):
 # ---------------------------------------------------------------------
 
 def main():
-    # Mostra solo se la variabile c'è, mai il suo valore.
+    print("Calendario: feed pubblico, non serve una chiave Finnhub.")
     print(
-        "Finnhub API key configurata:",
-        "sì" if FINNHUB_API_KEY else "NO",
+        "Telegram configurato:",
+        "sì" if TG_TOKEN and TG_ID else "no",
     )
 
     try:
