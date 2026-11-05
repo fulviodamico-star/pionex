@@ -13,18 +13,21 @@ except ImportError:
     genai = None
 
 
-# ---------------------------------------------------------------- CONFIGURAZIONE
+# ---------------------------------------------------------------------
+# CONFIGURAZIONE
+# ---------------------------------------------------------------------
 
 GEMINI_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 FINNHUB_API_KEY = os.getenv("FINNHUB_API_KEY", "").strip()
 TG_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 TG_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
 
-# Griglia già attiva su Pionex, se presente.
+# Range di una griglia già attiva su Pionex, se configurato.
 ACTIVE_LOWER = os.getenv("ACTIVE_LOWER", "").strip()
 ACTIVE_UPPER = os.getenv("ACTIVE_UPPER", "").strip()
 
-# Paesi del calendario economico. Esempio: NEWS_COUNTRIES=US,CA,GB
+# Paesi del calendario economico. Default: USA.
+# Esempio: NEWS_COUNTRIES=US,CA,GB
 COUNTRY_ALIASES = {
     "usa": "us",
     "united states": "us",
@@ -61,8 +64,8 @@ NEWS_BLOCK_BEFORE_MIN = int(os.getenv("NEWS_BLOCK_BEFORE_MIN", "120"))
 NEWS_COOLDOWN_MIN = int(os.getenv("NEWS_COOLDOWN_MIN", "45"))
 NEWS_LOOKBACK_HOURS = int(os.getenv("NEWS_LOOKBACK_HOURS", "4"))
 
-# Soglie iniziali per classificare la reazione di SOL come stabile.
-# Vanno verificate e calibrate: non sono soglie universali.
+# Soglie iniziali per valutare la volatilità post-news.
+# Non sono soglie universali: vanno verificate e calibrate.
 NEWS_MAX_15M_RANGE_PCT = float(
     os.getenv("NEWS_MAX_15M_RANGE_PCT", "1.0")
 )
@@ -77,7 +80,9 @@ TARGET_STEP_PCT = 0.30
 MIN_STEP_PCT = 0.25
 
 
-# ---------------------------------------------------------------- DATI MERCATO
+# ---------------------------------------------------------------------
+# DATI DI MERCATO
+# ---------------------------------------------------------------------
 
 def get_candles(interval=60):
     """
@@ -124,6 +129,7 @@ def get_eurusd():
         response.raise_for_status()
 
         data = response.json()
+
         if data.get("error"):
             return 1.08
 
@@ -134,7 +140,9 @@ def get_eurusd():
         return 1.08
 
 
-# ---------------------------------------------------------------- INDICATORI
+# ---------------------------------------------------------------------
+# INDICATORI
+# ---------------------------------------------------------------------
 
 def ema(values, n):
     if not values:
@@ -224,12 +232,12 @@ def atr_adx(high, low, close, n=14):
         return 0.0, 0.0
 
     seed = dxs[:n]
-    adx = sum(seed) / len(seed)
+    adx_value = sum(seed) / len(seed)
 
     for dx in dxs[n:]:
-        adx = (adx * (n - 1) + dx) / n
+        adx_value = (adx_value * (n - 1) + dx) / n
 
-    return s_tr / n, adx
+    return s_tr / n, adx_value
 
 
 def percentile(values, p):
@@ -244,7 +252,9 @@ def percentile(values, p):
     return ordered[index]
 
 
-# ---------------------------------------------------------------- ANALISI TECNICA
+# ---------------------------------------------------------------------
+# ANALISI TECNICA
+# ---------------------------------------------------------------------
 
 def analyze():
     candles = get_candles(interval=60)
@@ -285,7 +295,7 @@ def analyze():
 
     avg_daily = sum(daily) / len(daily)
 
-    # Range proposto: percentili degli ultimi 7 giorni, con limiti di larghezza.
+    # Range suggerito usando i percentili degli ultimi 7 giorni.
     lower = percentile(low[-168:], 0.10)
     upper = percentile(high[-168:], 0.90)
 
@@ -296,10 +306,7 @@ def analyze():
     invest_usdt = INVEST_EUR * get_eurusd()
 
     max_by_money = max(1, int(invest_usdt // MIN_ORDER_USDT))
-    target_grids = max(
-        5,
-        min(50, round(width_pct / TARGET_STEP_PCT)),
-    )
+    target_grids = max(5, min(50, round(width_pct / TARGET_STEP_PCT)))
     grids = min(target_grids, max_by_money)
 
     step_pct = width_pct / grids
@@ -424,10 +431,12 @@ def analyze():
     }
 
 
-# ---------------------------------------------------------------- CALENDARIO FINNHUB
+# ---------------------------------------------------------------------
+# CALENDARIO FINNHUB
+# ---------------------------------------------------------------------
 
 def safe_finnhub_detail(value):
-    """Pulisce un messaggio Finnhub prima di inserirlo nel log/report."""
+    """Pulisce il messaggio Finnhub prima di inserirlo nel log."""
     text = str(value or "").strip()
 
     if FINNHUB_API_KEY:
@@ -459,29 +468,27 @@ def finnhub_http_error(status_code, payload):
 
     hints = {
         401: (
-            "Controlla che la chiave sia valida e che GitHub Actions "
-            "la passi come FINNHUB_API_KEY."
+            "Controlla la validità della chiave e che il workflow la passi "
+            "come FINNHUB_API_KEY."
         ),
         403: (
             "L'account o il piano Finnhub potrebbe non avere accesso "
             "a questo endpoint."
         ),
-        429: (
-            "È stato raggiunto il limite di richieste Finnhub."
-        ),
+        429: "È stato raggiunto il limite di richieste Finnhub.",
     }
 
-    safe_detail = safe_finnhub_detail(detail)
+    detail = safe_finnhub_detail(detail)
     hint = hints.get(status_code, "")
 
     if hint:
-        return f"Finnhub HTTP {status_code}: {safe_detail}. {hint}"
+        return f"Finnhub HTTP {status_code}: {detail}. {hint}"
 
-    return f"Finnhub HTTP {status_code}: {safe_detail}"
+    return f"Finnhub HTTP {status_code}: {detail}"
 
 
 def parse_calendar_time(value):
-    """Interpreta l'orario dell'evento come UTC se non ha un fuso esplicito."""
+    """Interpreta l'orario Finnhub come UTC se non ha un fuso esplicito."""
     raw = str(value).strip()
 
     if raw.endswith("Z"):
@@ -497,13 +504,12 @@ def parse_calendar_time(value):
 
 def fetch_macro_events(now):
     """
-    Scarica il calendario economico Finnhub per i paesi configurati.
-    Gli orari del calendario vengono interpretati come UTC.
+    Recupera il calendario economico Finnhub per i paesi configurati.
     """
     if not FINNHUB_API_KEY:
         raise RuntimeError(
             "FINNHUB_API_KEY assente nell'ambiente. "
-            "Controlla il secret GitHub e la configurazione env del workflow."
+            "Controlla che il workflow GitHub Actions la passi al job."
         )
 
     today_local = now.astimezone(LOCAL_TZ).date()
@@ -523,7 +529,7 @@ def fetch_macro_events(now):
     except requests.Timeout:
         raise RuntimeError("Timeout durante la richiesta a Finnhub.") from None
     except requests.RequestException as exc:
-        # Non stampare il testo dell'errore: potrebbe contenere l'URL della richiesta.
+        # Non stampare il testo della richiesta: potrebbe contenere la chiave.
         raise RuntimeError(
             f"Errore di rete verso Finnhub ({type(exc).__name__})."
         ) from None
@@ -579,13 +585,13 @@ def fetch_macro_events(now):
         minutes_to_event = (event_time - now).total_seconds() / 60
 
         is_today = local_time.date() == today_local
-        relevant_for_gate = (
+        relevant_for_filter = (
             -NEWS_LOOKBACK_HOURS * 60
             <= minutes_to_event
             <= NEWS_BLOCK_BEFORE_MIN
         )
 
-        if not is_today and not relevant_for_gate:
+        if not is_today and not relevant_for_filter:
             continue
 
         events.append(
@@ -593,7 +599,9 @@ def fetch_macro_events(now):
                 "dt": event_time,
                 "local_dt": local_time,
                 "country": country,
-                "impact": str(item.get("impact") or "unknown").strip().lower(),
+                "impact": str(item.get("impact") or "unknown")
+                .strip()
+                .lower(),
                 "name": str(item.get("event") or "Evento"),
                 "actual": item.get("actual"),
                 "estimate": item.get("estimate"),
@@ -606,8 +614,8 @@ def fetch_macro_events(now):
 
 def get_post_news_reaction(event):
     """
-    Misura la reazione SOL dopo l'evento con candele da 5 minuti.
-    Non assegna un sentiment al testo della notizia.
+    Misura la reazione di SOL dopo l'evento con candele da 5 minuti.
+    Non prova a interpretare il testo della notizia.
     """
     candles = get_candles(interval=5)
     times = candles["time"]
@@ -634,13 +642,12 @@ def get_post_news_reaction(event):
         if timestamp + interval_seconds <= release_ts
     ]
 
-    # Servono almeno quattro candele post-news.
     if len(pre_indices) < 1 or len(post_indices) < 4:
         return None
 
     last_four = post_indices[-4:]
 
-    # Se ci sono buchi nei dati, la misura su 15 minuti non è affidabile.
+    # Non usare dati con intervalli mancanti.
     if any(
         times[b] - times[a] != interval_seconds
         for a, b in zip(last_four, last_four[1:])
@@ -650,7 +657,7 @@ def get_post_news_reaction(event):
     latest_bar_close_time = times[-1] + interval_seconds
     now_ts = datetime.now(timezone.utc).timestamp()
 
-    # Non usare candele troppo vecchie come conferma della reazione.
+    # Se i dati sono troppo vecchi, non usarli come conferma.
     if now_ts - latest_bar_close_time > 15 * 60:
         return None
 
@@ -661,8 +668,11 @@ def get_post_news_reaction(event):
         return None
 
     reaction_pct = (current_price / pre_price - 1) * 100
-    move_15m_pct = (closes[last_four[-1]] / closes[last_four[0]] - 1) * 100
+    move_15m_pct = (
+        closes[last_four[-1]] / closes[last_four[0]] - 1
+    ) * 100
 
+    # Le ultime tre candele coprono 15 minuti.
     last_three = last_four[-3:]
     high_15m = max(candles["high"][i] for i in last_three)
     low_15m = min(candles["low"][i] for i in last_three)
@@ -732,7 +742,7 @@ def get_news_context(hourly_times):
         if event["impact"] == "high"
     ]
 
-    # Non aprire una nuova griglia nei minuti prima di una news importante.
+    # Blocca nuove aperture nei minuti prima di una news importante.
     upcoming = [
         event for event in high_impact
         if timedelta(0) <= event["dt"] - now
@@ -746,7 +756,7 @@ def get_news_context(hourly_times):
         )
         return result
 
-    # Attendi il cooldown dopo l'uscita della news.
+    # Attendi il cooldown subito dopo l'uscita della notizia.
     recent = [
         event for event in high_impact
         if timedelta(0) <= now - event["dt"]
@@ -812,14 +822,16 @@ def get_news_context(hourly_times):
     return result
 
 
-# ---------------------------------------------------------------- DECISIONE
+# ---------------------------------------------------------------------
+# DECISIONE
+# ---------------------------------------------------------------------
 
 def decide(analysis, news):
     """Verdetto e istruzioni. Il filtro news riguarda le nuove aperture."""
 
     active_outside = None
 
-    # Gestione di una griglia già attiva.
+    # Se esiste una griglia attiva, controlla prima il range.
     if ACTIVE_LOWER and ACTIVE_UPPER:
         try:
             active_lower = float(ACTIVE_LOWER)
@@ -846,15 +858,14 @@ def decide(analysis, news):
                         f"Prezzo a {edge:.1f}% da un estremo del tuo range "
                         f"({active_lower:.2f}–{active_upper:.2f}). "
                         "Controlla il bot su Pionex. Per una nuova apertura, "
-                        "rispetta anche il filtro news del report.",
+                        "rispetta anche il filtro news.",
                     )
 
                 return (
                     "🟢 NON TOCCARE NULLA",
                     f"Il prezzo è dentro il tuo range attivo "
                     f"({active_lower:.2f}–{active_upper:.2f}) e lontano "
-                    "dai bordi. Lascia lavorare il bot: chiuderlo adesso "
-                    "può comportare costi.",
+                    "dai bordi. Questo script non modifica il bot su Pionex.",
                 )
 
         except (ValueError, TypeError):
@@ -872,8 +883,8 @@ def decide(analysis, news):
             "🟠 CALENDARIO NEWS NON VERIFICATO",
             add_active_context(
                 "Non avviare una nuova griglia: il calendario non è stato "
-                "verificato. Controlla FINNHUB_API_KEY e la configurazione "
-                "del workflow GitHub Actions."
+                "verificato. Controlla FINNHUB_API_KEY e il workflow "
+                "GitHub Actions."
             ),
         )
 
@@ -899,10 +910,7 @@ def decide(analysis, news):
     if state == "cooldown":
         event = news["event"]
         elapsed = (news["now"] - event["dt"]).total_seconds() / 60
-        remaining = max(
-            0,
-            math.ceil(NEWS_COOLDOWN_MIN - elapsed),
-        )
+        remaining = max(0, math.ceil(NEWS_COOLDOWN_MIN - elapsed))
 
         return (
             "⏸️ ATTESA REAZIONE POST-NEWS",
@@ -917,8 +925,8 @@ def decide(analysis, news):
             "⏸️ ATTESA CHIUSURA ORARIA",
             add_active_context(
                 "È passato il cooldown, ma manca ancora una candela oraria "
-                "completa successiva alla news. Il modello usa indicatori "
-                "orari: rivaluta alla prossima esecuzione."
+                "completa successiva alla news. Rivaluta alla prossima "
+                "esecuzione."
             ),
         )
 
@@ -941,7 +949,7 @@ def decide(analysis, news):
             "🟠 REAZIONE NEWS NON VERIFICATA",
             add_active_context(
                 "Non è stato possibile leggere le candele SOL/USD successive "
-                "alla news. Per prudenza, non avviare una nuova griglia."
+                "alla news. Per prudenza non avviare una nuova griglia."
             ),
         )
 
@@ -949,7 +957,8 @@ def decide(analysis, news):
         return (
             "🟠 ATTESA NEWS",
             add_active_context(
-                "Stato news non verificato: non avviare una nuova griglia."
+                "Stato del calendario non verificato: non avviare una "
+                "nuova griglia."
             ),
         )
 
@@ -962,15 +971,14 @@ def decide(analysis, news):
                 f"{active_outside}\n"
                 "Il punteggio tecnico della nuova analisi è favorevole, "
                 "ma questo script non chiude né ricrea bot su Pionex. "
-                "Verifica manualmente ordini e posizione prima di sostituire "
-                "la griglia."
+                "Verifica manualmente ordini e posizione."
             )
         elif score >= 1:
             verdict = "🟠 FUORI RANGE — ASPETTA"
             instructions = (
                 f"{active_outside}\n"
-                "Le condizioni tecniche sono miste: non creare subito una "
-                "nuova griglia. Rivaluta al prossimo report."
+                "Le condizioni tecniche sono miste: rivaluta al prossimo "
+                "report prima di creare una nuova griglia."
             )
         else:
             verdict = "🔴 FUORI RANGE — NON RIAVVIARE"
@@ -984,19 +992,19 @@ def decide(analysis, news):
         verdict = "🟢 AVVIA IL GRID BOT"
         instructions = (
             "Condizioni favorevoli. Puoi valutare la creazione del bot "
-            "su Pionex con i parametri qui sotto."
+            "su Pionex con i parametri riportati."
         )
     elif score >= 1:
         verdict = "🟡 ASPETTA"
         instructions = (
-            "Condizioni miste: non c'è fretta. Aspetta il prossimo report; "
-            "se vuoi entrare comunque, valuta meno capitale e uno stop loss."
+            "Condizioni miste: aspetta il prossimo report. Se decidi di "
+            "entrare comunque, valuta meno capitale e uno stop loss."
         )
     else:
         verdict = "🔴 NON AVVIARE"
         instructions = (
-            "Condizioni sfavorevoli per una griglia. Tieni i soldi fermi "
-            "e rivaluta al prossimo report."
+            "Condizioni sfavorevoli per una griglia. Rivaluta al prossimo "
+            "report."
         )
 
     if state == "post_clear":
@@ -1011,7 +1019,9 @@ def decide(analysis, news):
     return verdict, instructions
 
 
-# ---------------------------------------------------------------- COMMENTO GEMINI
+# ---------------------------------------------------------------------
+# COMMENTO GEMINI
+# ---------------------------------------------------------------------
 
 def ai_comment(analysis, verdict):
     if not GEMINI_KEY or genai is None:
@@ -1048,13 +1058,13 @@ def ai_comment(analysis, verdict):
         return "n/d"
 
 
-# ---------------------------------------------------------------- REPORT
+# ---------------------------------------------------------------------
+# REPORT
+# ---------------------------------------------------------------------
 
 def calendar_report_lines(news):
     if not news or not news.get("ok"):
-        key_configured = bool(
-            news and news.get("key_configured")
-        )
+        key_configured = bool(news and news.get("key_configured"))
         error = (
             news.get("error", "errore non specificato")
             if news
@@ -1062,10 +1072,10 @@ def calendar_report_lines(news):
         )
 
         return [
-            f"• FINNHUB_API_KEY presente nel job: "
+            "• FINNHUB_API_KEY presente nel job: "
             f"{'sì' if key_configured else 'no'}",
             f"• Errore: {error}",
-            "• Per prudenza il filtro non considera il calendario verificato.",
+            "• Il calendario non è stato verificato.",
         ]
 
     today = news["now"].astimezone(LOCAL_TZ).date()
@@ -1150,12 +1160,9 @@ def build_report(analysis, news):
         "",
         "📊 MERCATO",
         f"• Prezzo: ${analysis['price']:.2f} "
-        f"({analysis['chg24']:+.1f}% 24h | "
-        f"{analysis['chg7d']:+.1f}% 7g)",
-        f"• Min/Max 24h: {analysis['l24']:.2f} / "
-        f"{analysis['h24']:.2f}",
-        f"• Min/Max 7g: {analysis['l7']:.2f} / "
-        f"{analysis['h7']:.2f}",
+        f"({analysis['chg24']:+.1f}% 24h | {analysis['chg7d']:+.1f}% 7g)",
+        f"• Min/Max 24h: {analysis['l24']:.2f} / {analysis['h24']:.2f}",
+        f"• Min/Max 7g: {analysis['l7']:.2f} / {analysis['h7']:.2f}",
         f"• Posizione nel range proposto: {analysis['pos']:.0f}% "
         "(0=basso, 100=alto)",
         "",
@@ -1173,9 +1180,12 @@ def build_report(analysis, news):
     return "\n".join(lines)
 
 
-# ---------------------------------------------------------------- AVVIO
+# ---------------------------------------------------------------------
+# AVVIO
+# ---------------------------------------------------------------------
 
 def main():
+    # Mostra solo se la variabile c'è, mai il suo valore.
     print(
         "Finnhub API key configurata:",
         "sì" if FINNHUB_API_KEY else "NO",
