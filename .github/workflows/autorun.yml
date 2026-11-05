@@ -1,4 +1,4 @@
-name: Pionex AI Scalper H24
+name: Pionex AI Scalper
 
 on:
   schedule:
@@ -6,23 +6,21 @@ on:
   workflow_dispatch:
 
 jobs:
-  run-ai-scalper:
+  run-bot:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Configura Python 3.12
+      - name: Python Setup
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
 
-      - name: Installa dipendenze
-        run: |
-          python -m pip install --upgrade pip
-          pip install google-generativeai requests
+      - name: Install Dependencies
+        run: pip install google-generativeai requests
 
-      - name: Esegui lo Script AI
+      - name: Execute
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
