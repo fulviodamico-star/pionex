@@ -8,7 +8,6 @@ on:
 jobs:
   run-ai-scalper:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -16,7 +15,7 @@ jobs:
       - name: Configura Python 3.12
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12' # Versione aggiornata
+          python-version: '3.12'
 
       - name: Installa dipendenze
         run: |
