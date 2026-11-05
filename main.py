@@ -3,84 +3,72 @@ import requests
 import google.generativeai as genai
 import sys
 
-# Chiavi dai Secrets di GitHub
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+# 1. Configurazione Chiavi
+GEMINI_KEY = os.getenv("GEMINI_API_KEY")
+TG_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TG_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-def get_sol_price():
-    """Tenta di recuperare il prezzo da 3 fonti diverse"""
-    # 1. Prova Binance
+def get_price():
+    """Recupera il prezzo da Binance (Standard Mondiale)"""
     try:
         url = "https://api.binance.com/api/v3/ticker/price?symbol=SOLUSDT"
-        resp = requests.get(url, timeout=10).json()
-        if 'price' in resp:
-            print("✅ Prezzo ottenuto da Binance")
-            return float(resp['price'])
-    except: pass
-
-    # 2. Prova CryptoCompare (Pubblica)
-    try:
-        url = "https://min-api.cryptocompare.com/data/price?fsym=SOL&tsyms=USDT"
-        resp = requests.get(url, timeout=10).json()
-        if 'USDT' in resp:
-            print("✅ Prezzo ottenuto da CryptoCompare")
-            return float(resp['USDT'])
-    except: pass
-
-    # 3. Prova Pionex (con headers)
-    try:
-        url = "https://api.pionex.com/api/v1/market/tickers"
-        headers = {"User-Agent": "Mozilla/5.0"}
-        resp = requests.get(url, headers=headers, timeout=10).json()
-        for t in resp['data']['tickers']:
-            if t['symbol'] in ['SOL_USDT', 'SOLUSDT']:
-                print("✅ Prezzo ottenuto da Pionex")
-                return float(t['last'])
-    except: pass
-
-    return None
+        response = requests.get(url, timeout=10)
+        data = response.json()
+        if 'price' in data:
+            return float(data['price'])
+        else:
+            print(f"⚠️ Risposta inattesa da Binance: {data}")
+            return None
+    except Exception as e:
+        print(f"❌ Errore connessione Prezzo: {e}")
+        return None
 
 def main():
-    if not GEMINI_API_KEY:
-        print("❌ ERRORE: Chiave API Gemini mancante nei Secrets!")
+    print("🚀 Avvio Bot...")
+
+    # Controllo API Key
+    if not GEMINI_KEY:
+        print("❌ ERRORE: Manca GEMINI_API_KEY nei Secrets di GitHub!")
         sys.exit(1)
 
-    print("🚀 Avvio Analisi AI...")
+    # Recupero Prezzo
+    sol_price = get_price()
+    if sol_price is None:
+        print("❌ ERRORE: Impossibile ottenere il prezzo di Solana.")
+        sys.exit(1)
     
-    price = get_sol_price()
-    if not price:
-        print("❌ ERRORE: Impossibile recuperare il prezzo da nessuna fonte.")
-        sys.exit(1)
-        
-    print(f"💰 Prezzo Solana: ${price}")
+    print(f"✅ Prezzo Solana trovato: ${sol_price}")
 
+    # Analisi AI
     try:
-        genai.configure(api_key=GEMINI_API_KEY)
+        genai.configure(api_key=GEMINI_KEY)
         model = genai.GenerativeModel('gemini-1.5-flash')
         
         prompt = f"""
-        Prezzo SOL: {price} USDT.
-        Agisci come esperto di trading. Dammi un range per Grid Bot scalping (investimento 50€).
-        Rispondi esattamente in questo formato:
+        Prezzo attuale SOL: {sol_price} USDT.
+        Analizza per Grid Bot scalping (investimento 50 EUR).
+        Rispondi ESATTAMENTE così:
         LOWER: (prezzo -4%)
         UPPER: (prezzo +4%)
         GRIDS: (un numero tra 35 e 50)
-        ANALISI: (una frase veloce sul trend)
+        ANALISI: (una frase sul trend)
         """
         
-        response = model.generate_content(prompt)
-        report = f"🤖 *AI PIONEX REPORT*\n\n💰 SOL: ${price}\n\n{response.text}"
+        res = model.generate_content(prompt)
+        report = f"🤖 *AI REPORT*\n\n💰 SOL: ${sol_price}\n\n{res.text}"
+        
+        print("-" * 20)
         print(report)
+        print("-" * 20)
 
-        # Invio Telegram se configurato
-        if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
-            t_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-            requests.post(t_url, json={"chat_id": TELEGRAM_CHAT_ID, "text": report, "parse_mode": "Markdown"})
-            print("✅ Inviato a Telegram")
+        # Telegram
+        if TG_TOKEN and TG_ID:
+            requests.post(f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage", 
+                          json={"chat_id": TG_ID, "text": report, "parse_mode": "Markdown"})
+            print("✅ Inviato a Telegram!")
 
     except Exception as e:
-        print(f"❌ Errore AI: {e}")
+        print(f"❌ Errore durante l'analisi AI: {e}")
         sys.exit(1)
 
 if __name__ == "__main__":
