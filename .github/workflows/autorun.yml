@@ -1,0 +1,31 @@
+name: Pionex AI Scalper H24
+
+on:
+  schedule:
+    # Gira automaticamente ogni giorno alle 08:00 e alle 20:00 UTC (10:00 e 22:00 italiane)
+    - cron: '0 8,20 * * *'
+  workflow_dispatch: # Permette di avviarlo a comando quando vuoi con un click
+
+jobs:
+  run-ai-scalper:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Scarica codice dal repository
+        uses: actions/checkout@v3
+
+      - name: Configura Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Installa dipendenze
+        run: |
+          pip install google-generativeai requests
+
+      - name: Esegui lo Script AI
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python main.py
