@@ -1,11 +1,12 @@
 import os
 import sys
 import math
+import re
 import requests
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-# Gemini è opzionale: il resto del bot funziona anche senza google-genai.
+# Gemini è opzionale.
 try:
     from google import genai
 except ImportError:
@@ -19,11 +20,11 @@ FINNHUB_API_KEY = os.getenv("FINNHUB_API_KEY", "").strip()
 TG_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 TG_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
 
-# Griglia che hai già attiva su Pionex, se presente.
+# Griglia già attiva su Pionex, se presente.
 ACTIVE_LOWER = os.getenv("ACTIVE_LOWER", "").strip()
 ACTIVE_UPPER = os.getenv("ACTIVE_UPPER", "").strip()
 
-# Finnhub: di default il calendario USA. Puoi indicare più paesi, ad es. US,CA,GB.
+# Paesi del calendario economico. Esempio: NEWS_COUNTRIES=US,CA,GB
 COUNTRY_ALIASES = {
     "usa": "us",
     "united states": "us",
@@ -40,12 +41,14 @@ NEWS_COUNTRIES = {
     normalize_country(country)
     for country in os.getenv("NEWS_COUNTRIES", "US").split(",")
     if country.strip()
-}
+} or {"us"}
+
 NEWS_COUNTRIES_LABEL = ", ".join(
     country.upper() for country in sorted(NEWS_COUNTRIES)
-) or "US"
+)
 
 LOCAL_TZ_NAME = os.getenv("LOCAL_TZ", "Europe/Rome").strip()
+
 try:
     LOCAL_TZ = ZoneInfo(LOCAL_TZ_NAME)
 except Exception:
@@ -58,8 +61,8 @@ NEWS_BLOCK_BEFORE_MIN = int(os.getenv("NEWS_BLOCK_BEFORE_MIN", "120"))
 NEWS_COOLDOWN_MIN = int(os.getenv("NEWS_COOLDOWN_MIN", "45"))
 NEWS_LOOKBACK_HOURS = int(os.getenv("NEWS_LOOKBACK_HOURS", "4"))
 
-# Soglie iniziali per classificare la reazione recente di SOL come stabile.
-# Da verificare e calibrare con test/backtest: non sono soglie universali.
+# Soglie iniziali per classificare la reazione di SOL come stabile.
+# Vanno verificate e calibrate: non sono soglie universali.
 NEWS_MAX_15M_RANGE_PCT = float(
     os.getenv("NEWS_MAX_15M_RANGE_PCT", "1.0")
 )
@@ -78,51 +81,55 @@ MIN_STEP_PCT = 0.25
 
 def get_candles(interval=60):
     """
-    Candele SOL/USD da Kraken.
+    Scarica candele SOL/USD da Kraken.
     Scarta l'ultima candela, che potrebbe essere ancora aperta.
     """
-    r = requests.get(
+    response = requests.get(
         "https://api.kraken.com/0/public/OHLC",
         params={"pair": "SOLUSD", "interval": interval},
         timeout=15,
     )
-    r.raise_for_status()
+    response.raise_for_status()
 
-    data = r.json()
+    data = response.json()
+
     if data.get("error"):
         raise RuntimeError(f"Kraken: {data['error']}")
 
     result = data.get("result", {})
-    key = next((k for k in result if k != "last"), None)
+    key = next((name for name in result if name != "last"), None)
+
     if key is None:
         raise RuntimeError("Kraken non ha restituito candele.")
 
     rows = result[key][:-1]
+
     if not rows:
         raise RuntimeError("Kraken ha restituito una lista di candele vuota.")
 
     return {
-        "time": [int(float(x[0])) for x in rows],
-        "high": [float(x[2]) for x in rows],
-        "low": [float(x[3]) for x in rows],
-        "close": [float(x[4]) for x in rows],
+        "time": [int(float(row[0])) for row in rows],
+        "high": [float(row[2]) for row in rows],
+        "low": [float(row[3]) for row in rows],
+        "close": [float(row[4]) for row in rows],
     }
 
 
 def get_eurusd():
     try:
-        r = requests.get(
+        response = requests.get(
             "https://api.kraken.com/0/public/Ticker?pair=EURUSD",
             timeout=10,
         )
-        r.raise_for_status()
-        data = r.json()
+        response.raise_for_status()
 
+        data = response.json()
         if data.get("error"):
             return 1.08
 
         ticker = next(iter(data["result"].values()))
         return float(ticker["c"][0])
+
     except Exception:
         return 1.08
 
@@ -134,17 +141,21 @@ def ema(values, n):
         raise ValueError("Lista vuota per il calcolo EMA.")
 
     k = 2 / (n + 1)
-    e = values[0]
+    result = values[0]
+
     for value in values[1:]:
-        e = value * k + e * (1 - k)
-    return e
+        result = value * k + result * (1 - k)
+
+    return result
 
 
 def rsi(closes, n=14):
     if len(closes) <= n:
         raise ValueError("Dati insufficienti per il calcolo RSI.")
 
-    gains, losses = [], []
+    gains = []
+    losses = []
+
     for i in range(1, len(closes)):
         diff = closes[i] - closes[i - 1]
         gains.append(max(diff, 0))
@@ -167,7 +178,9 @@ def atr_adx(high, low, close, n=14):
     if len(close) <= n:
         raise ValueError("Dati insufficienti per ATR/ADX.")
 
-    tr, pdm, mdm = [], [], []
+    tr = []
+    pdm = []
+    mdm = []
 
     for i in range(1, len(close)):
         up = high[i] - high[i - 1]
@@ -241,10 +254,14 @@ def analyze():
 
     if len(close) < 200:
         raise RuntimeError(
-            f"Candele orarie insufficienti: ne servono 200, ricevute {len(close)}."
+            f"Candele orarie insufficienti: ne servono 200, "
+            f"ricevute {len(close)}."
         )
 
     price = close[-1]
+
+    if price <= 0:
+        raise RuntimeError("Prezzo SOL non valido.")
 
     ema20 = ema(close[-200:], 20)
     ema50 = ema(close[-200:], 50)
@@ -260,6 +277,7 @@ def analyze():
 
     # Escursione giornaliera media degli ultimi 7 giorni.
     daily = []
+
     for day in range(7):
         seg_high = high[-(day + 1) * 24: len(high) - day * 24]
         seg_low = low[-(day + 1) * 24: len(low) - day * 24]
@@ -276,34 +294,35 @@ def analyze():
 
     width_pct = (upper - lower) / price * 100
     invest_usdt = INVEST_EUR * get_eurusd()
-    max_by_money = int(invest_usdt // MIN_ORDER_USDT)
 
-    grids = max(
+    max_by_money = max(1, int(invest_usdt // MIN_ORDER_USDT))
+    target_grids = max(
         5,
-        min(
-            50,
-            round(width_pct / TARGET_STEP_PCT),
-            max_by_money,
-        ),
+        min(50, round(width_pct / TARGET_STEP_PCT)),
     )
+    grids = min(target_grids, max_by_money)
 
     step_pct = width_pct / grids
     stop_loss = lower * 0.975
     pos = (price - lower) / (upper - lower) * 100
 
     # Punteggio tecnico.
-    score, why = 0, []
+    score = 0
+    why = []
 
     if adx < 20:
         score += 2
-        why.append(f"✅ ADX {adx:.0f}: mercato laterale, ideale per la griglia")
+        why.append(
+            f"✅ ADX {adx:.0f}: mercato laterale, ideale per la griglia"
+        )
     elif adx < 25:
         score += 1
         why.append(f"🟡 ADX {adx:.0f}: trend debole, accettabile")
     elif adx < 30:
         score -= 1
         why.append(
-            f"⚠️ ADX {adx:.0f}: trend in formazione, rischio uscita dal range"
+            f"⚠️ ADX {adx:.0f}: trend in formazione, "
+            "rischio uscita dal range"
         )
     else:
         score -= 3
@@ -335,7 +354,9 @@ def analyze():
     elif rsi14 > 70 or rsi14 < 30:
         score -= 2
         state = "ipercomprato" if rsi14 > 70 else "ipervenduto"
-        why.append(f"❌ RSI {rsi14:.0f}: {state}, possibile movimento brusco")
+        why.append(
+            f"❌ RSI {rsi14:.0f}: {state}, possibile movimento brusco"
+        )
     else:
         why.append(f"🟡 RSI {rsi14:.0f}: lievemente sbilanciato")
 
@@ -403,67 +424,161 @@ def analyze():
     }
 
 
-# ---------------------------------------------------------------- CALENDARIO NEWS
+# ---------------------------------------------------------------- CALENDARIO FINNHUB
+
+def safe_finnhub_detail(value):
+    """Pulisce un messaggio Finnhub prima di inserirlo nel log/report."""
+    text = str(value or "").strip()
+
+    if FINNHUB_API_KEY:
+        text = text.replace(FINNHUB_API_KEY, "[chiave omessa]")
+
+    text = re.sub(
+        r"([?&]token=)[^&\s\"']+",
+        r"\1[omesso]",
+        text,
+        flags=re.IGNORECASE,
+    )
+    text = re.sub(r"[\r\n\t]+", " ", text)
+
+    return text[:300] or "nessun dettaglio fornito"
+
+
+def finnhub_http_error(status_code, payload):
+    detail = None
+
+    if isinstance(payload, dict):
+        detail = (
+            payload.get("error")
+            or payload.get("message")
+            or payload.get("detail")
+        )
+
+    if not detail:
+        detail = "risposta non JSON o senza dettagli"
+
+    hints = {
+        401: (
+            "Controlla che la chiave sia valida e che GitHub Actions "
+            "la passi come FINNHUB_API_KEY."
+        ),
+        403: (
+            "L'account o il piano Finnhub potrebbe non avere accesso "
+            "a questo endpoint."
+        ),
+        429: (
+            "È stato raggiunto il limite di richieste Finnhub."
+        ),
+    }
+
+    safe_detail = safe_finnhub_detail(detail)
+    hint = hints.get(status_code, "")
+
+    if hint:
+        return f"Finnhub HTTP {status_code}: {safe_detail}. {hint}"
+
+    return f"Finnhub HTTP {status_code}: {safe_detail}"
+
 
 def parse_calendar_time(value):
-    """Interpreta gli orari Finnhub come UTC se non hanno un fuso esplicito."""
+    """Interpreta l'orario dell'evento come UTC se non ha un fuso esplicito."""
     raw = str(value).strip()
 
     if raw.endswith("Z"):
         raw = raw[:-1] + "+00:00"
 
-    dt = datetime.fromisoformat(raw)
+    result = datetime.fromisoformat(raw)
 
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
+    if result.tzinfo is None:
+        result = result.replace(tzinfo=timezone.utc)
 
-    return dt.astimezone(timezone.utc)
+    return result.astimezone(timezone.utc)
 
 
 def fetch_macro_events(now):
     """
-    Recupera gli eventi economici per i paesi in NEWS_COUNTRIES.
-    L'orario dell'evento viene trattato come UTC e poi convertito nel fuso locale.
+    Scarica il calendario economico Finnhub per i paesi configurati.
+    Gli orari del calendario vengono interpretati come UTC.
     """
     if not FINNHUB_API_KEY:
-        raise RuntimeError("FINNHUB_API_KEY mancante")
+        raise RuntimeError(
+            "FINNHUB_API_KEY assente nell'ambiente. "
+            "Controlla il secret GitHub e la configurazione env del workflow."
+        )
 
     today_local = now.astimezone(LOCAL_TZ).date()
 
-    r = requests.get(
-        "https://finnhub.io/api/v1/calendar/economic",
-        params={
-            "from": (today_local - timedelta(days=1)).isoformat(),
-            "to": (today_local + timedelta(days=1)).isoformat(),
-            "token": FINNHUB_API_KEY,
-        },
-        timeout=15,
-    )
-    r.raise_for_status()
+    params = {
+        "from": (today_local - timedelta(days=1)).isoformat(),
+        "to": (today_local + timedelta(days=1)).isoformat(),
+        "token": FINNHUB_API_KEY,
+    }
 
-    payload = r.json()
-    if not isinstance(payload, dict) or not isinstance(
-        payload.get("economicCalendar"), list
-    ):
-        raise RuntimeError("Risposta del calendario Finnhub non valida")
+    try:
+        response = requests.get(
+            "https://finnhub.io/api/v1/calendar/economic",
+            params=params,
+            timeout=15,
+        )
+    except requests.Timeout:
+        raise RuntimeError("Timeout durante la richiesta a Finnhub.") from None
+    except requests.RequestException as exc:
+        # Non stampare il testo dell'errore: potrebbe contenere l'URL della richiesta.
+        raise RuntimeError(
+            f"Errore di rete verso Finnhub ({type(exc).__name__})."
+        ) from None
+
+    try:
+        payload = response.json()
+    except ValueError:
+        raise RuntimeError(
+            finnhub_http_error(response.status_code, None)
+        ) from None
+
+    if response.status_code != 200:
+        raise RuntimeError(
+            finnhub_http_error(response.status_code, payload)
+        )
+
+    if not isinstance(payload, dict):
+        raise RuntimeError(
+            "Finnhub HTTP 200: formato della risposta non valido."
+        )
+
+    if payload.get("error"):
+        raise RuntimeError(
+            "Finnhub: " + safe_finnhub_detail(payload["error"])
+        )
+
+    calendar = payload.get("economicCalendar")
+
+    if not isinstance(calendar, list):
+        received_keys = ", ".join(str(key) for key in payload.keys())
+        raise RuntimeError(
+            "Finnhub HTTP 200: campo 'economicCalendar' assente o non valido. "
+            f"Campi ricevuti: {received_keys or 'nessuno'}."
+        )
 
     events = []
 
-    for item in payload["economicCalendar"]:
+    for item in calendar:
         country = str(item.get("country") or "").strip()
-        country_code = normalize_country(country)
 
-        if country_code not in NEWS_COUNTRIES:
+        if normalize_country(country) not in NEWS_COUNTRIES:
             continue
 
         if not item.get("time"):
             continue
 
-        dt = parse_calendar_time(item["time"])
-        local_dt = dt.astimezone(LOCAL_TZ)
-        minutes_to_event = (dt - now).total_seconds() / 60
+        try:
+            event_time = parse_calendar_time(item["time"])
+        except (TypeError, ValueError):
+            continue
 
-        is_today = local_dt.date() == today_local
+        local_time = event_time.astimezone(LOCAL_TZ)
+        minutes_to_event = (event_time - now).total_seconds() / 60
+
+        is_today = local_time.date() == today_local
         relevant_for_gate = (
             -NEWS_LOOKBACK_HOURS * 60
             <= minutes_to_event
@@ -475,8 +590,8 @@ def fetch_macro_events(now):
 
         events.append(
             {
-                "dt": dt,
-                "local_dt": local_dt,
+                "dt": event_time,
+                "local_dt": local_time,
                 "country": country,
                 "impact": str(item.get("impact") or "unknown").strip().lower(),
                 "name": str(item.get("event") or "Evento"),
@@ -491,7 +606,7 @@ def fetch_macro_events(now):
 
 def get_post_news_reaction(event):
     """
-    Misura la reazione di SOL dopo l'evento usando candele da 5 minuti.
+    Misura la reazione SOL dopo l'evento con candele da 5 minuti.
     Non assegna un sentiment al testo della notizia.
     """
     candles = get_candles(interval=5)
@@ -513,29 +628,29 @@ def get_post_news_reaction(event):
         i for i, timestamp in enumerate(times)
         if timestamp >= first_post_ts
     ]
+
     pre_indices = [
         i for i, timestamp in enumerate(times)
         if timestamp + interval_seconds <= release_ts
     ]
 
-    # Servono almeno 4 candele post-evento per stimare il movimento su 15 minuti.
+    # Servono almeno quattro candele post-news.
     if len(pre_indices) < 1 or len(post_indices) < 4:
         return None
 
     last_four = post_indices[-4:]
 
-    # Evita di calcolare la reazione usando dati con intervalli mancanti.
+    # Se ci sono buchi nei dati, la misura su 15 minuti non è affidabile.
     if any(
         times[b] - times[a] != interval_seconds
         for a, b in zip(last_four, last_four[1:])
     ):
         return None
 
-    latest_timestamp = times[-1]
-    latest_bar_close_time = latest_timestamp + interval_seconds
+    latest_bar_close_time = times[-1] + interval_seconds
     now_ts = datetime.now(timezone.utc).timestamp()
 
-    # Se i dati 5m sono troppo vecchi, non considerarli una conferma valida.
+    # Non usare candele troppo vecchie come conferma della reazione.
     if now_ts - latest_bar_close_time > 15 * 60:
         return None
 
@@ -548,7 +663,6 @@ def get_post_news_reaction(event):
     reaction_pct = (current_price / pre_price - 1) * 100
     move_15m_pct = (closes[last_four[-1]] / closes[last_four[0]] - 1) * 100
 
-    # Le ultime 3 candele coprono 15 minuti.
     last_three = last_four[-3:]
     high_15m = max(candles["high"][i] for i in last_three)
     low_15m = min(candles["low"][i] for i in last_three)
@@ -581,28 +695,36 @@ def get_news_context(hourly_times):
     try:
         events = fetch_macro_events(now)
     except Exception as exc:
-        # Evita di stampare URL o parametri che potrebbero contenere la API key.
-        print(
-            "⚠️ Calendario news non disponibile "
-            f"({type(exc).__name__})."
-        )
+        if isinstance(exc, RuntimeError):
+            error = str(exc)
+        else:
+            error = (
+                "Errore durante la lettura del calendario "
+                f"({type(exc).__name__})."
+            )
+
+        print(f"⚠️ Calendario Finnhub: {error}")
+
         return {
             "ok": False,
+            "key_configured": bool(FINNHUB_API_KEY),
             "state": "unknown",
             "events": [],
             "event": None,
             "reaction": None,
             "now": now,
-            "error": "Calendario non disponibile o non configurato",
+            "error": error,
         }
 
     result = {
         "ok": True,
+        "key_configured": True,
         "state": "clear",
         "events": events,
         "event": None,
         "reaction": None,
         "now": now,
+        "error": None,
     }
 
     high_impact = [
@@ -610,7 +732,7 @@ def get_news_context(hourly_times):
         if event["impact"] == "high"
     ]
 
-    # 1. Non aprire una nuova griglia nei minuti prima di una news importante.
+    # Non aprire una nuova griglia nei minuti prima di una news importante.
     upcoming = [
         event for event in high_impact
         if timedelta(0) <= event["dt"] - now
@@ -624,7 +746,7 @@ def get_news_context(hourly_times):
         )
         return result
 
-    # 2. Attendi il cooldown subito dopo l'uscita della news.
+    # Attendi il cooldown dopo l'uscita della news.
     recent = [
         event for event in high_impact
         if timedelta(0) <= now - event["dt"]
@@ -638,8 +760,7 @@ def get_news_context(hourly_times):
         )
         return result
 
-    # 3. Dopo il cooldown, aspetta una candela oraria interamente successiva
-    #    alla news. Le candele orarie sono usate dagli indicatori tecnici.
+    # Dopo il cooldown aspetta una candela oraria completa successiva alla news.
     post_events = [
         event for event in high_impact
         if timedelta(minutes=NEWS_COOLDOWN_MIN)
@@ -660,7 +781,10 @@ def get_news_context(hourly_times):
         )
 
         if not has_closed_post_news_hour:
-            result.update(state="wait_hour", event=event)
+            result.update(
+                state="wait_hour",
+                event=event,
+            )
             return result
 
         try:
@@ -690,18 +814,17 @@ def get_news_context(hourly_times):
 
 # ---------------------------------------------------------------- DECISIONE
 
-def decide(a, news):
-    """Verdetto e istruzioni. Il calendario filtra le nuove aperture."""
+def decide(analysis, news):
+    """Verdetto e istruzioni. Il filtro news riguarda le nuove aperture."""
 
     active_outside = None
 
-    # Se c'è già una griglia attiva, non suggerire modifiche se è ancora
-    # dentro al range e sufficientemente lontana dai bordi.
+    # Gestione di una griglia già attiva.
     if ACTIVE_LOWER and ACTIVE_UPPER:
         try:
             active_lower = float(ACTIVE_LOWER)
             active_upper = float(ACTIVE_UPPER)
-            price = a["price"]
+            price = analysis["price"]
 
             if active_lower >= active_upper:
                 raise ValueError("Range attivo non valido")
@@ -722,7 +845,7 @@ def decide(a, news):
                         "🟠 VALUTA DI RICENTRARE",
                         f"Prezzo a {edge:.1f}% da un estremo del tuo range "
                         f"({active_lower:.2f}–{active_upper:.2f}). "
-                        "Controlla il bot su Pionex; per una nuova apertura "
+                        "Controlla il bot su Pionex. Per una nuova apertura, "
                         "rispetta anche il filtro news del report.",
                     )
 
@@ -734,8 +857,7 @@ def decide(a, news):
                     "può comportare costi.",
                 )
 
-        except ValueError:
-            # Se i valori del range attivo non sono validi, prosegue con l'analisi.
+        except (ValueError, TypeError):
             active_outside = None
 
     def add_active_context(text):
@@ -750,7 +872,8 @@ def decide(a, news):
             "🟠 CALENDARIO NEWS NON VERIFICATO",
             add_active_context(
                 "Non avviare una nuova griglia: il calendario non è stato "
-                "verificato. Controlla FINNHUB_API_KEY e la connessione."
+                "verificato. Controlla FINNHUB_API_KEY e la configurazione "
+                "del workflow GitHub Actions."
             ),
         )
 
@@ -762,6 +885,7 @@ def decide(a, news):
                 (event["dt"] - news["now"]).total_seconds() / 60
             ),
         )
+
         return (
             "⏸️ ATTESA NEWS",
             add_active_context(
@@ -779,6 +903,7 @@ def decide(a, news):
             0,
             math.ceil(NEWS_COOLDOWN_MIN - elapsed),
         )
+
         return (
             "⏸️ ATTESA REAZIONE POST-NEWS",
             add_active_context(
@@ -799,6 +924,7 @@ def decide(a, news):
 
     if state == "unstable":
         reaction = news["reaction"]
+
         return (
             "🟠 ATTESA: MERCATO ANCORA VOLATILE",
             add_active_context(
@@ -827,7 +953,7 @@ def decide(a, news):
             ),
         )
 
-    score = a["score"]
+    score = analysis["score"]
 
     if active_outside:
         if score >= 4:
@@ -887,7 +1013,7 @@ def decide(a, news):
 
 # ---------------------------------------------------------------- COMMENTO GEMINI
 
-def ai_comment(a, verdict):
+def ai_comment(analysis, verdict):
     if not GEMINI_KEY or genai is None:
         return "n/d"
 
@@ -895,12 +1021,14 @@ def ai_comment(a, verdict):
         client = genai.Client(api_key=GEMINI_KEY)
 
         prompt = (
-            "Sei un analista di trading prudente. Dati reali SOL/USD: "
-            f"prezzo {a['price']:.2f}, var 24h {a['chg24']:+.1f}%, "
-            f"var 7g {a['chg7d']:+.1f}%, ADX {a['adx']:.0f}, "
-            f"RSI {a['rsi']:.0f}, EMA20 {a['ema20']:.2f}, "
-            f"EMA50 {a['ema50']:.2f}, min/max 7g "
-            f"{a['l7']:.2f}/{a['h7']:.2f}. "
+            "Sei un analista di trading prudente. Dati SOL/USD: "
+            f"prezzo {analysis['price']:.2f}, "
+            f"var 24h {analysis['chg24']:+.1f}%, "
+            f"var 7g {analysis['chg7d']:+.1f}%, "
+            f"ADX {analysis['adx']:.0f}, RSI {analysis['rsi']:.0f}, "
+            f"EMA20 {analysis['ema20']:.2f}, "
+            f"EMA50 {analysis['ema50']:.2f}, min/max 7g "
+            f"{analysis['l7']:.2f}/{analysis['h7']:.2f}. "
             f"Verdetto del sistema: {verdict}. "
             "In 3 frasi in italiano spiega il contesto di mercato e il "
             "principale rischio per un grid bot. Non inventare numeri e non "
@@ -924,12 +1052,24 @@ def ai_comment(a, verdict):
 
 def calendar_report_lines(news):
     if not news or not news.get("ok"):
+        key_configured = bool(
+            news and news.get("key_configured")
+        )
+        error = (
+            news.get("error", "errore non specificato")
+            if news
+            else "calendario non disponibile"
+        )
+
         return [
-            "• Calendario non verificato: non considerare il punteggio "
-            "tecnico come via libera per una nuova apertura."
+            f"• FINNHUB_API_KEY presente nel job: "
+            f"{'sì' if key_configured else 'no'}",
+            f"• Errore: {error}",
+            "• Per prudenza il filtro non considera il calendario verificato.",
         ]
 
     today = news["now"].astimezone(LOCAL_TZ).date()
+
     today_events = [
         event for event in news.get("events", [])
         if event["local_dt"].date() == today
@@ -939,15 +1079,15 @@ def calendar_report_lines(news):
 
     if not today_events:
         lines.append(
-            "• Nessun evento riportato oggi da Finnhub per "
-            f"{NEWS_COUNTRIES_LABEL}."
+            "• Finnhub ha risposto correttamente, ma non ha restituito "
+            f"eventi per {NEWS_COUNTRIES_LABEL} oggi."
         )
     else:
         for event in today_events[:8]:
-            impact = event["impact"].upper()
             line = (
                 f"• {event['local_dt'].strftime('%H:%M')} "
-                f"{event['country']} {impact} — {event['name']}"
+                f"{event['country']} {event['impact'].upper()} — "
+                f"{event['name']}"
             )
 
             details = []
@@ -972,6 +1112,7 @@ def calendar_report_lines(news):
             )
 
     reaction = news.get("reaction")
+
     if reaction:
         stability = "stabile" if reaction["stable"] else "ancora volatile"
         lines.append(
@@ -984,9 +1125,9 @@ def calendar_report_lines(news):
     return lines
 
 
-def build_report(a, news):
-    verdict, instructions = decide(a, news)
-    comment = ai_comment(a, verdict)
+def build_report(analysis, news):
+    verdict, instructions = decide(analysis, news)
+    comment = ai_comment(analysis, verdict)
 
     lines = [
         "🤖 PIONEX GRID – SOL/USDT",
@@ -995,26 +1136,31 @@ def build_report(a, news):
         instructions,
         "",
         "📋 PARAMETRI (solo se il verdetto consente l'avvio)",
-        f"• Lower: {a['lower']:.2f}",
-        f"• Upper: {a['upper']:.2f}",
-        f"• Grids: {a['grids']} (passo ~{a['step_pct']:.2f}%)",
-        f"• Investimento: ~{a['invest_usdt']:.0f} USDT "
-        f"(≈{a['per_grid']:.1f} USDT per griglia)",
-        f"• Stop loss indicativo: {a['stop']:.2f}",
+        f"• Lower: {analysis['lower']:.2f}",
+        f"• Upper: {analysis['upper']:.2f}",
+        f"• Grids: {analysis['grids']} "
+        f"(passo ~{analysis['step_pct']:.2f}%)",
+        f"• Investimento: ~{analysis['invest_usdt']:.0f} USDT "
+        f"(≈{analysis['per_grid']:.1f} USDT per griglia)",
+        f"• Stop loss indicativo: {analysis['stop']:.2f}",
         "",
-        f"📰 CALENDARIO ECONOMICO ({NEWS_COUNTRIES_LABEL}, {LOCAL_TZ_NAME})",
+        f"📰 CALENDARIO ECONOMICO "
+        f"({NEWS_COUNTRIES_LABEL}, {LOCAL_TZ_NAME})",
         *calendar_report_lines(news),
         "",
         "📊 MERCATO",
-        f"• Prezzo: ${a['price']:.2f} "
-        f"({a['chg24']:+.1f}% 24h | {a['chg7d']:+.1f}% 7g)",
-        f"• Min/Max 24h: {a['l24']:.2f} / {a['h24']:.2f}",
-        f"• Min/Max 7g: {a['l7']:.2f} / {a['h7']:.2f}",
-        f"• Posizione nel range proposto: {a['pos']:.0f}% "
+        f"• Prezzo: ${analysis['price']:.2f} "
+        f"({analysis['chg24']:+.1f}% 24h | "
+        f"{analysis['chg7d']:+.1f}% 7g)",
+        f"• Min/Max 24h: {analysis['l24']:.2f} / "
+        f"{analysis['h24']:.2f}",
+        f"• Min/Max 7g: {analysis['l7']:.2f} / "
+        f"{analysis['h7']:.2f}",
+        f"• Posizione nel range proposto: {analysis['pos']:.0f}% "
         "(0=basso, 100=alto)",
         "",
-        f"🔎 PERCHÉ (punteggio {a['score']}/6)",
-        *a["why"],
+        f"🔎 PERCHÉ (punteggio {analysis['score']}/6)",
+        *analysis["why"],
         "",
         f"📝 {comment}",
         "",
@@ -1030,6 +1176,11 @@ def build_report(a, news):
 # ---------------------------------------------------------------- AVVIO
 
 def main():
+    print(
+        "Finnhub API key configurata:",
+        "sì" if FINNHUB_API_KEY else "NO",
+    )
+
     try:
         analysis = analyze()
     except Exception as exc:
