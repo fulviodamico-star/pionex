@@ -1,14 +1,17 @@
 {
   "active": false,
+  "coin": "SOL",
+  "pionex_symbol": "SOL_USDT",
   "entry_price": 0.0,
   "highest_price": 0.0,
   "lower": 0.0,
   "upper": 0.0,
   "stop": 0.0,
   "grids": 0,
-  "qty_sol": 0.0,
+  "qty_coin": 0.0,
   "trailing_locked": false,
   "opened_at": "",
   "last_action": "Nessuna azione",
-  "history": []
+  "history": [],
+  "qty_sol": 0.0
 }
