@@ -1035,7 +1035,7 @@ def analyze():
 
     # --- Volumi & Smart Money ---
     vol_sma20 = sma(vols_1h[:-1], 20)
-    red_ candle_vol_ratios = []
+    red_candle_vol_ratios = []
     for i in range(-3, 0):
         if closes_1h[i] < opens_1h[i]:
             red_candle_vol_ratios.append(vols_1h[i] / vol_sma20 if vol_sma20 else 1.0)
