@@ -1,9 +1,9 @@
-name: Neural Quant Grid Bot
+name: Pionex Neural Quant Grid Bot
 
 on:
-  workflow_dispatch:
   schedule:
     - cron: '*/30 * * * *'
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -12,23 +12,23 @@ jobs:
   run-bot:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout codice
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Configura Python
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      - name: Installa dipendenze
+      - name: Install dependencies
         run: pip install requests
 
-      - name: Avvia Neural Quant Bot
+      - name: Run Neural Bot & Build WebApp
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          ACTIVE_LOWER: ${{ vars.ACTIVE_LOWER }}
-          ACTIVE_UPPER: ${{ vars.ACTIVE_UPPER }}
+          ACTIVE_LOWER: ${{ secrets.ACTIVE_LOWER }}
+          ACTIVE_UPPER: ${{ secrets.ACTIVE_UPPER }}
           AUTO_TRADE_ENABLED: "false"
           PIONEX_WEBHOOK_URL: ${{ secrets.PIONEX_WEBHOOK_URL }}
           PIONEX_SIGNAL_TOKEN: ${{ secrets.PIONEX_SIGNAL_TOKEN }}
@@ -36,11 +36,9 @@ jobs:
           PIONEX_API_SECRET: ${{ secrets.PIONEX_API_SECRET }}
         run: python main.py
 
-      - name: Salva Memoria Autonoma (bot_state.json)
+      - name: Save Bot State & WebApp Dashboard
         run: |
-          if [ -f bot_state.json ]; then
-            git config --global user.name "NeuralGridBot"
-            git config --global user.email "bot@users.noreply.github.com"
-            git add bot_state.json
-            git diff --staged --quiet || (git commit -m "Aggiornamento memoria bot_state.json [skip ci]" && git pull --rebase && git push)
-          fi
+          git config --global user.name "NeuralGridBot"
+          git config --global user.email "bot@users.noreply.github.com"
+          git add bot_state.json index.html || true
+          git diff --staged --quiet || (git commit -m "Aggiornamento Dashboard e Stato Bot [skip ci]" && git pull --rebase && git push)
