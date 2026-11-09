@@ -21,16 +21,16 @@ MIN_ORDER_USDT = 5.0
 PAIR = "SOLUSD"
 BTC_PAIR = "XBTUSD"
 
-# Range attivo fallback (se non gestito dal file di stato autonomo)
-ACTIVE_LOWER = float(os.getenv("ACTIVE_LOWER", "0"))
-ACTIVE_UPPER = float(os.getenv("ACTIVE_UPPER", "0"))
+# Range attivo fallback (gestisce anche Secrets vuoti su GitHub Actions)
+ACTIVE_LOWER = float(os.getenv("ACTIVE_LOWER") or "0")
+ACTIVE_UPPER = float(os.getenv("ACTIVE_UPPER") or "0")
 
 # Configurazione Esecuzione Autonoma (Paper Trading / Live Pionex)
-AUTO_TRADE_ENABLED = os.getenv("AUTO_TRADE_ENABLED", "false").lower() == "true"
-PIONEX_WEBHOOK_URL = os.getenv("PIONEX_WEBHOOK_URL", "")
-PIONEX_SIGNAL_TOKEN = os.getenv("PIONEX_SIGNAL_TOKEN", "")
-PIONEX_API_KEY = os.getenv("PIONEX_API_KEY", "")
-PIONEX_API_SECRET = os.getenv("PIONEX_API_SECRET", "")
+AUTO_TRADE_ENABLED = (os.getenv("AUTO_TRADE_ENABLED") or "false").strip().lower() == "true"
+PIONEX_WEBHOOK_URL = os.getenv("PIONEX_WEBHOOK_URL") or ""
+PIONEX_SIGNAL_TOKEN = os.getenv("PIONEX_SIGNAL_TOKEN") or ""
+PIONEX_API_KEY = os.getenv("PIONEX_API_KEY") or ""
+PIONEX_API_SECRET = os.getenv("PIONEX_API_SECRET") or ""
 STATE_FILE = "bot_state.json"
 
 # Passo griglia target e commissioni Pionex (0.05% buy + 0.05% sell = 0.10%)
@@ -147,9 +147,9 @@ def trigger_pionex_webhook(action, price, qty_sol):
         "token": PIONEX_SIGNAL_TOKEN,
         "time": datetime.now(timezone.utc).isoformat(),
         "symbol": "SOL_USDT",
-        "action": action.lower(),  # "buy" o "sell"
+        "action": action.lower(),
         "price": str(round(price, 2)),
-        " contracts": str(round(qty_sol, 4)),
+        "contracts": str(round(qty_sol, 4)),
         "position_size": str(round(qty_sol, 4)) if action.lower() == "buy" else "0",
     }
     try:
@@ -834,8 +834,8 @@ def run_neural_and_lorentzian_ai(highs, lows, closes, vols):
         f3 = ((ema20_s[idx_e20] - ema50_s[idx_e50]) / max(ema50_s[idx_e50], 1e-8)) * 25.0
         f4 = (macd_s[idx_macd] / max(p, 1e-8)) * 300.0
         ret_4h = ((p - closes[idx - 4]) / max(closes[idx - 4], 1e-8)) * 20.0
-        v_Window = vols[max(0, idx - 20):idx + 1]
-        v_avg = (sum(v_Window) / len(v_Window)) if v_Window else 1.0
+        v_window = vols[max(0, idx - 20):idx + 1]
+        v_avg = (sum(v_window) / len(v_window)) if v_window else 1.0
         f6 = (vols[idx] / max(v_avg, 1e-8)) - 1.0
         return [
             max(-3.0, min(3.0, f1)),
@@ -1103,6 +1103,9 @@ def analyze():
         p1 = 1.0
     pts += p1
     breakdown.append(
+        f"🧠 <b>AI Neural MLP + Lorentzian k-NN ({p1:.0f}/15)</b>: Probabilità Long <b>{ai_prob*100:.1f}%</b> "
+        f"(MLP {a_mlp_pct(ai_res)}% | k-NN {a_knn_pct(ai_res)}%)"
+        if False else
         f"🧠 <b>AI Neural MLP + Lorentzian k-NN ({p1:.0f}/15)</b>: Probabilità Long <b>{ai_prob*100:.1f}%</b> "
         f"(MLP {ai_res['mlp_prob']*100:.0f}% | k-NN {ai_res['knn_prob']*100:.0f}%)"
     )
@@ -1709,30 +1712,30 @@ def format_message(a, news):
     nr = a["news_reaction"]
 
     final_score = a["score"]
-    news_Override_reason = None
+    news_override_reason = None
 
     if news["status"] == "IMMINENT":
         has_high = any(e["impact"] == "High" for e in news["imminent"])
         if has_high:
             final_score = min(final_score, 2)
-            news_Override_reason = "⛔ <b>BLOCCO NEWS</b>: Notizia USA ad ALTO impatto imminente!"
+            news_override_reason = "⛔ <b>BLOCCO NEWS</b>: Notizia USA ad ALTO impatto imminente!"
         else:
             final_score = min(final_score, 4)
-            news_Override_reason = "⚠️ <b>PRUDENZA NEWS</b>: Notizia USA a medio impatto imminente."
+            news_override_reason = "⚠️ <b>PRUDENZA NEWS</b>: Notizia USA a medio impatto imminente."
     elif news["status"] == "COOLDOWN":
         if news["surprise_detected"] and not nr["calm"]:
             final_score = min(final_score, 2)
-            news_Override_reason = "⛔ <b>SHOCK MACRO</b>: Dati USA a sorpresa e SOL molto volatile!"
+            news_override_reason = "⛔ <b>SHOCK MACRO</b>: Dati USA a sorpresa e SOL molto volatile!"
         elif not nr["calm"]:
             final_score = min(final_score, 3)
-            news_Override_reason = "⏳ <b>COOLDOWN NEWS</b>: Notizia appena uscita e SOL ancora instabile."
+            news_override_reason = "⏳ <b>COOLDOWN NEWS</b>: Notizia appena uscita e SOL ancora instabile."
         elif news["surprise_detected"] and nr["calm"]:
             final_score = min(final_score, 5)
-            news_Override_reason = "⚠️ <b>DATI A SORPRESA</b>: SOL calmo, ma attendere conferme."
+            news_override_reason = "⚠️ <b>DATI A SORPRESA</b>: SOL calmo, ma attendere conferme."
 
     if news["us_open_warning"] and not nr["calm"]:
         final_score = min(final_score, 4)
-        news_Override_reason = "⚠️ <b>APERTURA WALL STREET</b>: Volatilità elevata sull'apertura USA."
+        news_override_reason = "⚠️ <b>APERTURA WALL STREET</b>: Volatilità elevata sull'apertura USA."
 
     if final_score >= 8:
         verdict = "🟢 <b>SEGNALE FORTE: OTTIMO MOMENTO PER APRIRE LA GRIGLIA</b>"
@@ -1743,14 +1746,14 @@ def format_message(a, news):
     elif final_score == 5:
         verdict = "🟡 <b>NEUTRALE (5/10): MERCATO INCERTO, MEGLIO ATTENDERE</b>"
     elif final_score >= 3:
-        verdict = "🟠 <b> SCONSIGLIATO: CONDIZIONI TECNICO/MACRO SFAVOREVOLI</b>"
+        verdict = "🟠 <b>SCONSIGLIATO: CONDIZIONI TECNICO/MACRO SFAVOREVOLI</b>"
     else:
         verdict = "🔴 <b>PERICOLO / BLOCCO: NON APRIRE IL BOT ADESSO</b>"
 
     breakdown_txt = "\n".join(f"• {item}" for item in a["breakdown"])
     veto_list = list(a["veto_reasons"])
-    if news_Override_reason:
-        veto_list.append(news_Override_reason)
+    if news_override_reason:
+        veto_list.append(news_override_reason)
     veto_txt = ("\n\n🚨 <b>FILTRI DI SICUREZZA ATTIVI</b>\n" + "\n".join(veto_list)) if veto_list else ""
 
     news_section = format_news_section(news, nr)
