@@ -1,14 +1,19 @@
 from datetime import datetime, timezone
+import hashlib
+import hmac
+import json
 import math
 import os
+import random
 import re
 import sys
+import time
 from zoneinfo import ZoneInfo
 import requests
 
 
 # ---------------------------------------------------------------------
-# 1. CONFIGURAZIONE E VARIABILI D'AMBIENTE (CALIBRAZIONE QUANT)
+# 1. CONFIGURAZIONE E VARIABILI D'AMBIENTE (QUANT + NEURAL ENGINE)
 # ---------------------------------------------------------------------
 
 TG_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
@@ -16,6 +21,15 @@ TG_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
 
 ACTIVE_LOWER = os.getenv("ACTIVE_LOWER", "").strip()
 ACTIVE_UPPER = os.getenv("ACTIVE_UPPER", "").strip()
+
+STATE_FILE = "bot_state.json"
+AUTO_TRADE_ENABLED = (
+    os.getenv("AUTO_TRADE_ENABLED", "false").strip().lower() == "true"
+)
+PIONEX_WEBHOOK_URL = os.getenv("PIONEX_WEBHOOK_URL", "").strip()
+PIONEX_SIGNAL_TOKEN = os.getenv("PIONEX_SIGNAL_TOKEN", "").strip()
+PIONEX_API_KEY = os.getenv("PIONEX_API_KEY", "").strip()
+PIONEX_API_SECRET = os.getenv("PIONEX_API_SECRET", "").strip()
 
 CALENDAR_URL = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
 FNG_URL = "https://api.alternative.me/fng/?limit=1"
@@ -70,7 +84,6 @@ try:
 except Exception:
     NY_TZ = timezone.utc
 
-# Parametri News bilanciati
 NEWS_BLOCK_BEFORE_MIN = int(os.getenv("NEWS_BLOCK_BEFORE_MIN", "60"))
 NEWS_COOLDOWN_MIN = int(os.getenv("NEWS_COOLDOWN_MIN", "30"))
 NEWS_SURPRISE_COOLDOWN_MIN = int(os.getenv("NEWS_SURPRISE_COOLDOWN_MIN", "90"))
@@ -94,7 +107,7 @@ CRITICAL_KEYWORDS = [
 NEWS_MAX_15M_RANGE_PCT = float(os.getenv("NEWS_MAX_15M_RANGE_PCT", "1.25"))
 NEWS_MAX_15M_MOVE_PCT = float(os.getenv("NEWS_MAX_15M_MOVE_PCT", "1.00"))
 
-INVEST_EUR = 50
+INVEST_EUR = float(os.getenv("INVEST_EUR", "50"))
 MIN_ORDER_USDT = 5.0
 TARGET_STEP_PCT = 0.32
 PIONEX_ROUNDTRIP_FEE_PCT = 0.10
@@ -102,49 +115,49 @@ MIN_NET_STEP_PCT = 0.15
 
 
 # ---------------------------------------------------------------------
-# 2. SCALA DECISIONALE DA 1 A 10 (SOGLIA APERTURA A 7/10)
+# 2. SCALA DECISIONALE DA 1 A 10
 # ---------------------------------------------------------------------
 
 SCORE_ACTIONS = {
     1: {
-        "title": "⛔ 1/10 — BLOCCO TOTALE (EMERGENZA)",
-        "desc": "Crollo violento in corso o news critica (FOMC/CPI) imminente. Resta 100% liquido in USDT.",
+        "title": "⛔ 1/10 — BLOCCO TOTALE (CHIUSURA D'EMERGENZA)",
+        "desc": "Crollo severo in corso o news critica (FOMC/CPI) imminente. Resta 100% in USDT.",
     },
     2: {
-        "title": "🔴 2/10 — NON APRIRE (PERICOLO ELEVATO)",
-        "desc": "Veto di sicurezza attivo: dump di BTC/SOL, forti vendite sull'orderbook o news appena uscita.",
+        "title": "🔴 2/10 — PERICOLO ELEVATO (USCITA DI SICUREZZA)",
+        "desc": "Veto di rischio attivo: dump di BTC/SOL, forti vendite sull'orderbook o news appena uscita.",
     },
     3: {
         "title": "🔴 3/10 — SCONSIGLIATO (STRUTTURA RIBASSISTA)",
-        "desc": "Trend 4H/1H negativo e indicatori di momentum girati al ribasso. Rischio Stop Loss alto.",
+        "desc": "Trend 4H/1H negativo e Rete Neurale pessimista. Rischio Stop Loss elevato.",
     },
     4: {
         "title": "🟠 4/10 — ATTENDI (MERCATO SFAVOREVOLE)",
-        "desc": "Pressione in vendita superiore agli acquisti o compressione pericolosa. Non anticipare.",
+        "desc": "Pressione in vendita superiore agli acquisti o compressione pericolosa.",
     },
     5: {
         "title": "🟡 5/10 — NEUTRALE (MEGLIO ASPETTARE)",
-        "desc": "Dati contrastanti o prezzo sopra il VWAP/parte alta del canale. Rapporto rischio/rendimento mediocre.",
+        "desc": "Prezzo sopra il VWAP o rapporto rischio/rendimento mediocre. Non forzare.",
     },
     6: {
-        "title": "🟡 6/10 — QUASI PRONTO (OSSERVA)",
-        "desc": "Struttura discreta ma mancano conferme sul 15m o sull'orderbook. Attendi un piccolo sconto.",
+        "title": "🟡 6/10 — QUASI PRONTO (IN OSSERVAZIONE)",
+        "desc": "Struttura discreta ma mancano conferme neurali o micro-timing a 15m.",
     },
     7: {
-        "title": "🟢 7/10 — APRI IL BOT (BUON SETUP)",
-        "desc": "Confluenza positiva su più indicatori e filtri di rischio verdi. Puoi avviare la griglia.",
+        "title": "🟢 7/10 — AVVIO BOT AUTORIZZATO (BUON SETUP)",
+        "desc": "Confluenza positiva Quant + AI Neurale. Il sistema avvia la griglia.",
     },
     8: {
-        "title": "🟢 8/10 — APRI IL BOT (OTTIMO MOMENTO)",
-        "desc": "Regime laterale sano, orderbook a supporto, prezzo sotto/vicino al VWAP e buon margine netto.",
+        "title": "🟢 8/10 — OTTIMO SETUP (ALTA PROBABILITÀ AI)",
+        "desc": "Regime mean-reverting confermato (Hurst < 0.5), orderbook solido e buon margine.",
     },
     9: {
-        "title": "🔥 9/10 — APRI SENZA ESITARE (SETUP ECCELLENTE)",
-        "desc": "Allineamento multi-timeframe, derivati sani e rimbalzo confermato nella zona bassa del canale.",
+        "title": "🔥 9/10 — SETUP ECCELLENTE (FORTE CONFLUENZA)",
+        "desc": "Allineamento multi-timeframe, Rete Neurale rialzista e sconto sotto il VWAP.",
     },
     10: {
-        "title": "🚀 10/10 — SETUP ISTITUZIONALE PERFETTO",
-        "desc": "Massima confluenza su tutti gli 8 pilastri quantitativi. Condizioni ideali per il Grid Bot.",
+        "title": "🚀 10/10 — PERFEZIONE QUANTITATIVA & NEURALE",
+        "desc": "Massimo punteggio su tutti i 9 pilastri. Condizioni ideali per il Grid Bot.",
     },
 }
 
@@ -201,7 +214,6 @@ def get_orderbook_metrics(pair="SOLUSD", depth=50):
         result = next(iter(data["result"].values()))
         bids = result.get("bids", [])
         asks = result.get("asks", [])
-
         if not bids or not asks:
             return {"ok": False, "imbalance": 1.0, "spread_pct": 0.05}
 
@@ -210,14 +222,12 @@ def get_orderbook_metrics(pair="SOLUSD", depth=50):
         mid_price = (best_bid + best_ask) / 2
         spread_pct = (best_ask - best_bid) / mid_price * 100
 
-        # Pesa maggiormente i livelli vicini al prezzo attuale
         bid_vol = sum(
             float(b[1]) / (1 + i * 0.05) for i, b in enumerate(bids[:depth])
         )
         ask_vol = sum(
             float(a[1]) / (1 + i * 0.05) for i, a in enumerate(asks[:depth])
         )
-
         imbalance = bid_vol / ask_vol if ask_vol > 0 else 1.0
         return {"ok": True, "imbalance": imbalance, "spread_pct": spread_pct}
     except Exception:
@@ -236,10 +246,8 @@ def get_derivatives_and_sentiment():
                 (t for t in tickers if t.get("symbol") == "PF_SOLUSD"), None
             )
             if sol_perp:
-                # Funding rate orario/relativo convertito in % per 8h
                 raw_fr = float(sol_perp.get("fundingRate", 0.0))
                 mark_p = float(sol_perp.get("markPrice", 1.0))
-                # Kraken restituisce fundingRate assoluto o relativo; normalizziamo in %
                 fr_pct = (
                     (raw_fr / mark_p * 100)
                     if abs(raw_fr) > 0.005
@@ -282,7 +290,7 @@ def get_eurusd():
 
 
 # ---------------------------------------------------------------------
-# 4. LIBRERIA INDICATORI QUANTITATIVI (PURO PYTHON)
+# 4. INDICATORI QUANTITATIVI, ESPONENTE DI HURST E RETE NEURALE (MLP)
 # ---------------------------------------------------------------------
 
 
@@ -340,14 +348,13 @@ def stoch_rsi(closes, rsi_len=14, stoch_len=14):
 
 def macd_metrics(closes, fast=12, slow=26, sig=9):
     if len(closes) < slow + sig:
-        return 0.0, 0.0, False
+        return 0.0, 0.0, False, [0.0] * len(closes)
     fast_s = ema_series(closes, fast)
     slow_s = ema_series(closes, slow)
     macd_line = [f - s for f, s in zip(fast_s, slow_s)]
     sig_line = ema_series(macd_line, sig)
     hist = [m - s for m, s in zip(macd_line, sig_line)]
-    rising = hist[-1] > hist[-2]
-    return macd_line[-1], hist[-1], rising
+    return macd_line[-1], hist[-1], (hist[-1] > hist[-2]), hist
 
 
 def bollinger_bands(closes, n=20, mult=2.0):
@@ -365,11 +372,35 @@ def bollinger_bands(closes, n=20, mult=2.0):
     return low, mid, up, pct_b, bw_pct
 
 
-def variance_ratio_mr(closes, lag=6):
-    """Variance Ratio (< 1.0 indica Mean-Reversion ideale per Grid Bot,
+def hurst_exponent(closes):
+    """Calcola l'Esponente di Hurst (H):
 
-    > 1.0 indica Mercato Trending unidirezionale).
+    H < 0.50 -> Mercato Mean-Reverting (Ideale per Grid Bot)
+    H = 0.50 -> Random Walk
+    H > 0.50 -> Mercato Trending (Rischio uscita dal range)
     """
+    if len(closes) < 100:
+        return 0.50
+    lags = [2, 4, 8, 16, 32]
+    tau = []
+    log_p = [math.log(max(c, 1e-8)) for c in closes[-120:]]
+    for lag in lags:
+        diffs = [log_p[i] - log_p[i - lag] for i in range(lag, len(log_p))]
+        mean_d = sum(diffs) / len(diffs)
+        std_d = math.sqrt(sum((d - mean_d) ** 2 for d in diffs) / len(diffs))
+        tau.append(max(std_d, 1e-8))
+
+    x = [math.log(l) for l in lags]
+    y = [math.log(t) for t in tau]
+    mx = sum(x) / len(x)
+    my = sum(y) / len(y)
+    num = sum((x[i] - mx) * (y[i] - my) for i in range(len(x)))
+    den = sum((x[i] - mx) ** 2 for i in range(len(x)))
+    h = num / den if den > 0 else 0.50
+    return max(0.10, min(0.90, h))
+
+
+def variance_ratio_mr(closes, lag=6):
     if len(closes) < 72:
         return 1.0
     log_p = [math.log(max(c, 1e-8)) for c in closes[-72:]]
@@ -377,13 +408,10 @@ def variance_ratio_mr(closes, lag=6):
     rk = [log_p[i] - log_p[i - lag] for i in range(lag, len(log_p))]
     if not r1 or not rk:
         return 1.0
-    m1 = sum(r1) / len(r1)
-    mk = sum(rk) / len(rk)
+    m1, mk = sum(r1) / len(r1), sum(rk) / len(rk)
     var1 = sum((x - m1) ** 2 for x in r1) / len(r1)
     vark = sum((x - mk) ** 2 for x in rk) / len(rk)
-    if var1 <= 0:
-        return 1.0
-    return vark / (lag * var1)
+    return (vark / (lag * var1)) if var1 > 0 else 1.0
 
 
 def atr_adx_di(high, low, close, n=14):
@@ -436,6 +464,126 @@ def atr_adx_di(high, low, close, n=14):
     return smoothed_tr / n, adx_value, pdi, mdi, atr_series
 
 
+def _sigmoid(x):
+    x = max(-20.0, min(20.0, x))
+    return 1.0 / (1.0 + math.exp(-x))
+
+
+def run_neural_and_lorentzian_ai(high, low, close, volume):
+    """Addestra in tempo reale una Rete Neurale MLP (Multi-Layer Perceptron:
+
+    6 Input -> 5 Neuroni Nascosti Tanh -> 1 Neurone Sigmoid) + Classificatore
+    Lorentzian k-NN sulle ultime 450 ore di SOL per stimare la probabilità
+    che le prossime 6 ore siano profittevoli e sicure per il Grid Bot.
+    """
+    n_len = len(close)
+    if n_len < 150:
+        return 0.50, 0.50, 0.50
+
+    rsi_s = rsi_series(close, 14)
+    ema20_s = ema_series(close, 20)
+    ema50_s = ema_series(close, 50)
+    _, _, _, hist_s = macd_metrics(close)
+
+    features = []
+    targets = []
+    horizon = 6
+
+    start_idx = max(30, n_len - 450)
+    for i in range(start_idx, n_len):
+        p = close[i]
+        # 6 Feature normalizzate in [-2, +2]
+        f1 = (rsi_s[i] - 50.0) / 25.0
+        f2 = (p / ema20_s[i] - 1.0) * 25.0 if ema20_s[i] > 0 else 0.0
+        f3 = (
+            (ema20_s[i] / ema50_s[i] - 1.0) * 25.0
+            if ema50_s[i] > 0
+            else 0.0
+        )
+        f4 = (hist_s[i] / p) * 200.0 if p > 0 else 0.0
+        f5 = (p / close[i - 4] - 1.0) * 20.0
+        avg_v = sum(volume[i - 20 : i]) / 20.0 if i >= 20 else volume[i]
+        f6 = min(2.5, (volume[i] / avg_v) - 1.0) if avg_v > 0 else 0.0
+
+        feat_vec = [
+            max(-3.0, min(3.0, val)) for val in (f1, f2, f3, f4, f5, f6)
+        ]
+        features.append(feat_vec)
+
+        if i < n_len - horizon:
+            future_high = max(high[i + 1 : i + 1 + horizon])
+            future_low = min(low[i + 1 : i + 1 + horizon])
+            # Successo = Raggiunge almeno +0.65% di rotazione senza crollare oltre -1.8%
+            win = (
+                1.0
+                if (future_high >= p * 1.0065 and future_low >= p * 0.982)
+                else 0.0
+            )
+            targets.append(win)
+
+    train_x = features[:-horizon]
+    current_x = features[-1]
+
+    if len(train_x) < 60:
+        return 0.50, 0.50, 0.50
+
+    # 1. CLASSIFICATORE LORENTZIAN SPACE k-NN (k=15)
+    distances = []
+    for idx, tx in enumerate(train_x):
+        # Distanza di Lorentz: sum(ln(1 + |x_i - y_i|))
+        d = sum(math.log(1.0 + abs(current_x[j] - tx[j])) for j in range(6))
+        distances.append((d, targets[idx]))
+    distances.sort(key=lambda item: item[0])
+    k_nearest = distances[:15]
+    lorentzian_prob = sum(t for _, t in k_nearest) / len(k_nearest)
+
+    # 2. RETE NEURALE MULTI-LAYER PERCEPTRON (MLP 6 -> 5 -> 1)
+    rng = random.Random(42)
+    n_in, n_hid = 6, 5
+    w1 = [[rng.uniform(-0.35, 0.35) for _ in range(n_in)] for _ in range(n_hid)]
+    b1 = [0.0] * n_hid
+    w2 = [rng.uniform(-0.35, 0.35) for _ in range(n_hid)]
+    b2 = 0.0
+    lr = 0.045
+
+    for _ in range(30):
+        for x_vec, y_true in zip(train_x, targets):
+            # Forward pass
+            h_act = [
+                math.tanh(
+                    sum(w1[h][j] * x_vec[j] for j in range(n_in)) + b1[h]
+                )
+                for h in range(n_hid)
+            ]
+            out_pred = _sigmoid(
+                sum(w2[h] * h_act[h] for h in range(n_hid)) + b2
+            )
+
+            # Backpropagation
+            err = out_pred - y_true
+            d_hid = [
+                err * w2[h] * (1.0 - h_act[h] ** 2) for h in range(n_hid)
+            ]
+
+            for h in range(n_hid):
+                w2[h] -= lr * err * h_act[h]
+                b1[h] -= lr * d_hid[h]
+                for j in range(n_in):
+                    w1[h][j] -= lr * d_hid[h] * x_vec[j]
+            b2 -= lr * err
+
+    # Inferenza Neurale sullo stato attuale
+    h_curr = [
+        math.tanh(sum(w1[h][j] * current_x[j] for j in range(n_in)) + b1[h])
+        for h in range(n_hid)
+    ]
+    mlp_prob = _sigmoid(sum(w2[h] * h_curr[h] for h in range(n_hid)) + b2)
+
+    # Ensemble AI (60% Rete Neurale MLP + 40% Lorentzian k-NN)
+    ensemble_prob = 0.60 * mlp_prob + 0.40 * lorentzian_prob
+    return ensemble_prob, mlp_prob, lorentzian_prob
+
+
 def percentile(values, p):
     ordered = sorted(values)
     index = min(len(ordered) - 1, max(0, int(round((len(ordered) - 1) * p))))
@@ -443,7 +591,7 @@ def percentile(values, p):
 
 
 # ---------------------------------------------------------------------
-# 5. MOTORE QUANTITATIVO A 8 PILASTRI (100 PUNTI -> SCALA 1-10)
+# 5. MOTORE QUANT + NEURALE A 9 PILASTRI (100 PUNTI -> SCALA 1-10)
 # ---------------------------------------------------------------------
 
 
@@ -458,7 +606,7 @@ def analyze_btc(sol_chg4h, sol_chg24h):
         ema200 = ema(close[-300:], 200)
         _, adx, pdi, mdi, _ = atr_adx_di(high[-250:], low[-250:], close[-250:])
 
-        rel_24h = sol_chg24h - chg24h  # Forza relativa SOL rispetto a BTC
+        rel_24h = sol_chg24h - chg24h
         is_dumping = chg4h <= -2.8 or chg24h <= -6.0
         strong_bear = price < ema200 and mdi > pdi and adx > 28
 
@@ -469,7 +617,7 @@ def analyze_btc(sol_chg4h, sol_chg24h):
                 "chg4h": chg4h,
                 "chg24h": chg24h,
                 "rel_24h": rel_24h,
-                "status": f"🔴 BTC Ostile ({price:.0f}$, 4h: {chg4h:+.1f}%, ADX {adx:.0f}) | Alpha SOL 24h: {rel_24h:+.1f}%",
+                "status": f"🔴 BTC Ostile ({price:.0f}$, 4h: {chg4h:+.1f}%, ADX {adx:.0f}) | Alpha SOL: {rel_24h:+.1f}%",
             }
         return {
             "safe": True,
@@ -477,7 +625,7 @@ def analyze_btc(sol_chg4h, sol_chg24h):
             "chg4h": chg4h,
             "chg24h": chg24h,
             "rel_24h": rel_24h,
-            "status": f"🟢 BTC Stabile ({price:.0f}$, 4h: {chg4h:+.1f}%) | Alpha SOL 24h: {rel_24h:+.1f}%",
+            "status": f"🟢 BTC Stabile ({price:.0f}$, 4h: {chg4h:+.1f}%) | Alpha SOL: {rel_24h:+.1f}%",
         }
     except Exception as exc:
         return {
@@ -491,12 +639,10 @@ def analyze_btc(sol_chg4h, sol_chg24h):
 
 
 def analyze():
-    # 1. Candele Multi-Timeframe (1H, 4H, 15m)
     c1h = get_candles(pair="SOLUSD", interval=60)
     c4h = get_candles(pair="SOLUSD", interval=240)
     c15m = get_candles(pair="SOLUSD", interval=15)
 
-    # 2. Orderbook, Derivati e Sentiment
     ob = get_orderbook_metrics(pair="SOLUSD", depth=50)
     deriv, fng = get_derivatives_and_sentiment()
 
@@ -512,18 +658,21 @@ def analyze():
 
     price = close[-1]
 
-    # Indicatori 1H
-    ema20_1h = ema(close[-250:], 20)
+    # Indicatori Tecnici, Frattali e Neurali
     ema50_1h = ema(close[-250:], 50)
     ema200_1h = ema(close[-350:], 200)
     rsi_1h = rsi(close[-250:], 14)
-    srsi_1h = stoch_rsi(close[-250:], 14, 14)
-    _, macd_hist, macd_rising = macd_metrics(close[-250:])
+    _, macd_hist, macd_rising, _ = macd_metrics(close[-250:])
     _, bb_mid, _, bb_pct_b, bb_width = bollinger_bands(close[-250:], 20, 2.0)
     atr, adx, pdi, mdi, atr_series = atr_adx_di(
         high[-250:], low[-250:], close[-250:]
     )
+
+    hurst = hurst_exponent(close[-150:])
     vr_ratio = variance_ratio_mr(close[-120:], lag=6)
+    ai_prob, mlp_prob, lor_prob = run_neural_and_lorentzian_ai(
+        high, low, close, volume
+    )
 
     # VWAP 24h istituzionale
     vol_24h = sum(volume[-24:])
@@ -537,13 +686,12 @@ def analyze():
         else price
     )
 
-    # Indicatori 4H (Macro-Struttura)
+    # 4H Macro & 15m Micro
     close_4h = c4h["close"]
     ema50_4h = ema(close_4h[-200:], 50)
     ema200_4h = ema(close_4h[-250:], 200)
     rsi_4h = rsi(close_4h[-150:], 14)
 
-    # Indicatori 15m (Micro-Timing)
     close_15m = c15m["close"]
     rsi_15m = rsi(close_15m[-100:], 14)
     srsi_15m = stoch_rsi(close_15m[-100:], 14, 14)
@@ -551,7 +699,6 @@ def analyze():
         close_15m[-40:], 9
     )
 
-    # Variazioni e Volatilità
     chg4h = (price / close[-5] - 1) * 100
     chg24 = (price / close[-25] - 1) * 100
     avg_atr_7d = (
@@ -559,16 +706,14 @@ def analyze():
     )
     atr_ratio = atr / avg_atr_7d if avg_atr_7d > 0 else 1.0
 
-    # Keltner Squeeze Check (BB dentro Keltner Channels)
     kc_width = (atr * 3.0) / bb_mid * 100 if bb_mid > 0 else 0.0
-    is_keltner_squeeze = bb_width < kc_width and atr_ratio < 0.72
+    is_keltner_squeeze = bb_width < kc_width and atr_ratio < 0.70
 
-    # Volumi di vendita anomali
     avg_vol_7d = sum(volume[-168:]) / 168 if sum(volume[-168:]) > 0 else 1.0
     red_vols_3h = [volume[-i] for i in range(1, 4) if close[-i] < opens[-i]]
     max_red_vol_ratio = (max(red_vols_3h) / avg_vol_7d) if red_vols_3h else 0.0
 
-    # Calcolo Range Ottimale Pionex
+    # Calcolo Range Ottimale Dinamico
     daily_ranges = [
         (
             max(high[-(d + 1) * 24 : len(high) - d * 24])
@@ -598,7 +743,7 @@ def analyze():
     btc_info = analyze_btc(chg4h, chg24)
 
     # -----------------------------------------------------------------
-    # CALCOLO PUNTEGGIO SU 100 PUNTI (8 PILASTRI QUANTITATIVI)
+    # VALUTAZIONE SUI 9 PILASTRI QUANTITATIVI & NEURALI (100 PUNTI)
     # -----------------------------------------------------------------
     pts = 0
     reasons = []
@@ -609,166 +754,186 @@ def analyze():
         tech_cap = min(tech_cap, btc_info["cap"])
         risk_vetoes.append(btc_info["status"])
 
-    # 1. MULTI-TIMEFRAME TREND (4H + 1H) — Max 15 pt
+    # PILASTRO 1: RETE NEURALE MLP & LORENTZIAN k-NN AI — Max 15 pt
+    ai_pct = ai_prob * 100
+    if ai_prob < 0.38:
+        p1 = 0
+        tech_cap = min(tech_cap, 4)
+        risk_vetoes.append(
+            f"🚨 Veto AI Neurale: Probabilità di successo troppo bassa ({ai_pct:.0f}%)."
+        )
+    elif ai_prob >= 0.64:
+        p1 = 15
+    elif ai_prob >= 0.55:
+        p1 = 12
+    elif ai_prob >= 0.48:
+        p1 = 8
+    else:
+        p1 = 4
+    pts += p1
+    reasons.append(
+        f"{'🟢' if p1>=12 else ('🟡' if p1>=8 else '🔴')} 1. AI Neurale & Lorentzian: Win Prob {ai_pct:.0f}% (MLP:{mlp_prob*100:.0f}% | Lor:{lor_prob*100:.0f}%) ({p1}/15)"
+    )
+
+    # PILASTRO 2: STRUTTURA MULTI-TIMEFRAME (4H + 1H) — Max 15 pt
     bear_1h = price < ema200_1h and mdi > pdi
     bear_4h = price < ema200_4h and ema50_4h < ema200_4h
     if bear_1h and bear_4h and (adx > 25 or chg24 < -5.0):
-        p1 = 0
+        p2 = 0
         tech_cap = min(tech_cap, 3)
         risk_vetoes.append(
             "🚨 Veto MTF: Trend ribassista allineato su 4H e 1H."
         )
     elif price >= ema200_1h and price >= ema50_4h and adx < 24:
-        p1 = 15
-    elif price >= ema200_1h or (not bear_1h and adx < 26):
-        p1 = 11
-    elif not bear_4h and adx < 30:
-        p1 = 7
-    else:
-        p1 = 3
-    pts += p1
-    reasons.append(
-        f"{'🟢' if p1>=11 else ('🟡' if p1>=7 else '🔴')} 1. Trend MTF (4H/1H): EMA200 1H {ema200_1h:.1f}$ | 4H {ema200_4h:.1f}$ | ADX {adx:.0f} ({p1}/15)"
-    )
-
-    # 2. REGIME MEAN-REVERSION & SQUEEZE (Variance Ratio + ATR + Keltner) — Max 15 pt
-    if is_keltner_squeeze:
-        p2 = 3
-        tech_cap = min(tech_cap, 4)
-        risk_vetoes.append(
-            "⚠️ Keltner Squeeze attivo: volatilità compressa, rischio breakout."
-        )
-    elif vr_ratio <= 0.95 and 0.72 <= atr_ratio <= 1.35:
         p2 = 15
-    elif vr_ratio <= 1.12 and 0.65 <= atr_ratio <= 1.55:
+    elif price >= ema200_1h or (not bear_1h and adx < 26):
         p2 = 11
-    elif 0.60 <= atr_ratio <= 1.75:
+    elif not bear_4h and adx < 30:
         p2 = 7
     else:
-        p2 = 2
+        p2 = 3
     pts += p2
     reasons.append(
-        f"{'🟢' if p2>=11 else ('🟡' if p2>=7 else '🔴')} 2. Regime & Volatilità: VR {vr_ratio:.2f} ({'Mean-Rev' if vr_ratio<1 else 'Trend'}) | ATR {atr_ratio:.2f}x ({p2}/15)"
+        f"{'🟢' if p2>=11 else ('🟡' if p2>=7 else '🔴')} 2. Trend MTF (4H/1H): EMA200 1H {ema200_1h:.1f}$ | 4H {ema200_4h:.1f}$ | ADX {adx:.0f} ({p2}/15)"
     )
 
-    # 3. POSIZIONE NEL CANALE & VWAP 24H — Max 15 pt
-    vwap_diff_pct = (price / vwap_24h - 1) * 100
-    if position_in_range > 72:
+    # PILASTRO 3: FRATTALI DI HURST & REGIME MEAN-REVERSION — Max 12 pt
+    if is_keltner_squeeze:
         p3 = 2
-        tech_cap = min(tech_cap, 5)
+        tech_cap = min(tech_cap, 4)
         risk_vetoes.append(
-            f"⚠️ Prezzo troppo alto nel canale ({position_in_range:.0f}% > 72%)."
+            "⚠️ Keltner Squeeze attivo: volatilità compressa, possibile esplosione."
         )
-    elif (
-        20 <= position_in_range <= 52
-        and price <= vwap_24h * 1.006
-        and 0.15 <= bb_pct_b <= 0.60
-    ):
-        p3 = 15
-    elif 18 <= position_in_range <= 62 and vwap_diff_pct <= 1.2:
-        p3 = 11
-    elif 12 <= position_in_range <= 72:
-        p3 = 6
+    elif hurst <= 0.48 and vr_ratio <= 0.98 and 0.70 <= atr_ratio <= 1.40:
+        p3 = 12
+    elif hurst <= 0.54 and 0.65 <= atr_ratio <= 1.60:
+        p3 = 9
+    elif 0.58 <= atr_ratio <= 1.75:
+        p3 = 5
     else:
         p3 = 2
     pts += p3
     reasons.append(
-        f"{'🟢' if p3>=11 else ('🟡' if p3>=6 else '🔴')} 3. Valore & VWAP: Pos {position_in_range:.0f}% | vs VWAP {vwap_diff_pct:+.1f}% | %B {bb_pct_b:.2f} ({p3}/15)"
+        f"{'🟢' if p3>=9 else ('🟡' if p3>=5 else '🔴')} 3. Frattale Hurst & ATR: H={hurst:.2f} ({'Mean-Rev' if hurst<0.5 else 'Trend'}) | VR {vr_ratio:.2f} | ATR {atr_ratio:.2f}x ({p3}/12)"
     )
 
-    # 4. MOMENTUM & MICRO-TIMING (MACD + RSI 1H/15m + StochRSI) — Max 15 pt
+    # PILASTRO 4: POSIZIONE NEL CANALE & VWAP 24H ISTITUZIONALE — Max 13 pt
+    vwap_diff_pct = (price / vwap_24h - 1) * 100
+    if position_in_range > 74:
+        p4 = 2
+        tech_cap = min(tech_cap, 5)
+        risk_vetoes.append(
+            f"⚠️ Prezzo troppo alto nel canale ({position_in_range:.0f}% > 74%)."
+        )
+    elif (
+        18 <= position_in_range <= 54
+        and price <= vwap_24h * 1.006
+        and 0.12 <= bb_pct_b <= 0.62
+    ):
+        p4 = 13
+    elif 15 <= position_in_range <= 64 and vwap_diff_pct <= 1.2:
+        p4 = 10
+    elif 10 <= position_in_range <= 74:
+        p4 = 6
+    else:
+        p4 = 2
+    pts += p4
+    reasons.append(
+        f"{'🟢' if p4>=10 else ('🟡' if p4>=6 else '🔴')} 4. Valore & VWAP: Pos {position_in_range:.0f}% | vs VWAP {vwap_diff_pct:+.1f}% | %B {bb_pct_b:.2f} ({p4}/13)"
+    )
+
+    # PILASTRO 5: MOMENTUM & MICRO-TIMING (MACD + RSI 1H/15m) — Max 12 pt
     if rsi_1h < 28 or (not macd_rising and macd_hist < 0 and chg4h < -2.5):
-        p4 = 2  # Coltello che cade
+        p5 = 2
     elif (
         macd_rising
         and 36 <= rsi_1h <= 58
-        and 30 <= rsi_15m <= 62
+        and 28 <= rsi_15m <= 64
         and micro_bounce
     ):
-        p4 = 15
-    elif (macd_rising or micro_bounce) and 33 <= rsi_1h <= 64:
-        p4 = 11
+        p5 = 12
+    elif (macd_rising or micro_bounce) and 32 <= rsi_1h <= 65:
+        p5 = 9
     elif 30 <= rsi_1h <= 68:
-        p4 = 7
+        p5 = 6
     else:
-        p4 = 3
-    pts += p4
+        p5 = 2
+    pts += p5
     reasons.append(
-        f"{'🟢' if p4>=11 else ('🟡' if p4>=7 else '🔴')} 4. Momentum (1H/15m): MACD {'📈' if macd_rising else '📉'} | RSI 1h:{rsi_1h:.0f} 15m:{rsi_15m:.0f} | Stoch:{srsi_15m:.0f} ({p4}/15)"
+        f"{'🟢' if p5>=9 else ('🟡' if p5>=6 else '🔴')} 5. Momentum (1H/15m): MACD {'📈' if macd_rising else '📉'} | RSI 1h:{rsi_1h:.0f} 15m:{rsi_15m:.0f} | Stoch:{srsi_15m:.0f} ({p5}/12)"
     )
 
-    # 5. ORDERBOOK DEPTH & VOLUMI SMART MONEY — Max 10 pt
+    # PILASTRO 6: ORDERBOOK DEPTH & VOLUMI SMART MONEY — Max 10 pt
     imb = ob["imbalance"]
     if max_red_vol_ratio >= 2.3 or chg4h <= -3.8:
-        p5 = 0
+        p6 = 0
         tech_cap = min(tech_cap, 2)
         risk_vetoes.append(
             f"🚨 Veto Volumi: Picco vendite {max_red_vol_ratio:.1f}x media (4h: {chg4h:+.1f}%)."
         )
     elif imb >= 1.12 and max_red_vol_ratio < 1.3:
-        p5 = 10
-    elif imb >= 0.90 and max_red_vol_ratio < 1.6:
-        p5 = 7
-    elif imb >= 0.75:
-        p5 = 4
-    else:
-        p5 = 2
-    pts += p5
-    reasons.append(
-        f"{'🟢' if p5>=7 else ('🟡' if p5>=4 else '🔴')} 5. Orderbook & Volumi: Bid/Ask {imb:.2f}x | Vol Rosso Max {max_red_vol_ratio:.1f}x ({p5}/10)"
-    )
-
-    # 6. CORRELAZIONE BTC & FORZA RELATIVA (ALPHA) — Max 10 pt
-    rel = btc_info["rel_24h"]
-    if not btc_info["safe"]:
-        p6 = 0
-    elif rel >= 0.5 and btc_info["chg4h"] >= -0.8:
         p6 = 10
-    elif rel >= -1.5 and btc_info["chg4h"] >= -1.5:
+    elif imb >= 0.90 and max_red_vol_ratio < 1.6:
         p6 = 7
-    elif rel >= -3.0:
+    elif imb >= 0.75:
         p6 = 4
     else:
-        p6 = 1
+        p6 = 2
     pts += p6
     reasons.append(
-        f"{'🟢' if p6>=7 else ('🟡' if p6>=4 else '🔴')} 6. Forza Relativa BTC: Alpha SOL {rel:+.1f}% | BTC 4h {btc_info['chg4h']:+.1f}% ({p6}/10)"
+        f"{'🟢' if p6>=7 else ('🟡' if p6>=4 else '🔴')} 6. Orderbook & Volumi: Bid/Ask {imb:.2f}x | Vol Rosso Max {max_red_vol_ratio:.1f}x ({p6}/10)"
     )
 
-    # 7. DERIVATI (FUNDING RATE) & SENTIMENT (FEAR & GREED) — Max 10 pt
+    # PILASTRO 7: CORRELAZIONE BTC & FORZA RELATIVA (ALPHA) — Max 8 pt
+    rel = btc_info["rel_24h"]
+    if not btc_info["safe"]:
+        p7 = 0
+    elif rel >= 0.5 and btc_info["chg4h"] >= -0.8:
+        p7 = 8
+    elif rel >= -1.5 and btc_info["chg4h"] >= -1.5:
+        p7 = 6
+    elif rel >= -3.0:
+        p7 = 3
+    else:
+        p7 = 1
+    pts += p7
+    reasons.append(
+        f"{'🟢' if p7>=6 else ('🟡' if p7>=3 else '🔴')} 7. Forza Relativa BTC: Alpha SOL {rel:+.1f}% | BTC 4h {btc_info['chg4h']:+.1f}% ({p7}/8)"
+    )
+
+    # PILASTRO 8: DERIVATI (FUNDING RATE) & SENTIMENT — Max 7 pt
     fr = deriv["funding_pct"]
     fg_val = fng["value"]
-    # Funding troppo alto (>0.04%) + Greed estremo (>78) = Rischio Long Squeeze
     if fr > 0.05 or fg_val > 82:
-        p7 = 3
+        p8 = 2
     elif -0.02 <= fr <= 0.025 and 25 <= fg_val <= 72:
-        p7 = 10
+        p8 = 7
     elif -0.04 <= fr <= 0.04 and 18 <= fg_val <= 78:
-        p7 = 7
+        p8 = 5
     else:
-        p7 = 5
-    pts += p7
+        p8 = 3
+    pts += p8
     fr_str = f"{fr:+.4f}%" if deriv["ok"] else "N/D"
     reasons.append(
-        f"{'🟢' if p7>=7 else '🟡'} 7. Derivati & Sentiment: Funding {fr_str} | F&G {fg_val} ({fng['label']}) ({p7}/10)"
+        f"{'🟢' if p8>=5 else '🟡'} 8. Derivati & Sentiment: Funding {fr_str} | F&G {fg_val} ({fng['label']}) ({p8}/7)"
     )
 
-    # 8. ECONOMIA DELLA GRIGLIA (MARGINE NETTO & ROTAZIONE) — Max 10 pt
+    # PILASTRO 9: ECONOMIA DELLA GRIGLIA (MARGINE NETTO & ROTAZIONE) — Max 8 pt
     if (
         net_step_pct >= MIN_NET_STEP_PCT
         and 0.38 <= rotation_ratio <= 0.95
         and 3.0 <= avg_daily <= 9.0
     ):
-        p8 = 10
+        p9 = 8
     elif net_step_pct >= 0.12 and rotation_ratio >= 0.28:
-        p8 = 7
+        p9 = 6
     elif net_step_pct >= 0.09:
-        p8 = 4
+        p9 = 3
     else:
-        p8 = 1
-    pts += p8
+        p9 = 1
+    pts += p9
     reasons.append(
-        f"{'🟢' if p8>=7 else ('🟡' if p8>=4 else '🔴')} 8. Efficienza Griglia: Netto +{net_step_pct:.2f}% | Rotazione {rotation_ratio:.2f}x/gg ({p8}/10)"
+        f"{'🟢' if p9>=6 else ('🟡' if p9>=3 else '🔴')} 9. Efficienza Griglia: Netto +{net_step_pct:.2f}% | Rotazione {rotation_ratio:.2f}x/gg ({p9}/8)"
     )
 
     raw_tech_score = max(1, min(10, int(round(pts / 10.0))))
@@ -780,6 +945,8 @@ def analyze():
         "ema200_1h": ema200_1h,
         "ema200_4h": ema200_4h,
         "rsi_4h": rsi_4h,
+        "hurst": hurst,
+        "ai_prob": ai_prob,
         "pdi": pdi,
         "mdi": mdi,
         "chg4h": chg4h,
@@ -798,9 +965,6 @@ def analyze():
         "reasons": reasons,
         "risk_vetoes": risk_vetoes,
         "btc_info": btc_info,
-        "ob": ob,
-        "deriv": deriv,
-        "fng": fng,
         "invest_usdt": invest_usdt,
         "candle_times": c1h["time"],
     }
@@ -845,14 +1009,14 @@ def is_wall_street_open_window(now_utc):
     if ny_time.weekday() >= 5:
         return False, ny_time.strftime("%H:%M")
     minutes_of_day = ny_time.hour * 60 + ny_time.minute
-    in_window = 560 <= minutes_of_day <= 605  # 09:20 - 10:05 NY
+    in_window = 560 <= minutes_of_day <= 605
     return in_window, ny_time.strftime("%H:%M")
 
 
 def fetch_macro_events(now):
     headers = {
         "Accept": "application/json",
-        "User-Agent": "Mozilla/5.0 (compatible; QuantGridBot/4.0)",
+        "User-Agent": "Mozilla/5.0 (compatible; NeuralGridBot/5.0)",
     }
     response = requests.get(CALENDAR_URL, headers=headers, timeout=20)
     if response.status_code != 200:
@@ -1114,30 +1278,234 @@ def get_news_context():
 
 
 # ---------------------------------------------------------------------
-# 7. COSTRUZIONE REPORT E INVIO TELEGRAM
+# 7. ESECUZIONE AUTONOMA (APERTURA, TRAILING STOP & CHIUSURA PIONEX)
+# ---------------------------------------------------------------------
+
+
+def load_bot_state():
+    if os.path.exists(STATE_FILE):
+        try:
+            with open(STATE_FILE, "r") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    # Se l'utente aveva impostato ACTIVE_LOWER e ACTIVE_UPPER manualmente
+    if ACTIVE_LOWER and ACTIVE_UPPER:
+        try:
+            low_b, up_b = float(ACTIVE_LOWER), float(ACTIVE_UPPER)
+            return {
+                "active": True,
+                "entry_price": round((low_b + up_b) / 2, 2),
+                "highest_price": round((low_b + up_b) / 2, 2),
+                "lower": low_b,
+                "upper": up_b,
+                "stop": round(low_b * 0.978, 2),
+                "grids": 20,
+                "qty_sol": 0.3,
+                "trailing_locked": False,
+                "opened_at": "Manuale",
+            }
+        except ValueError:
+            pass
+    return {"active": False}
+
+
+def save_bot_state(state):
+    try:
+        with open(STATE_FILE, "w") as f:
+            json.dump(state, f, indent=2)
+    except Exception as exc:
+        print(f"Avviso: impossibile salvare {STATE_FILE}: {exc}")
+
+
+def execute_pionex_action(action, price, invest_usdt):
+    """Invia l'ordine reale a Pionex (via Webhook Signal Bot o Spot API).
+
+    Se AUTO_TRADE_ENABLED è false, opera in Paper Trading (Simulazione Reale).
+    """
+    if not AUTO_TRADE_ENABLED:
+        return True, "Simulazione Paper Trading attiva (AUTO_TRADE_ENABLED=false)"
+
+    # 1. METODO WEBHOOK (Pionex Signal Bot)
+    if PIONEX_WEBHOOK_URL:
+        try:
+            side = "buy" if action == "OPEN" else "close"
+            payload = {
+                "token": PIONEX_SIGNAL_TOKEN,
+                "time": datetime.now(timezone.utc).isoformat(),
+                "symbol": "SOL_USDT",
+                "action": side,
+                "price": str(round(price, 2)),
+                "contracts": str(round(invest_usdt / price, 3)),
+            }
+            resp = requests.post(PIONEX_WEBHOOK_URL, json=payload, timeout=15)
+            if resp.status_code == 200:
+                return True, f"Segnale Webhook ({side.upper()}) eseguito!"
+            return (
+                False,
+                f"Errore Webhook (HTTP {resp.status_code}): {resp.text}",
+            )
+        except Exception as exc:
+            return False, f"Eccezione Webhook: {exc}"
+
+    # 2. METODO API DIRETTA PIONEX SPOT
+    if PIONEX_API_KEY and PIONEX_API_SECRET:
+        try:
+            ts = str(int(time.time() * 1000))
+            path = "/api/v1/trade/order"
+            side = "BUY" if action == "OPEN" else "SELL"
+            body_dict = {"symbol": "SOL_USDT", "side": side, "type": "MARKET"}
+            if side == "BUY":
+                body_dict["amount"] = str(round(invest_usdt, 2))
+            else:
+                state = load_bot_state()
+                qty = state.get("qty_sol", round(invest_usdt / price, 3))
+                body_dict["size"] = str(round(qty * 0.998, 3))
+
+            body_str = json.dumps(body_dict, separators=(",", ":"))
+            msg = f"POST{path}?timestamp={ts}{body_str}"
+            signature = hmac.new(
+                PIONEX_API_SECRET.encode("utf-8"),
+                msg.encode("utf-8"),
+                hashlib.sha256,
+            ).hexdigest()
+
+            headers = {
+                "PIONEX-KEY": PIONEX_API_KEY,
+                "PIONEX-SIGNATURE": signature,
+                "Content-Type": "application/json",
+            }
+            url = f"https://api.pionex.com{path}?timestamp={ts}"
+            resp = requests.post(
+                url, data=body_str, headers=headers, timeout=15
+            )
+            data = resp.json()
+            if resp.status_code == 200 and data.get("result"):
+                return True, f"Ordine API Spot ({side}) eseguito su Pionex!"
+            return False, f"Errore API Pionex: {data}"
+        except Exception as exc:
+            return False, f"Eccezione API Pionex: {exc}"
+
+    return False, "AUTO_TRADE_ENABLED=true ma nessuna chiave/webhook impostato."
+
+
+def manage_autonomous_trading(analysis, final_score):
+    """Gestisce l'intero ciclo di vita del trade in autonomia:
+
+    - Apertura se Voto >= 7 e AI Prob >= 52%
+    - Break-Even / Trailing Stop automatico se il prezzo sale di >= +2.5%
+    - Chiusura per Stop Loss, Take Profit (> upper) o Emergenza AI/Macro
+    """
+    state = load_bot_state()
+    price = analysis["price"]
+    ai_prob = analysis["ai_prob"]
+
+    # CASO A: BOT ATTIVO -> Sorveglianza, Trailing Stop & Condizioni di Uscita
+    if state.get("active"):
+        low_b = float(state["lower"])
+        up_b = float(state["upper"])
+        stop_b = float(state["stop"])
+        entry_p = float(state["entry_price"])
+        highest_p = max(float(state.get("highest_price", entry_p)), price)
+        state["highest_price"] = round(highest_p, 2)
+
+        pnl_pct = (price / entry_p - 1) * 100
+        trailing_note = ""
+
+        # PROTEZIONE PROFITTI (Break-Even & Trailing Stop Dinamico)
+        if pnl_pct >= 2.5 and stop_b < entry_p:
+            stop_b = round(entry_p * 1.003, 2)
+            state["stop"] = stop_b
+            state["trailing_locked"] = True
+            trailing_note = (
+                f"\n🔒 Break-Even attivato! Stop Loss alzato a {stop_b:.2f}$"
+            )
+        elif pnl_pct >= 4.5 and stop_b < highest_p * 0.975:
+            stop_b = round(highest_p * 0.975, 2)
+            state["stop"] = stop_b
+            trailing_note = (
+                f"\n🔒 Trailing Stop aggiornato a {stop_b:.2f}$"
+            )
+
+        close_reason = None
+        if price <= stop_b:
+            close_reason = f"🛑 STOP LOSS TOCCATO ({price:.2f}$ <= {stop_b:.2f}$)"
+        elif price >= up_b * 1.008:
+            close_reason = f"🎯 TAKE PROFIT RAGGIUNTO: Uscita sopra il tetto ({price:.2f}$ > {up_b:.2f}$)"
+        elif final_score <= 2 and ai_prob < 0.44:
+            close_reason = f"🚨 USCITA D'EMERGENZA AI/MACRO (Voto {final_score}/10 | AI {ai_prob*100:.0f}%)"
+
+        if close_reason:
+            _, msg = execute_pionex_action(
+                "CLOSE", price, analysis["invest_usdt"]
+            )
+            save_bot_state(
+                {
+                    "active": False,
+                    "last_closed_at": datetime.now(LOCAL_TZ).strftime(
+                        "%d/%m %H:%M"
+                    ),
+                    "last_close_reason": close_reason,
+                    "last_pnl_pct": round(pnl_pct, 2),
+                }
+            )
+            return (
+                f"🔴 CHIUSURA AUTOMATICA ESEGUITA!\n"
+                f"• Motivo: {close_reason}\n"
+                f"• Ingresso: {entry_p:.2f}$ -> Uscita: {price:.2f}$ (PnL Spot: {pnl_pct:+.2f}%)\n"
+                f"• Stato Pionex: {msg}"
+            )
+
+        save_bot_state(state)
+        lock_icon = "🔒" if state.get("trailing_locked") else "🛡️"
+        return (
+            f"✅ BOT AUTONOMO ATTIVO (Dal: {state.get('opened_at', 'N/D')})\n"
+            f"• Entrata: {entry_p:.2f}$ | Attuale: {price:.2f}$ (PnL Spot: {pnl_pct:+.2f}%)\n"
+            f"• Range: {low_b:.2f}$ — {up_b:.2f}$ | {lock_icon} Stop: {stop_b:.2f}${trailing_note}"
+        )
+
+    # CASO B: BOT SPENTO -> Valutazione Apertura Automatica
+    if final_score >= 7 and ai_prob >= 0.52:
+        _, msg = execute_pionex_action("OPEN", price, analysis["invest_usdt"])
+        new_state = {
+            "active": True,
+            "entry_price": round(price, 2),
+            "highest_price": round(price, 2),
+            "lower": round(analysis["lower"], 2),
+            "upper": round(analysis["upper"], 2),
+            "stop": round(analysis["stop"], 2),
+            "grids": analysis["grids"],
+            "qty_sol": round(analysis["invest_usdt"] / price, 3),
+            "trailing_locked": False,
+            "opened_at": datetime.now(LOCAL_TZ).strftime("%d/%m %H:%M"),
+        }
+        save_bot_state(new_state)
+        return (
+            f"🚀 APERTURA AUTOMATICA ESEGUITA! (Voto {final_score}/10 | AI {ai_prob*100:.0f}%)\n"
+            f"• Prezzo d'ingresso: {price:.2f}$\n"
+            f"• Range impostato: {analysis['lower']:.2f}$ — {analysis['upper']:.2f}$ ({analysis['grids']} griglie)\n"
+            f"• Stop Loss iniziale: {analysis['stop']:.2f}$\n"
+            f"• Stato Pionex: {msg}"
+        )
+
+    save_bot_state(state)
+    last_info = ""
+    if state.get("last_close_reason"):
+        last_info = f"\n• Ultima chiusura ({state.get('last_closed_at')}): {state.get('last_pnl_pct', 0):+.2f}%"
+    return (
+        f"⏸️ BOT IN ATTESA DI SEGNALE (Stato: Spento — 100% USDT)\n"
+        f"• Requisito Apertura: Voto >= 7/10 e AI >= 52% (Attuale: {final_score}/10 | AI {ai_prob*100:.0f}%){last_info}"
+    )
+
+
+# ---------------------------------------------------------------------
+# 8. COSTRUZIONE REPORT E INVIO TELEGRAM
 # ---------------------------------------------------------------------
 
 
 def make_progress_bar(score):
     fill = "🟩" if score >= 7 else ("🟨" if score >= 5 else "🟥")
     return fill * score + "⬜" * (10 - score)
-
-
-def check_active_bot(price):
-    if not (ACTIVE_LOWER and ACTIVE_UPPER):
-        return None
-    try:
-        low_b, up_b = float(ACTIVE_LOWER), float(ACTIVE_UPPER)
-        if low_b >= up_b:
-            return None
-        if price < low_b or price > up_b:
-            return f"🚨 BOT ATTIVO ({low_b:.2f}$ - {up_b:.2f}$) FUORI RANGE!"
-        edge_pct = min(price - low_b, up_b - price) / price * 100
-        if edge_pct < 1.5:
-            return f"⚠️ BOT ATTIVO ({low_b:.2f}$ - {up_b:.2f}$) vicino al bordo ({edge_pct:.1f}%)."
-        return f"✅ BOT GIÀ ATTIVO NEL RANGE ({low_b:.2f}$ - {up_b:.2f}$)."
-    except ValueError:
-        return None
 
 
 def build_report(analysis, news):
@@ -1150,30 +1518,26 @@ def build_report(analysis, news):
     bar = make_progress_bar(final_score)
     now_str = datetime.now(LOCAL_TZ).strftime("%d/%m %H:%M")
 
+    auto_status_block = manage_autonomous_trading(analysis, final_score)
+
     lines = [
-        f"🤖 QUANT GRID ADVISOR SOL/USDT — {now_str}",
+        f"🧠 NEURAL QUANT GRID BOT SOL/USDT — {now_str}",
         f"💰 SOL: {analysis['price']:.2f}$ | VWAP 24h: {analysis['vwap_24h']:.2f}$ (4h: {analysis['chg4h']:+.1f}% | 24h: {analysis['chg24']:+.1f}%)",
         "━━━━━━━━━━━━━━━━━━━━",
-        f"📊 PUNTEGGIO FINALE: {final_score}/10 (Quant Score: {analysis['pts_100']}/100)",
+        f"📊 PUNTEGGIO FINALE: {final_score}/10 (Quant+AI: {analysis['pts_100']}/100)",
         f"{bar}",
         "",
         f"{action_info['title']}",
         f"💡 {action_info['desc']}",
+        "━━━━━━━━━━━━━━━━━━━━",
+        "🤖 GESTIONE OPERATIVA AUTONOMA:",
+        auto_status_block,
+        "━━━━━━━━━━━━━━━━━━━━",
+        "🛡️ CHECK MULTI-ASSET & SALVA-CAPITALE:",
+        f"• {analysis['btc_info']['status']}",
+        f"• Macro 4H: {'🟢 Sopra' if analysis['price'] >= analysis['ema200_4h'] else '🔴 Sotto'} EMA200 ({analysis['ema200_4h']:.1f}$) | RSI 4H: {analysis['rsi_4h']:.0f}",
+        f"• Wall Street: {news['ws_status']}",
     ]
-
-    active_msg = check_active_bot(analysis["price"])
-    if active_msg:
-        lines.extend(["", active_msg])
-
-    lines.extend(
-        [
-            "━━━━━━━━━━━━━━━━━━━━",
-            "🛡️ CHECK MULTI-ASSET & RISCHIO:",
-            f"• {analysis['btc_info']['status']}",
-            f"• Macro 4H: {'🟢 Sopra' if analysis['price'] >= analysis['ema200_4h'] else '🔴 Sotto'} EMA200 ({analysis['ema200_4h']:.1f}$) | RSI 4H: {analysis['rsi_4h']:.0f}",
-            f"• Wall Street: {news['ws_status']}",
-        ]
-    )
 
     if analysis["risk_vetoes"]:
         for veto in analysis["risk_vetoes"]:
@@ -1183,18 +1547,18 @@ def build_report(analysis, news):
 
     lines.append("━━━━━━━━━━━━━━━━━━━━")
     if final_score >= 7:
-        lines.append("🛠️ PARAMETRI PIONEX CONSIGLIATI:")
+        lines.append("🛠️ PARAMETRI OTTIMALI CALCOLATI:")
     else:
-        lines.append("🛠️ PARAMETRI IPOTETICI (NON APRIRE ORA):")
+        lines.append("🛠️ PARAMETRI IPOTETICI (ATTENDERE SEGNALE):")
 
     lines.extend(
         [
             f"• Range: {analysis['lower']:.2f}$ — {analysis['upper']:.2f}$ (Pos: {analysis['pos']:.0f}%)",
             f"• Griglie: {analysis['grids']} (Lordo: {analysis['step_pct']:.2f}% | Netto: +{analysis['net_step_pct']:.2f}%)",
-            f"• Stop Loss Salva-Capitale: {analysis['stop']:.2f}$",
+            f"• Stop Loss Dinamico: {analysis['stop']:.2f}$",
             f"• Budget: ~{analysis['invest_usdt']:.0f} USDT",
             "━━━━━━━━━━━━━━━━━━━━",
-            f"🧠 GLI 8 PILASTRI QUANTITATIVI ({analysis['pts_100']}/100 pt | Cap: {analysis['tech_cap']}/10):",
+            f"🧬 I 9 PILASTRI QUANT & NEURALI ({analysis['pts_100']}/100 pt | Cap: {analysis['tech_cap']}/10):",
         ]
     )
     lines.extend(analysis["reasons"])
