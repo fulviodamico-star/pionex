@@ -310,6 +310,7 @@ def ema(values, n):
 
 
 def rsi_series(closes, n=14):
+    """Restituisce una lista RSI della STESSA identica lunghezza di `closes`."""
     if len(closes) <= n:
         return [50.0] * len(closes)
     gains, losses = [], []
@@ -320,12 +321,15 @@ def rsi_series(closes, n=14):
 
     avg_gain = sum(gains[:n]) / n
     avg_loss = sum(losses[:n]) / n
-    out = [50.0] * n
+    rs = avg_gain / avg_loss if avg_loss > 0 else 100.0
+    first_rsi = 100.0 - (100.0 / (1.0 + rs))
+
+    # Allineamento perfetto: n valori iniziali neutri + primo RSI all'indice n
+    out = [50.0] * n + [first_rsi]
 
     for i in range(n, len(gains)):
-        if i > n:
-            avg_gain = (avg_gain * (n - 1) + gains[i]) / n
-            avg_loss = (avg_loss * (n - 1) + losses[i]) / n
+        avg_gain = (avg_gain * (n - 1) + gains[i]) / n
+        avg_loss = (avg_loss * (n - 1) + losses[i]) / n
         rs = avg_gain / avg_loss if avg_loss > 0 else 100.0
         out.append(100.0 - (100.0 / (1.0 + rs)))
     return out
@@ -373,12 +377,6 @@ def bollinger_bands(closes, n=20, mult=2.0):
 
 
 def hurst_exponent(closes):
-    """Calcola l'Esponente di Hurst (H):
-
-    H < 0.50 -> Mercato Mean-Reverting (Ideale per Grid Bot)
-    H = 0.50 -> Random Walk
-    H > 0.50 -> Mercato Trending (Rischio uscita dal range)
-    """
     if len(closes) < 100:
         return 0.50
     lags = [2, 4, 8, 16, 32]
@@ -473,8 +471,7 @@ def run_neural_and_lorentzian_ai(high, low, close, volume):
     """Addestra in tempo reale una Rete Neurale MLP (Multi-Layer Perceptron:
 
     6 Input -> 5 Neuroni Nascosti Tanh -> 1 Neurone Sigmoid) + Classificatore
-    Lorentzian k-NN sulle ultime 450 ore di SOL per stimare la probabilità
-    che le prossime 6 ore siano profittevoli e sicure per il Grid Bot.
+    Lorentzian k-NN sulle ultime 450 ore di SOL.
     """
     n_len = len(close)
     if n_len < 150:
@@ -492,15 +489,15 @@ def run_neural_and_lorentzian_ai(high, low, close, volume):
     start_idx = max(30, n_len - 450)
     for i in range(start_idx, n_len):
         p = close[i]
-        # 6 Feature normalizzate in [-2, +2]
-        f1 = (rsi_s[i] - 50.0) / 25.0
-        f2 = (p / ema20_s[i] - 1.0) * 25.0 if ema20_s[i] > 0 else 0.0
-        f3 = (
-            (ema20_s[i] / ema50_s[i] - 1.0) * 25.0
-            if ema50_s[i] > 0
-            else 0.0
-        )
-        f4 = (hist_s[i] / p) * 200.0 if p > 0 else 0.0
+        rsi_val = rsi_s[i] if i < len(rsi_s) else rsi_s[-1]
+        e20_val = ema20_s[i] if i < len(ema20_s) else ema20_s[-1]
+        e50_val = ema50_s[i] if i < len(ema50_s) else ema50_s[-1]
+        h_val = hist_s[i] if i < len(hist_s) else hist_s[-1]
+
+        f1 = (rsi_val - 50.0) / 25.0
+        f2 = (p / e20_val - 1.0) * 25.0 if e20_val > 0 else 0.0
+        f3 = (e20_val / e50_val - 1.0) * 25.0 if e50_val > 0 else 0.0
+        f4 = (h_val / p) * 200.0 if p > 0 else 0.0
         f5 = (p / close[i - 4] - 1.0) * 20.0
         avg_v = sum(volume[i - 20 : i]) / 20.0 if i >= 20 else volume[i]
         f6 = min(2.5, (volume[i] / avg_v) - 1.0) if avg_v > 0 else 0.0
@@ -513,7 +510,6 @@ def run_neural_and_lorentzian_ai(high, low, close, volume):
         if i < n_len - horizon:
             future_high = max(high[i + 1 : i + 1 + horizon])
             future_low = min(low[i + 1 : i + 1 + horizon])
-            # Successo = Raggiunge almeno +0.65% di rotazione senza crollare oltre -1.8%
             win = (
                 1.0
                 if (future_high >= p * 1.0065 and future_low >= p * 0.982)
@@ -524,13 +520,12 @@ def run_neural_and_lorentzian_ai(high, low, close, volume):
     train_x = features[:-horizon]
     current_x = features[-1]
 
-    if len(train_x) < 60:
+    if len(train_x) < 60 or len(targets) < 60:
         return 0.50, 0.50, 0.50
 
     # 1. CLASSIFICATORE LORENTZIAN SPACE k-NN (k=15)
     distances = []
     for idx, tx in enumerate(train_x):
-        # Distanza di Lorentz: sum(ln(1 + |x_i - y_i|))
         d = sum(math.log(1.0 + abs(current_x[j] - tx[j])) for j in range(6))
         distances.append((d, targets[idx]))
     distances.sort(key=lambda item: item[0])
@@ -548,7 +543,6 @@ def run_neural_and_lorentzian_ai(high, low, close, volume):
 
     for _ in range(30):
         for x_vec, y_true in zip(train_x, targets):
-            # Forward pass
             h_act = [
                 math.tanh(
                     sum(w1[h][j] * x_vec[j] for j in range(n_in)) + b1[h]
@@ -559,7 +553,6 @@ def run_neural_and_lorentzian_ai(high, low, close, volume):
                 sum(w2[h] * h_act[h] for h in range(n_hid)) + b2
             )
 
-            # Backpropagation
             err = out_pred - y_true
             d_hid = [
                 err * w2[h] * (1.0 - h_act[h] ** 2) for h in range(n_hid)
@@ -572,14 +565,12 @@ def run_neural_and_lorentzian_ai(high, low, close, volume):
                     w1[h][j] -= lr * d_hid[h] * x_vec[j]
             b2 -= lr * err
 
-    # Inferenza Neurale sullo stato attuale
     h_curr = [
         math.tanh(sum(w1[h][j] * current_x[j] for j in range(n_in)) + b1[h])
         for h in range(n_hid)
     ]
     mlp_prob = _sigmoid(sum(w2[h] * h_curr[h] for h in range(n_hid)) + b2)
 
-    # Ensemble AI (60% Rete Neurale MLP + 40% Lorentzian k-NN)
     ensemble_prob = 0.60 * mlp_prob + 0.40 * lorentzian_prob
     return ensemble_prob, mlp_prob, lorentzian_prob
 
@@ -659,7 +650,6 @@ def analyze():
     price = close[-1]
 
     # Indicatori Tecnici, Frattali e Neurali
-    ema50_1h = ema(close[-250:], 50)
     ema200_1h = ema(close[-350:], 200)
     rsi_1h = rsi(close[-250:], 14)
     _, macd_hist, macd_rising, _ = macd_metrics(close[-250:])
@@ -1289,7 +1279,6 @@ def load_bot_state():
                 return json.load(f)
         except Exception:
             pass
-    # Se l'utente aveva impostato ACTIVE_LOWER e ACTIVE_UPPER manualmente
     if ACTIVE_LOWER and ACTIVE_UPPER:
         try:
             low_b, up_b = float(ACTIVE_LOWER), float(ACTIVE_UPPER)
@@ -1319,14 +1308,9 @@ def save_bot_state(state):
 
 
 def execute_pionex_action(action, price, invest_usdt):
-    """Invia l'ordine reale a Pionex (via Webhook Signal Bot o Spot API).
-
-    Se AUTO_TRADE_ENABLED è false, opera in Paper Trading (Simulazione Reale).
-    """
     if not AUTO_TRADE_ENABLED:
         return True, "Simulazione Paper Trading attiva (AUTO_TRADE_ENABLED=false)"
 
-    # 1. METODO WEBHOOK (Pionex Signal Bot)
     if PIONEX_WEBHOOK_URL:
         try:
             side = "buy" if action == "OPEN" else "close"
@@ -1348,7 +1332,6 @@ def execute_pionex_action(action, price, invest_usdt):
         except Exception as exc:
             return False, f"Eccezione Webhook: {exc}"
 
-    # 2. METODO API DIRETTA PIONEX SPOT
     if PIONEX_API_KEY and PIONEX_API_SECRET:
         try:
             ts = str(int(time.time() * 1000))
@@ -1390,17 +1373,10 @@ def execute_pionex_action(action, price, invest_usdt):
 
 
 def manage_autonomous_trading(analysis, final_score):
-    """Gestisce l'intero ciclo di vita del trade in autonomia:
-
-    - Apertura se Voto >= 7 e AI Prob >= 52%
-    - Break-Even / Trailing Stop automatico se il prezzo sale di >= +2.5%
-    - Chiusura per Stop Loss, Take Profit (> upper) o Emergenza AI/Macro
-    """
     state = load_bot_state()
     price = analysis["price"]
     ai_prob = analysis["ai_prob"]
 
-    # CASO A: BOT ATTIVO -> Sorveglianza, Trailing Stop & Condizioni di Uscita
     if state.get("active"):
         low_b = float(state["lower"])
         up_b = float(state["upper"])
@@ -1412,7 +1388,6 @@ def manage_autonomous_trading(analysis, final_score):
         pnl_pct = (price / entry_p - 1) * 100
         trailing_note = ""
 
-        # PROTEZIONE PROFITTI (Break-Even & Trailing Stop Dinamico)
         if pnl_pct >= 2.5 and stop_b < entry_p:
             stop_b = round(entry_p * 1.003, 2)
             state["stop"] = stop_b
@@ -1464,7 +1439,6 @@ def manage_autonomous_trading(analysis, final_score):
             f"• Range: {low_b:.2f}$ — {up_b:.2f}$ | {lock_icon} Stop: {stop_b:.2f}${trailing_note}"
         )
 
-    # CASO B: BOT SPENTO -> Valutazione Apertura Automatica
     if final_score >= 7 and ai_prob >= 0.52:
         _, msg = execute_pionex_action("OPEN", price, analysis["invest_usdt"])
         new_state = {
