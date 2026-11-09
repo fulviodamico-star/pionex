@@ -13,7 +13,7 @@ import requests
 
 
 # ---------------------------------------------------------------------
-# 1. CONFIGURAZIONE E VARIABILI D'AMBIENTE (QUANT + NEURAL ENGINE)
+# 1. CONFIGURAZIONE E VARIABILI D'AMBIENTE (QUANT + NEURAL + WEBAPP)
 # ---------------------------------------------------------------------
 
 TG_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
@@ -23,6 +23,8 @@ ACTIVE_LOWER = os.getenv("ACTIVE_LOWER", "").strip()
 ACTIVE_UPPER = os.getenv("ACTIVE_UPPER", "").strip()
 
 STATE_FILE = "bot_state.json"
+WEBAPP_FILE = "index.html"
+
 AUTO_TRADE_ENABLED = (
     os.getenv("AUTO_TRADE_ENABLED", "false").strip().lower() == "true"
 )
@@ -310,7 +312,6 @@ def ema(values, n):
 
 
 def rsi_series(closes, n=14):
-    """Restituisce una lista RSI della STESSA identica lunghezza di `closes`."""
     if len(closes) <= n:
         return [50.0] * len(closes)
     gains, losses = [], []
@@ -323,8 +324,6 @@ def rsi_series(closes, n=14):
     avg_loss = sum(losses[:n]) / n
     rs = avg_gain / avg_loss if avg_loss > 0 else 100.0
     first_rsi = 100.0 - (100.0 / (1.0 + rs))
-
-    # Allineamento perfetto: n valori iniziali neutri + primo RSI all'indice n
     out = [50.0] * n + [first_rsi]
 
     for i in range(n, len(gains)):
@@ -390,8 +389,7 @@ def hurst_exponent(closes):
 
     x = [math.log(l) for l in lags]
     y = [math.log(t) for t in tau]
-    mx = sum(x) / len(x)
-    my = sum(y) / len(y)
+    mx, my = sum(x) / len(x), sum(y) / len(y)
     num = sum((x[i] - mx) * (y[i] - my) for i in range(len(x)))
     den = sum((x[i] - mx) ** 2 for i in range(len(x)))
     h = num / den if den > 0 else 0.50
@@ -468,11 +466,6 @@ def _sigmoid(x):
 
 
 def run_neural_and_lorentzian_ai(high, low, close, volume):
-    """Addestra in tempo reale una Rete Neurale MLP (Multi-Layer Perceptron:
-
-    6 Input -> 5 Neuroni Nascosti Tanh -> 1 Neurone Sigmoid) + Classificatore
-    Lorentzian k-NN sulle ultime 450 ore di SOL.
-    """
     n_len = len(close)
     if n_len < 150:
         return 0.50, 0.50, 0.50
@@ -482,8 +475,7 @@ def run_neural_and_lorentzian_ai(high, low, close, volume):
     ema50_s = ema_series(close, 50)
     _, _, _, hist_s = macd_metrics(close)
 
-    features = []
-    targets = []
+    features, targets = [], []
     horizon = 6
 
     start_idx = max(30, n_len - 450)
@@ -523,7 +515,6 @@ def run_neural_and_lorentzian_ai(high, low, close, volume):
     if len(train_x) < 60 or len(targets) < 60:
         return 0.50, 0.50, 0.50
 
-    # 1. CLASSIFICATORE LORENTZIAN SPACE k-NN (k=15)
     distances = []
     for idx, tx in enumerate(train_x):
         d = sum(math.log(1.0 + abs(current_x[j] - tx[j])) for j in range(6))
@@ -532,7 +523,6 @@ def run_neural_and_lorentzian_ai(high, low, close, volume):
     k_nearest = distances[:15]
     lorentzian_prob = sum(t for _, t in k_nearest) / len(k_nearest)
 
-    # 2. RETE NEURALE MULTI-LAYER PERCEPTRON (MLP 6 -> 5 -> 1)
     rng = random.Random(42)
     n_in, n_hid = 6, 5
     w1 = [[rng.uniform(-0.35, 0.35) for _ in range(n_in)] for _ in range(n_hid)]
@@ -649,7 +639,6 @@ def analyze():
 
     price = close[-1]
 
-    # Indicatori Tecnici, Frattali e Neurali
     ema200_1h = ema(close[-350:], 200)
     rsi_1h = rsi(close[-250:], 14)
     _, macd_hist, macd_rising, _ = macd_metrics(close[-250:])
@@ -664,7 +653,6 @@ def analyze():
         high, low, close, volume
     )
 
-    # VWAP 24h istituzionale
     vol_24h = sum(volume[-24:])
     vwap_24h = (
         sum(
@@ -676,7 +664,6 @@ def analyze():
         else price
     )
 
-    # 4H Macro & 15m Micro
     close_4h = c4h["close"]
     ema50_4h = ema(close_4h[-200:], 50)
     ema200_4h = ema(close_4h[-250:], 200)
@@ -703,7 +690,6 @@ def analyze():
     red_vols_3h = [volume[-i] for i in range(1, 4) if close[-i] < opens[-i]]
     max_red_vol_ratio = (max(red_vols_3h) / avg_vol_7d) if red_vols_3h else 0.0
 
-    # Calcolo Range Ottimale Dinamico
     daily_ranges = [
         (
             max(high[-(d + 1) * 24 : len(high) - d * 24])
@@ -732,9 +718,6 @@ def analyze():
 
     btc_info = analyze_btc(chg4h, chg24)
 
-    # -----------------------------------------------------------------
-    # VALUTAZIONE SUI 9 PILASTRI QUANTITATIVI & NEURALI (100 PUNTI)
-    # -----------------------------------------------------------------
     pts = 0
     reasons = []
     risk_vetoes = []
@@ -937,6 +920,8 @@ def analyze():
         "rsi_4h": rsi_4h,
         "hurst": hurst,
         "ai_prob": ai_prob,
+        "mlp_prob": mlp_prob,
+        "lor_prob": lor_prob,
         "pdi": pdi,
         "mdi": mdi,
         "chg4h": chg4h,
@@ -957,6 +942,7 @@ def analyze():
         "btc_info": btc_info,
         "invest_usdt": invest_usdt,
         "candle_times": c1h["time"],
+        "recent_closes": close[-48:],
     }
 
 
@@ -1268,7 +1254,7 @@ def get_news_context():
 
 
 # ---------------------------------------------------------------------
-# 7. ESECUZIONE AUTONOMA (APERTURA, TRAILING STOP & CHIUSURA PIONEX)
+# 7. ESECUZIONE AUTONOMA E STORICO OPERAZIONI
 # ---------------------------------------------------------------------
 
 
@@ -1276,7 +1262,10 @@ def load_bot_state():
     if os.path.exists(STATE_FILE):
         try:
             with open(STATE_FILE, "r") as f:
-                return json.load(f)
+                data = json.load(f)
+                if "history" not in data:
+                    data["history"] = []
+                return data
         except Exception:
             pass
     if ACTIVE_LOWER and ACTIVE_UPPER:
@@ -1293,10 +1282,11 @@ def load_bot_state():
                 "qty_sol": 0.3,
                 "trailing_locked": False,
                 "opened_at": "Manuale",
+                "history": [],
             }
         except ValueError:
             pass
-    return {"active": False}
+    return {"active": False, "history": []}
 
 
 def save_bot_state(state):
@@ -1309,7 +1299,7 @@ def save_bot_state(state):
 
 def execute_pionex_action(action, price, invest_usdt):
     if not AUTO_TRADE_ENABLED:
-        return True, "Simulazione Paper Trading attiva (AUTO_TRADE_ENABLED=false)"
+        return True, "Simulazione Paper Trading (AUTO_TRADE_ENABLED=false)"
 
     if PIONEX_WEBHOOK_URL:
         try:
@@ -1374,8 +1364,10 @@ def execute_pionex_action(action, price, invest_usdt):
 
 def manage_autonomous_trading(analysis, final_score):
     state = load_bot_state()
+    history = state.get("history", [])
     price = analysis["price"]
     ai_prob = analysis["ai_prob"]
+    now_str = datetime.now(LOCAL_TZ).strftime("%d/%m %H:%M")
 
     if state.get("active"):
         low_b = float(state["lower"])
@@ -1404,26 +1396,34 @@ def manage_autonomous_trading(analysis, final_score):
 
         close_reason = None
         if price <= stop_b:
-            close_reason = f"🛑 STOP LOSS TOCCATO ({price:.2f}$ <= {stop_b:.2f}$)"
+            close_reason = f"🛑 STOP LOSS ({price:.2f}$ <= {stop_b:.2f}$)"
         elif price >= up_b * 1.008:
-            close_reason = f"🎯 TAKE PROFIT RAGGIUNTO: Uscita sopra il tetto ({price:.2f}$ > {up_b:.2f}$)"
+            close_reason = f"🎯 TAKE PROFIT ({price:.2f}$ > {up_b:.2f}$)"
         elif final_score <= 2 and ai_prob < 0.44:
-            close_reason = f"🚨 USCITA D'EMERGENZA AI/MACRO (Voto {final_score}/10 | AI {ai_prob*100:.0f}%)"
+            close_reason = f"🚨 EMERGENZA AI/MACRO (Voto {final_score}/10)"
 
         if close_reason:
             _, msg = execute_pionex_action(
                 "CLOSE", price, analysis["invest_usdt"]
             )
-            save_bot_state(
-                {
-                    "active": False,
-                    "last_closed_at": datetime.now(LOCAL_TZ).strftime(
-                        "%d/%m %H:%M"
-                    ),
-                    "last_close_reason": close_reason,
-                    "last_pnl_pct": round(pnl_pct, 2),
-                }
-            )
+            closed_trade = {
+                "opened_at": state.get("opened_at", "N/D"),
+                "closed_at": now_str,
+                "entry_price": round(entry_p, 2),
+                "exit_price": round(price, 2),
+                "pnl_pct": round(pnl_pct, 2),
+                "pnl_usdt": round(analysis["invest_usdt"] * (pnl_pct / 100), 2),
+                "reason": close_reason,
+            }
+            history.insert(0, closed_trade)
+            new_state = {
+                "active": False,
+                "last_closed_at": now_str,
+                "last_close_reason": close_reason,
+                "last_pnl_pct": round(pnl_pct, 2),
+                "history": history[:30],
+            }
+            save_bot_state(new_state)
             return (
                 f"🔴 CHIUSURA AUTOMATICA ESEGUITA!\n"
                 f"• Motivo: {close_reason}\n"
@@ -1451,7 +1451,8 @@ def manage_autonomous_trading(analysis, final_score):
             "grids": analysis["grids"],
             "qty_sol": round(analysis["invest_usdt"] / price, 3),
             "trailing_locked": False,
-            "opened_at": datetime.now(LOCAL_TZ).strftime("%d/%m %H:%M"),
+            "opened_at": now_str,
+            "history": history,
         }
         save_bot_state(new_state)
         return (
@@ -1473,7 +1474,164 @@ def manage_autonomous_trading(analysis, final_score):
 
 
 # ---------------------------------------------------------------------
-# 8. COSTRUZIONE REPORT E INVIO TELEGRAM
+# 8. GENERATORE WEBAPP DASHBOARD (index.html per GitHub Pages)
+# ---------------------------------------------------------------------
+
+
+def generate_webapp_dashboard(analysis, news, final_score):
+    state = load_bot_state()
+    now_str = datetime.now(LOCAL_TZ).strftime("%d/%m/%Y %H:%M")
+    is_active = state.get("active", False)
+    mode_badge = (
+        "🟢 LIVE TRADING PIONEX"
+        if AUTO_TRADE_ENABLED
+        else "🧪 PAPER TRADING (SIMULAZIONE)"
+    )
+
+    price = analysis["price"]
+    if is_active:
+        entry_p = float(state["entry_price"])
+        low_b = float(state["lower"])
+        up_b = float(state["upper"])
+        stop_b = float(state["stop"])
+        pnl_pct = (price / entry_p - 1) * 100
+        pnl_usdt = analysis["invest_usdt"] * (pnl_pct / 100)
+        pos_pct = max(0, min(100, (price - low_b) / (up_b - low_b) * 100))
+        status_html = f"""
+        <div class="bg-emerald-950/60 border border-emerald-500/40 rounded-2xl p-6">
+            <div class="flex justify-between items-center mb-4">
+                <span class="px-3 py-1 bg-emerald-500/20 text-emerald-300 rounded-full text-sm font-bold">🟢 POSIZIONE ATTIVA (Dal {state.get('opened_at')})</span>
+                <span class="text-2xl font-extrabold {'text-emerald-400' if pnl_pct>=0 else 'text-rose-400'}">{pnl_pct:+.2f}% ({pnl_usdt:+.2f} USDT)</span>
+            </div>
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm mb-4">
+                <div class="bg-slate-900/80 p-3 rounded-xl"><div class="text-slate-400">Prezzo Entrata</div><div class="text-lg font-bold text-white">{entry_p:.2f}$</div></div>
+                <div class="bg-slate-900/80 p-3 rounded-xl"><div class="text-slate-400">Prezzo Attuale</div><div class="text-lg font-bold text-sky-400">{price:.2f}$</div></div>
+                <div class="bg-slate-900/80 p-3 rounded-xl"><div class="text-slate-400">Range Griglia</div><div class="text-lg font-bold text-white">{low_b:.2f}$ - {up_b:.2f}$</div></div>
+                <div class="bg-slate-900/80 p-3 rounded-xl"><div class="text-slate-400">Stop Loss Dinamico</div><div class="text-lg font-bold text-amber-400">{stop_b:.2f}$</div></div>
+            </div>
+            <div class="text-xs text-slate-300 mb-1 flex justify-between"><span>Lower ({low_b:.2f}$)</span><span>Posizione nel Range: {pos_pct:.0f}%</span><span>Upper ({up_b:.2f}$)</span></div>
+            <div class="w-full bg-slate-800 h-3 rounded-full overflow-hidden"><div class="bg-gradient-to-r from-emerald-500 to-sky-400 h-3" style="width: {pos_pct:.0f}%"></div></div>
+        </div>
+        """
+    else:
+        status_html = f"""
+        <div class="bg-slate-900 border border-slate-700 rounded-2xl p-6">
+            <div class="flex justify-between items-center mb-2">
+                <span class="px-3 py-1 bg-amber-500/20 text-amber-300 rounded-full text-sm font-bold">⏸️ IN ATTESA DI SEGNALE (100% USDT)</span>
+                <span class="text-sm text-slate-400">Target Apertura: Voto &ge; 7/10 &amp; AI &ge; 52%</span>
+            </div>
+            <p class="text-slate-300 text-sm mt-2">Il bot sta monitorando il mercato ogni 30 minuti. Aprirà automaticamente la griglia (Range ipotetico: <b>{analysis['lower']:.2f}$ - {analysis['upper']:.2f}$</b> | Stop: <b>{analysis['stop']:.2f}$</b>) non appena i filtri Quant e la Rete Neurale daranno il via libera.</p>
+        </div>
+        """
+
+    history = state.get("history", [])
+    total_pnl_pct = sum(float(h.get("pnl_pct", 0)) for h in history)
+    history_rows = ""
+    if history:
+        for h in history:
+            p_pct = float(h.get("pnl_pct", 0))
+            col = "text-emerald-400" if p_pct >= 0 else "text-rose-400"
+            history_rows += f"""
+            <tr class="border-b border-slate-800 text-sm">
+                <td class="py-3 px-2">{h.get('opened_at')} &rarr; {h.get('closed_at')}</td>
+                <td class="py-3 px-2">{h.get('entry_price')}$ &rarr; {h.get('exit_price')}$</td>
+                <td class="py-3 px-2 font-bold {col}">{p_pct:+.2f}% ({h.get('pnl_usdt', 0):+.2f}$)</td>
+                <td class="py-3 px-2 text-slate-300">{h.get('reason')}</td>
+            </tr>
+            """
+    else:
+        history_rows = '<tr><td colspan="4" class="py-4 text-center text-slate-500">Nessun trade chiuso finora nello storico.</td></tr>'
+
+    pillars_html = "".join(
+        f'<li class="p-3 bg-slate-900/90 border border-slate-800 rounded-xl text-sm">{r}</li>'
+        for r in analysis["reasons"]
+    )
+    news_html = "".join(
+        f'<li class="text-sm text-slate-300 py-1">{n}</li>'
+        for n in news["evaluated_lines"]
+    )
+
+    html = f"""<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="refresh" content="300">
+    <title>Neural Quant Grid Bot — SOL/USDT</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen p-4 md:p-8 font-sans">
+    <div class="max-w-5xl mx-auto space-y-6">
+        <div class="flex flex-col md:flex-row justify-between items-start md:items-center bg-slate-900 border border-slate-800 p-5 rounded-2xl gap-4">
+            <div>
+                <h1 class="text-2xl font-extrabold tracking-tight text-white">🧠 Neural Quant Grid Bot <span class="text-sky-400">SOL/USDT</span></h1>
+                <p class="text-xs text-slate-400 mt-1">Ultimo aggiornamento: {now_str} ({LOCAL_TZ_NAME}) • Auto-refresh 5m</p>
+            </div>
+            <span class="px-4 py-1.5 rounded-full text-xs font-bold bg-slate-800 border border-slate-700 text-sky-300">{mode_badge}</span>
+        </div>
+
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div class="bg-slate-900 border border-slate-800 p-4 rounded-2xl">
+                <div class="text-xs text-slate-400">Prezzo SOL / VWAP 24h</div>
+                <div class="text-2xl font-extrabold text-white mt-1">{price:.2f}$</div>
+                <div class="text-xs text-slate-400 mt-1">VWAP: {analysis['vwap_24h']:.2f}$ ({analysis['chg24']:+.1f}% 24h)</div>
+            </div>
+            <div class="bg-slate-900 border border-slate-800 p-4 rounded-2xl">
+                <div class="text-xs text-slate-400">Punteggio Finale</div>
+                <div class="text-2xl font-extrabold {'text-emerald-400' if final_score>=7 else ('text-amber-400' if final_score>=5 else 'text-rose-400')} mt-1">{final_score}/10</div>
+                <div class="text-xs text-slate-400 mt-1">Quant Score: {analysis['pts_100']}/100</div>
+            </div>
+            <div class="bg-slate-900 border border-slate-800 p-4 rounded-2xl">
+                <div class="text-xs text-slate-400">Rete Neurale + Lorentz AI</div>
+                <div class="text-2xl font-extrabold text-sky-400 mt-1">{analysis['ai_prob']*100:.0f}%</div>
+                <div class="text-xs text-slate-400 mt-1">MLP: {analysis['mlp_prob']*100:.0f}% | Lor: {analysis['lor_prob']*100:.0f}%</div>
+            </div>
+            <div class="bg-slate-900 border border-slate-800 p-4 rounded-2xl">
+                <div class="text-xs text-slate-400">Esponente Frattale Hurst</div>
+                <div class="text-2xl font-extrabold text-purple-400 mt-1">H = {analysis['hurst']:.2f}</div>
+                <div class="text-xs text-slate-400 mt-1">{'Mean-Reverting (Ideale)' if analysis['hurst']<0.5 else 'Trending'}</div>
+            </div>
+        </div>
+
+        {status_html}
+
+        <div class="grid md:grid-cols-2 gap-6">
+            <div class="bg-slate-900 border border-slate-800 p-5 rounded-2xl">
+                <h2 class="text-lg font-bold mb-3 text-white">🧬 I 9 Pilastri Quantitativi &amp; Neurali</h2>
+                <ul class="space-y-2">{pillars_html}</ul>
+            </div>
+            <div class="space-y-6">
+                <div class="bg-slate-900 border border-slate-800 p-5 rounded-2xl">
+                    <h2 class="text-lg font-bold mb-3 text-white">📰 Calendario Macro &amp; News</h2>
+                    <ul class="space-y-1 mb-3">{news_html}</ul>
+                    <div class="p-3 bg-slate-950 rounded-xl text-xs text-sky-300 border border-slate-800">{news['explanation']}</div>
+                </div>
+                <div class="bg-slate-900 border border-slate-800 p-5 rounded-2xl">
+                    <div class="flex justify-between items-center mb-3">
+                        <h2 class="text-lg font-bold text-white">📜 Storico Operazioni Chiuse</h2>
+                        <span class="text-sm font-bold {'text-emerald-400' if total_pnl_pct>=0 else 'text-rose-400'}">PnL Storico: {total_pnl_pct:+.2f}%</span>
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left">
+                            <thead><tr class="border-b border-slate-700 text-xs text-slate-400"><th class="pb-2">Data</th><th class="pb-2">Prezzo</th><th class="pb-2">PnL</th><th class="pb-2">Motivo</th></tr></thead>
+                            <tbody>{history_rows}</tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>"""
+    try:
+        with open(WEBAPP_FILE, "w", encoding="utf-8") as f:
+            f.write(html)
+    except Exception as exc:
+        print(f"Avviso: impossibile generare {WEBAPP_FILE}: {exc}")
+
+
+# ---------------------------------------------------------------------
+# 9. COSTRUZIONE REPORT TELEGRAM E AVVIO
 # ---------------------------------------------------------------------
 
 
@@ -1493,6 +1651,7 @@ def build_report(analysis, news):
     now_str = datetime.now(LOCAL_TZ).strftime("%d/%m %H:%M")
 
     auto_status_block = manage_autonomous_trading(analysis, final_score)
+    generate_webapp_dashboard(analysis, news, final_score)
 
     lines = [
         f"🧠 NEURAL QUANT GRID BOT SOL/USDT — {now_str}",
@@ -1584,3 +1743,28 @@ def main():
 
 if __name__ == "__main__":
     main()
+```
+
+---
+
+#### PASSO 2: Aggiorna l'ultimo blocco nel file `.yml`
+Nel tuo file dentro **`.github/workflows/`**, assicurati che l'ultimo step in fondo salvi sia `bot_state.json` sia **`index.html`**, così:
+
+```yaml
+      - name: Salva Memoria e WebApp Dashboard
+        run: |
+          git config --global user.name "NeuralGridBot"
+          git config --global user.email "bot@users.noreply.github.com"
+          git add bot_state.json index.html || true
+          git diff --staged --quiet || (git commit -m "Aggiornamento Dashboard e Stato Bot [skip ci]" && git pull --rebase && git push)
+```
+
+---
+
+#### PASSO 3: Accendi la WebApp su GitHub Pages (3 clic!)
+1. Fai partire una volta il bot da **Actions -> Run workflow** (così crea il file `index.html`).
+2. Vai in alto su **Settings** (Impostazioni del tuo repository su GitHub).
+3. Nel menu a sinistra, clicca su **Pages**.
+4. Sotto la voce **Branch**, cambia da `None` a **`main`** (o `master`) e clicca su **Save**.
+
+🎉 **Fatto!** Dopo 1 minuto, in alto nella stessa pagina **Pages** ti apparirà il tuo link personale (sarà del tipo `https://tuonome.github.io/pionex/`). Aprilo dal telefono o dal PC e vedrai la tua **WebApp Dashboard in tempo reale**!
