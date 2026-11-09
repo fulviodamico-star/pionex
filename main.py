@@ -1743,28 +1743,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-```
-
----
-
-#### PASSO 2: Aggiorna l'ultimo blocco nel file `.yml`
-Nel tuo file dentro **`.github/workflows/`**, assicurati che l'ultimo step in fondo salvi sia `bot_state.json` sia **`index.html`**, così:
-
-```yaml
-      - name: Salva Memoria e WebApp Dashboard
-        run: |
-          git config --global user.name "NeuralGridBot"
-          git config --global user.email "bot@users.noreply.github.com"
-          git add bot_state.json index.html || true
-          git diff --staged --quiet || (git commit -m "Aggiornamento Dashboard e Stato Bot [skip ci]" && git pull --rebase && git push)
-```
-
----
-
-#### PASSO 3: Accendi la WebApp su GitHub Pages (3 clic!)
-1. Fai partire una volta il bot da **Actions -> Run workflow** (così crea il file `index.html`).
-2. Vai in alto su **Settings** (Impostazioni del tuo repository su GitHub).
-3. Nel menu a sinistra, clicca su **Pages**.
-4. Sotto la voce **Branch**, cambia da `None` a **`main`** (o `master`) e clicca su **Save**.
-
-🎉 **Fatto!** Dopo 1 minuto, in alto nella stessa pagina **Pages** ti apparirà il tuo link personale (sarà del tipo `https://tuonome.github.io/pionex/`). Aprilo dal telefono o dal PC e vedrai la tua **WebApp Dashboard in tempo reale**!
