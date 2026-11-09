@@ -1,12 +1,12 @@
-name: AI Grid Advisor Autonomous
+name: Neural Quant Grid Bot
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: '*/15 * * * *'  # Esegue il controllo ogni 15 minuti per reagire subito agli Stop Loss!
+    - cron: '*/30 * * * *'
 
 permissions:
-  contents: write  # <--- FONDAMENTALE: Permette al bot di salvare la memoria (bot_state.json)
+  contents: write
 
 jobs:
   run-bot:
@@ -23,21 +23,24 @@ jobs:
       - name: Installa dipendenze
         run: pip install requests
 
-      - name: Avvia il Bot Autonomo
+      - name: Avvia Neural Quant Bot
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          AUTO_TRADE_ENABLED: "true"
+          ACTIVE_LOWER: ${{ vars.ACTIVE_LOWER }}
+          ACTIVE_UPPER: ${{ vars.ACTIVE_UPPER }}
+          AUTO_TRADE_ENABLED: "false"
           PIONEX_WEBHOOK_URL: ${{ secrets.PIONEX_WEBHOOK_URL }}
           PIONEX_SIGNAL_TOKEN: ${{ secrets.PIONEX_SIGNAL_TOKEN }}
           PIONEX_API_KEY: ${{ secrets.PIONEX_API_KEY }}
           PIONEX_API_SECRET: ${{ secrets.PIONEX_API_SECRET }}
         run: python main.py
 
-      - name: Salva Memoria del Bot (bot_state.json)
+      - name: Salva Memoria Autonoma (bot_state.json)
         run: |
-          git config --global user.name "TradingBot"
-          git config --global user.email "bot@github.com"
-          git add bot_state.json || true
-          git diff --staged --quiet || git commit -m "Aggiornamento stato bot automatico"
-          git push
+          if [ -f bot_state.json ]; then
+            git config --global user.name "NeuralGridBot"
+            git config --global user.email "bot@users.noreply.github.com"
+            git add bot_state.json
+            git diff --staged --quiet || (git commit -m "Aggiornamento memoria bot_state.json [skip ci]" && git pull --rebase && git push)
+          fi
