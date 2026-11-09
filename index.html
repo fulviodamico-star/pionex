@@ -3,76 +3,83 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="refresh" content="300">
-    <title>Neural Quant Grid Bot — SOL/USDT</title>
+    <title>SOL/USDT Neural Quant Grid Bot</title>
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
-<body class="bg-slate-950 text-slate-100 min-h-screen p-4 md:p-8 font-sans">
+<body class="bg-slate-950 text-slate-100 min-h-screen font-sans p-4 md:p-8">
     <div class="max-w-5xl mx-auto space-y-6">
-        <div class="flex flex-col md:flex-row justify-between items-start md:items-center bg-slate-900 border border-slate-800 p-5 rounded-2xl gap-4">
+        <div class="flex flex-wrap justify-between items-center gap-4 bg-slate-900/90 border border-slate-800 p-5 rounded-2xl shadow-lg">
             <div>
-                <h1 class="text-2xl font-extrabold tracking-tight text-white">🧠 Neural Quant Grid Bot <span class="text-sky-400">SOL/USDT</span></h1>
-                <p class="text-xs text-slate-400 mt-1">Ultimo aggiornamento: 09/11/2026 16:26 (Europe/Rome) • Auto-refresh 5m</p>
+                <div class="flex items-center gap-2.5">
+                    <span class="text-2xl">🤖</span>
+                    <h1 class="text-xl md:text-2xl font-extrabold tracking-tight text-white">SOL/USDT Neural Quant Grid Bot</h1>
+                </div>
+                <p class="text-xs text-slate-400 mt-1">Ultimo aggiornamento: <b>09/11/2026 17:21:26</b> (Ora Italiana)</p>
             </div>
-            <span class="px-4 py-1.5 rounded-full text-xs font-bold bg-slate-800 border border-slate-700 text-sky-300">🧪 PAPER TRADING (SIMULAZIONE)</span>
+            <span class="text-xs font-bold px-3.5 py-1.5 rounded-full border bg-sky-500/20 text-sky-300 border-sky-500/40">SIMULAZIONE PAPER TRADING</span>
         </div>
 
         <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
             <div class="bg-slate-900 border border-slate-800 p-4 rounded-2xl">
-                <div class="text-xs text-slate-400">Prezzo SOL / VWAP 24h</div>
-                <div class="text-2xl font-extrabold text-white mt-1">87.20$</div>
-                <div class="text-xs text-slate-400 mt-1">VWAP: 86.99$ (-2.5% 24h)</div>
+                <div class="text-xs text-slate-400">Prezzo SOL/USDT</div>
+                <div class="text-2xl font-black text-white mt-1">$87.08</div>
+                <div class="text-xs text-slate-400 mt-1">24h: -2.08% | VWAP: $86.76</div>
             </div>
             <div class="bg-slate-900 border border-slate-800 p-4 rounded-2xl">
-                <div class="text-xs text-slate-400">Punteggio Finale</div>
-                <div class="text-2xl font-extrabold text-amber-400 mt-1">6/10</div>
-                <div class="text-xs text-slate-400 mt-1">Quant Score: 65/100</div>
+                <div class="text-xs text-slate-400">Voto Finale Quant</div>
+                <div class="text-2xl font-black text-emerald-400 mt-1">7/10 <span class="text-sm font-normal text-slate-400">(67/100)</span></div>
+                <div class="text-xs text-slate-400 mt-1">Soglia apertura: &ge; 7/10</div>
             </div>
             <div class="bg-slate-900 border border-slate-800 p-4 rounded-2xl">
-                <div class="text-xs text-slate-400">Rete Neurale + Lorentz AI</div>
-                <div class="text-2xl font-extrabold text-sky-400 mt-1">39%</div>
-                <div class="text-xs text-slate-400 mt-1">MLP: 38% | Lor: 40%</div>
+                <div class="text-xs text-slate-400">Rete Neurale + k-NN</div>
+                <div class="text-2xl font-black text-sky-400 mt-1">39.0%</div>
+                <div class="text-xs text-slate-400 mt-1">MLP: 32% | k-NN: 49%</div>
             </div>
             <div class="bg-slate-900 border border-slate-800 p-4 rounded-2xl">
-                <div class="text-xs text-slate-400">Esponente Frattale Hurst</div>
-                <div class="text-2xl font-extrabold text-purple-400 mt-1">H = 0.36</div>
-                <div class="text-xs text-slate-400 mt-1">Mean-Reverting (Ideale)</div>
+                <div class="text-xs text-slate-400">Esponente di Hurst</div>
+                <div class="text-2xl font-black text-purple-400 mt-1">0.44</div>
+                <div class="text-xs text-slate-400 mt-1">Mean-Reverting (Ottimo)</div>
             </div>
         </div>
 
         
-        <div class="bg-slate-900 border border-slate-700 rounded-2xl p-6">
-            <div class="flex justify-between items-center mb-2">
-                <span class="px-3 py-1 bg-amber-500/20 text-amber-300 rounded-full text-sm font-bold">⏸️ IN ATTESA DI SEGNALE (100% USDT)</span>
-                <span class="text-sm text-slate-400">Target Apertura: Voto &ge; 7/10 &amp; AI &ge; 52%</span>
+        <div class="bg-slate-800/80 border border-slate-700 rounded-2xl p-6 shadow-xl">
+            <div class="flex items-center gap-3 mb-2">
+                <span class="h-3 w-3 rounded-full bg-amber-400"></span>
+                <h2 class="text-lg font-bold text-slate-200">NESSUN TRADE APERTO (IN ATTESA DI VOTO &ge; 7/10)</h2>
             </div>
-            <p class="text-slate-300 text-sm mt-2">Il bot sta monitorando il mercato ogni 30 minuti. Aprirà automaticamente la griglia (Range ipotetico: <b>83.71$ - 94.18$</b> | Stop: <b>81.87$</b>) non appena i filtri Quant e la Rete Neurale daranno il via libera.</p>
+            <p class="text-sm text-slate-400 mb-3">Il bot sta monitorando il mercato ogni 30 minuti. Aprirà automaticamente una posizione quando il Voto Finale raggiungerà almeno <b>7/10</b> con probabilità AI &ge; 52%.</p>
+            <div class="text-xs text-slate-400 bg-slate-900/70 p-3 rounded-xl border border-slate-700/60">
+                <b>Range Consigliato Attuale:</b> $84.98 &ndash; $89.02 (10 griglie, netto +0.36%/griglia) | <b>Stop:</b> $83.88<br>
+                <b>Ultima Azione:</b> Nessuna azione
+            </div>
         </div>
         
 
-        <div class="grid md:grid-cols-2 gap-6">
-            <div class="bg-slate-900 border border-slate-800 p-5 rounded-2xl">
-                <h2 class="text-lg font-bold mb-3 text-white">🧬 I 9 Pilastri Quantitativi &amp; Neurali</h2>
-                <ul class="space-y-2"><li class="p-3 bg-slate-900/90 border border-slate-800 rounded-xl text-sm">🔴 1. AI Neurale & Lorentzian: Win Prob 39% (MLP:38% | Lor:40%) (4/15)</li><li class="p-3 bg-slate-900/90 border border-slate-800 rounded-xl text-sm">🔴 2. Trend MTF (4H/1H): EMA200 1H 91.4$ | 4H 100.5$ | ADX 23 (3/15)</li><li class="p-3 bg-slate-900/90 border border-slate-800 rounded-xl text-sm">🟢 3. Frattale Hurst & ATR: H=0.36 (Mean-Rev) | VR 0.47 | ATR 1.15x (12/12)</li><li class="p-3 bg-slate-900/90 border border-slate-800 rounded-xl text-sm">🟢 4. Valore & VWAP: Pos 33% | vs VWAP +0.2% | %B 0.57 (13/13)</li><li class="p-3 bg-slate-900/90 border border-slate-800 rounded-xl text-sm">🟢 5. Momentum (1H/15m): MACD 📈 | RSI 1h:49 15m:61 | Stoch:88 (12/12)</li><li class="p-3 bg-slate-900/90 border border-slate-800 rounded-xl text-sm">🟢 6. Orderbook & Volumi: Bid/Ask 1.01x | Vol Rosso Max 0.0x (7/10)</li><li class="p-3 bg-slate-900/90 border border-slate-800 rounded-xl text-sm">🟢 7. Forza Relativa BTC: Alpha SOL -1.0% | BTC 4h +1.0% (6/8)</li><li class="p-3 bg-slate-900/90 border border-slate-800 rounded-xl text-sm">🟡 8. Derivati & Sentiment: Funding +0.1211% | F&G 29 (Fear) (2/7)</li><li class="p-3 bg-slate-900/90 border border-slate-800 rounded-xl text-sm">🟢 9. Efficienza Griglia: Netto +0.99% | Rotazione 0.38x/gg (6/8)</li></ul>
-            </div>
-            <div class="space-y-6">
-                <div class="bg-slate-900 border border-slate-800 p-5 rounded-2xl">
-                    <h2 class="text-lg font-bold mb-3 text-white">📰 Calendario Macro &amp; News</h2>
-                    <ul class="space-y-1 mb-3"><li class="text-sm text-slate-300 py-1">✅ Nessuna notizia ad alto/medio impatto nelle vicinanze.</li></ul>
-                    <div class="p-3 bg-slate-950 rounded-xl text-xs text-sky-300 border border-slate-800">✅ Via libera macroeconomico: nessuna notizia ostile imminente.</div>
-                </div>
-                <div class="bg-slate-900 border border-slate-800 p-5 rounded-2xl">
-                    <div class="flex justify-between items-center mb-3">
-                        <h2 class="text-lg font-bold text-white">📜 Storico Operazioni Chiuse</h2>
-                        <span class="text-sm font-bold text-emerald-400">PnL Storico: +0.00%</span>
-                    </div>
-                    <div class="overflow-x-auto">
-                        <table class="w-full text-left">
-                            <thead><tr class="border-b border-slate-700 text-xs text-slate-400"><th class="pb-2">Data</th><th class="pb-2">Prezzo</th><th class="pb-2">PnL</th><th class="pb-2">Motivo</th></tr></thead>
-                            <tbody><tr><td colspan="4" class="py-4 text-center text-slate-500">Nessun trade chiuso finora nello storico.</td></tr></tbody>
-                        </table>
-                    </div>
-                </div>
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6">
+            <h3 class="text-base font-bold text-white mb-4">📊 Pagella Quantitativa a 9 Pilastri (67/100 pt)</h3>
+            <ul class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <li class="bg-slate-900/60 border border-slate-700/60 rounded-xl p-3 text-sm text-slate-200">🧠 <b>AI Neural MLP + Lorentzian k-NN (1/15)</b>: Probabilità Long <b>39.0%</b> (MLP 32% | k-NN 49%)</li><li class="bg-slate-900/60 border border-slate-700/60 rounded-xl p-3 text-sm text-slate-200">📐 <b>Struttura Multi-TF 4H/1H (4/15)</b>: Debole/Ribassista (ADX 1H 20.4, 4H EMA50 $91.28)</li><li class="bg-slate-900/60 border border-slate-700/60 rounded-xl p-3 text-sm text-slate-200">🔬 <b>Econometria & Volatilità (11/12)</b>: Hurst <b>0.44</b> (Mean-Reverting (Ideale)), VR 0.99, ATR Ratio 1.16x</li><li class="bg-slate-900/60 border border-slate-700/60 rounded-xl p-3 text-sm text-slate-200">🎯 <b>Valore & Posizione Prezzo (13/13)</b>: Nel canale al <b>52%</b>, vs VWAP +0.37%, BB %B 63%</li><li class="bg-slate-900/60 border border-slate-700/60 rounded-xl p-3 text-sm text-slate-200">⚡ <b>Momentum & Timing 15m (8/12)</b>: RSI 1H 48.0 | RSI 15m 53.9 | MACD in salita ↗️</li><li class="bg-slate-900/60 border border-slate-700/60 rounded-xl p-3 text-sm text-slate-200">🏛️ <b>Orderbook L2 & Flussi (8/10)</b>: Sbilanciamento Bid/Ask <b>+4.7%</b> (Ratio 1.10x)</li><li class="bg-slate-900/60 border border-slate-700/60 rounded-xl p-3 text-sm text-slate-200">₿ <b>Correlazione & Alpha BTC (6/8)</b>: BTC 24h -0.9% | Alpha SOL -1.2%</li><li class="bg-slate-900/60 border border-slate-700/60 rounded-xl p-3 text-sm text-slate-200">🔮 <b>Futures & Sentiment (6/7)</b>: Funding 8h <b>-0.2838%</b> | Fear&Greed <b>29</b> (Fear)</li><li class="bg-slate-900/60 border border-slate-700/60 rounded-xl p-3 text-sm text-slate-200">💶 <b>Efficienza Griglia 50€ (8/8)</b>: Netto/griglia <b>+0.36%</b> | Rotazione 24h 1.21x</li>
+            </ul>
+        </div>
+
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6">
+            <h3 class="text-base font-bold text-white mb-4">📜 Storico Operazioni Chiuse (Simulazione / Live)</h3>
+            <div class="overflow-x-auto">
+                <table class="w-full text-left border-collapse">
+                    <thead>
+                        <tr class="border-b border-slate-700 text-xs text-slate-400">
+                            <th class="py-2 px-3">Apertura</th>
+                            <th class="py-2 px-3">Chiusura</th>
+                            <th class="py-2 px-3">Prezzo In/Out</th>
+                            <th class="py-2 px-3">Risultato (PnL)</th>
+                            <th class="py-2 px-3">Motivo Chiusura</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr><td colspan="5" class="py-4 text-center text-slate-500 text-sm">Nessun trade chiuso nello storico recente.</td></tr>
+                    </tbody>
+                </table>
             </div>
         </div>
     </div>
