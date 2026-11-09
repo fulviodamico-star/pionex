@@ -8,7 +8,7 @@ import requests
 
 
 # ---------------------------------------------------------------------
-# 1. CONFIGURAZIONE E VARIABILI D'AMBIENTE (TARATURA AGGRESSIVA)
+# 1. CONFIGURAZIONE E VARIABILI D'AMBIENTE (CALIBRAZIONE QUANT)
 # ---------------------------------------------------------------------
 
 TG_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
@@ -18,6 +18,8 @@ ACTIVE_LOWER = os.getenv("ACTIVE_LOWER", "").strip()
 ACTIVE_UPPER = os.getenv("ACTIVE_UPPER", "").strip()
 
 CALENDAR_URL = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
+FNG_URL = "https://api.alternative.me/fng/?limit=1"
+KRAKEN_FUTURES_URL = "https://futures.kraken.com/derivatives/api/v3/tickers"
 
 COUNTRY_ALIASES = {
     "us": "usd",
@@ -68,10 +70,11 @@ try:
 except Exception:
     NY_TZ = timezone.utc
 
-NEWS_BLOCK_BEFORE_MIN = int(os.getenv("NEWS_BLOCK_BEFORE_MIN", "30"))
-NEWS_COOLDOWN_MIN = int(os.getenv("NEWS_COOLDOWN_MIN", "15"))
-NEWS_SURPRISE_COOLDOWN_MIN = int(os.getenv("NEWS_SURPRISE_COOLDOWN_MIN", "45"))
-NEWS_LOOKBACK_HOURS = int(os.getenv("NEWS_LOOKBACK_HOURS", "2"))
+# Parametri News bilanciati
+NEWS_BLOCK_BEFORE_MIN = int(os.getenv("NEWS_BLOCK_BEFORE_MIN", "60"))
+NEWS_COOLDOWN_MIN = int(os.getenv("NEWS_COOLDOWN_MIN", "30"))
+NEWS_SURPRISE_COOLDOWN_MIN = int(os.getenv("NEWS_SURPRISE_COOLDOWN_MIN", "90"))
+NEWS_LOOKBACK_HOURS = int(os.getenv("NEWS_LOOKBACK_HOURS", "3"))
 NEWS_LOOKAHEAD_HOURS = int(os.getenv("NEWS_LOOKAHEAD_HOURS", "12"))
 
 CRITICAL_KEYWORDS = [
@@ -83,69 +86,71 @@ CRITICAL_KEYWORDS = [
     "nfp",
     "fed ",
     "federal funds",
+    "ppi",
+    "gdp",
     "core pce",
 ]
 
-NEWS_MAX_15M_RANGE_PCT = float(os.getenv("NEWS_MAX_15M_RANGE_PCT", "1.8"))
-NEWS_MAX_15M_MOVE_PCT = float(os.getenv("NEWS_MAX_15M_MOVE_PCT", "1.5"))
+NEWS_MAX_15M_RANGE_PCT = float(os.getenv("NEWS_MAX_15M_RANGE_PCT", "1.25"))
+NEWS_MAX_15M_MOVE_PCT = float(os.getenv("NEWS_MAX_15M_MOVE_PCT", "1.00"))
 
 INVEST_EUR = 50
 MIN_ORDER_USDT = 5.0
-TARGET_STEP_PCT = 0.28
+TARGET_STEP_PCT = 0.32
 PIONEX_ROUNDTRIP_FEE_PCT = 0.10
-MIN_NET_STEP_PCT = 0.12
+MIN_NET_STEP_PCT = 0.15
 
 
 # ---------------------------------------------------------------------
-# 2. SCALA DECISIONALE DA 1 A 10 (SOGLIA APERTURA A 6/10)
+# 2. SCALA DECISIONALE DA 1 A 10 (SOGLIA APERTURA A 7/10)
 # ---------------------------------------------------------------------
 
 SCORE_ACTIONS = {
     1: {
-        "title": "⛔ 1/10 — NON APRIRE NULLA (BLOCCO TOTALE)",
-        "desc": "Crollo severo in corso o news FOMC/CPI imminente. Resta in USDT.",
+        "title": "⛔ 1/10 — BLOCCO TOTALE (EMERGENZA)",
+        "desc": "Crollo violento in corso o news critica (FOMC/CPI) imminente. Resta 100% liquido in USDT.",
     },
     2: {
-        "title": "🔴 2/10 — NON APRIRE (DUMP IN CORSO)",
-        "desc": "Bitcoin o Solana in forte vendita. Aspetta che passi la tempesta.",
+        "title": "🔴 2/10 — NON APRIRE (PERICOLO ELEVATO)",
+        "desc": "Veto di sicurezza attivo: dump di BTC/SOL, forti vendite sull'orderbook o news appena uscita.",
     },
     3: {
-        "title": "🔴 3/10 — SCONSIGLIATO (MERCATO MOLTO DEBOLE)",
-        "desc": "Forte downtrend o alta instabilità post-news. Rischio elevato.",
+        "title": "🔴 3/10 — SCONSIGLIATO (STRUTTURA RIBASSISTA)",
+        "desc": "Trend 4H/1H negativo e indicatori di momentum girati al ribasso. Rischio Stop Loss alto.",
     },
     4: {
-        "title": "🟠 4/10 — ATTENDI (CONDIZIONI SFAVOREVOLI)",
-        "desc": "Struttura debole o prezzo troppo schiacciato sul tetto del range.",
+        "title": "🟠 4/10 — ATTENDI (MERCATO SFAVOREVOLE)",
+        "desc": "Pressione in vendita superiore agli acquisti o compressione pericolosa. Non anticipare.",
     },
     5: {
-        "title": "🟡 5/10 — NEUTRALE (QUASI PRONTO)",
-        "desc": "Mercato incerto o sul bordo alto. Osserva per un piccolo ritracciamento.",
+        "title": "🟡 5/10 — NEUTRALE (MEGLIO ASPETTARE)",
+        "desc": "Dati contrastanti o prezzo sopra il VWAP/parte alta del canale. Rapporto rischio/rendimento mediocre.",
     },
     6: {
-        "title": "🟢 6/10 — APRI IL BOT (INGRESSO DINAMICO)",
-        "desc": "Condizioni sufficienti! Non è il setup perfetto, ma il mercato è operabile.",
+        "title": "🟡 6/10 — QUASI PRONTO (OSSERVA)",
+        "desc": "Struttura discreta ma mancano conferme sul 15m o sull'orderbook. Attendi un piccolo sconto.",
     },
     7: {
-        "title": "🟢 7/10 — APRI IL BOT (BUON MOMENTO)",
-        "desc": "Filtri verdi e buon potenziale di rotazione. Avvia la griglia.",
+        "title": "🟢 7/10 — APRI IL BOT (BUON SETUP)",
+        "desc": "Confluenza positiva su più indicatori e filtri di rischio verdi. Puoi avviare la griglia.",
     },
     8: {
-        "title": "🟢 8/10 — APRI IL BOT (OTTIMO SETUP)",
-        "desc": "Mercato sano, Bitcoin collaborativo e prezzo in buona posizione.",
+        "title": "🟢 8/10 — APRI IL BOT (OTTIMO MOMENTO)",
+        "desc": "Regime laterale sano, orderbook a supporto, prezzo sotto/vicino al VWAP e buon margine netto.",
     },
     9: {
-        "title": "🔥 9/10 — APRI SENZA ESITARE (ECCELLENTE)",
-        "desc": "Allineamento tecnico ottimo. Margine netto elevato e rischio basso.",
+        "title": "🔥 9/10 — APRI SENZA ESITARE (SETUP ECCELLENTE)",
+        "desc": "Allineamento multi-timeframe, derivati sani e rimbalzo confermato nella zona bassa del canale.",
     },
     10: {
-        "title": "🚀 10/10 — APRI SUBITO IL BOT! (PERFEZIONE)",
-        "desc": "Setup d'oro: sconto nel canale, trend solido, BTC calmo e zero news.",
+        "title": "🚀 10/10 — SETUP ISTITUZIONALE PERFETTO",
+        "desc": "Massima confluenza su tutti gli 8 pilastri quantitativi. Condizioni ideali per il Grid Bot.",
     },
 }
 
 
 # ---------------------------------------------------------------------
-# 3. DATI DI MERCATO E INDICATORI
+# 3. RACCOLTA DATI MULTI-FONTE (KRAKEN SPOT, ORDERBOOK, FUTURES, F&G)
 # ---------------------------------------------------------------------
 
 
@@ -163,13 +168,12 @@ def get_candles(pair="SOLUSD", interval=60):
 
     result = data.get("result", {})
     key = next((name for name in result if name != "last"), None)
-
     if key is None:
         raise RuntimeError(f"Kraken non ha restituito candele per {pair}.")
 
     rows = result[key][:-1]
     if not rows:
-        raise RuntimeError(f"Kraken ha restituito candele vuote per {pair}.")
+        raise RuntimeError(f"Candele vuote per {pair}.")
 
     return {
         "time": [int(float(row[0])) for row in rows],
@@ -177,8 +181,88 @@ def get_candles(pair="SOLUSD", interval=60):
         "high": [float(row[2]) for row in rows],
         "low": [float(row[3]) for row in rows],
         "close": [float(row[4]) for row in rows],
+        "vwap": [float(row[5]) for row in rows],
         "volume": [float(row[6]) for row in rows],
     }
+
+
+def get_orderbook_metrics(pair="SOLUSD", depth=50):
+    try:
+        response = requests.get(
+            "https://api.kraken.com/0/public/Depth",
+            params={"pair": pair, "count": depth},
+            timeout=10,
+        )
+        response.raise_for_status()
+        data = response.json()
+        if data.get("error"):
+            return {"ok": False, "imbalance": 1.0, "spread_pct": 0.05}
+
+        result = next(iter(data["result"].values()))
+        bids = result.get("bids", [])
+        asks = result.get("asks", [])
+
+        if not bids or not asks:
+            return {"ok": False, "imbalance": 1.0, "spread_pct": 0.05}
+
+        best_bid = float(bids[0][0])
+        best_ask = float(asks[0][0])
+        mid_price = (best_bid + best_ask) / 2
+        spread_pct = (best_ask - best_bid) / mid_price * 100
+
+        # Pesa maggiormente i livelli vicini al prezzo attuale
+        bid_vol = sum(
+            float(b[1]) / (1 + i * 0.05) for i, b in enumerate(bids[:depth])
+        )
+        ask_vol = sum(
+            float(a[1]) / (1 + i * 0.05) for i, a in enumerate(asks[:depth])
+        )
+
+        imbalance = bid_vol / ask_vol if ask_vol > 0 else 1.0
+        return {"ok": True, "imbalance": imbalance, "spread_pct": spread_pct}
+    except Exception:
+        return {"ok": False, "imbalance": 1.0, "spread_pct": 0.05}
+
+
+def get_derivatives_and_sentiment():
+    deriv = {"ok": False, "funding_pct": 0.0, "oi_usd": 0.0}
+    fng = {"ok": False, "value": 50, "label": "Neutral"}
+
+    try:
+        resp = requests.get(KRAKEN_FUTURES_URL, timeout=10)
+        if resp.status_code == 200:
+            tickers = resp.json().get("tickers", [])
+            sol_perp = next(
+                (t for t in tickers if t.get("symbol") == "PF_SOLUSD"), None
+            )
+            if sol_perp:
+                # Funding rate orario/relativo convertito in % per 8h
+                raw_fr = float(sol_perp.get("fundingRate", 0.0))
+                mark_p = float(sol_perp.get("markPrice", 1.0))
+                # Kraken restituisce fundingRate assoluto o relativo; normalizziamo in %
+                fr_pct = (
+                    (raw_fr / mark_p * 100)
+                    if abs(raw_fr) > 0.005
+                    else (raw_fr * 100)
+                )
+                oi = float(sol_perp.get("openInterest", 0.0)) * mark_p
+                deriv = {"ok": True, "funding_pct": fr_pct, "oi_usd": oi}
+    except Exception:
+        pass
+
+    try:
+        resp = requests.get(FNG_URL, timeout=8)
+        if resp.status_code == 200:
+            item = resp.json().get("data", [{}])[0]
+            fng = {
+                "ok": True,
+                "value": int(item.get("value", 50)),
+                "label": item.get("value_classification", "Neutral"),
+            }
+    except Exception:
+        pass
+
+    return deriv, fng
 
 
 def get_eurusd():
@@ -197,35 +281,109 @@ def get_eurusd():
         return 1.08
 
 
-def ema(values, n):
+# ---------------------------------------------------------------------
+# 4. LIBRERIA INDICATORI QUANTITATIVI (PURO PYTHON)
+# ---------------------------------------------------------------------
+
+
+def ema_series(values, n):
     if not values:
-        return 0.0
+        return []
     k = 2 / (n + 1)
-    result = values[0]
-    for value in values[1:]:
-        result = value * k + result * (1 - k)
-    return result
+    out = [values[0]]
+    for val in values[1:]:
+        out.append(val * k + out[-1] * (1 - k))
+    return out
 
 
-def rsi(closes, n=14):
+def ema(values, n):
+    s = ema_series(values, n)
+    return s[-1] if s else 0.0
+
+
+def rsi_series(closes, n=14):
     if len(closes) <= n:
-        return 50.0
+        return [50.0] * len(closes)
     gains, losses = [], []
     for i in range(1, len(closes)):
         diff = closes[i] - closes[i - 1]
-        gains.append(max(diff, 0))
-        losses.append(max(-diff, 0))
+        gains.append(max(diff, 0.0))
+        losses.append(max(-diff, 0.0))
 
     avg_gain = sum(gains[:n]) / n
     avg_loss = sum(losses[:n]) / n
+    out = [50.0] * n
 
-    for gain, loss in zip(gains[n:], losses[n:]):
-        avg_gain = (avg_gain * (n - 1) + gain) / n
-        avg_loss = (avg_loss * (n - 1) + loss) / n
+    for i in range(n, len(gains)):
+        if i > n:
+            avg_gain = (avg_gain * (n - 1) + gains[i]) / n
+            avg_loss = (avg_loss * (n - 1) + losses[i]) / n
+        rs = avg_gain / avg_loss if avg_loss > 0 else 100.0
+        out.append(100.0 - (100.0 / (1.0 + rs)))
+    return out
 
-    if avg_loss == 0:
-        return 100.0
-    return 100 - 100 / (1 + avg_gain / avg_loss)
+
+def rsi(closes, n=14):
+    return rsi_series(closes, n)[-1]
+
+
+def stoch_rsi(closes, rsi_len=14, stoch_len=14):
+    r_ser = rsi_series(closes, rsi_len)
+    if len(r_ser) < stoch_len:
+        return 50.0
+    window = r_ser[-stoch_len:]
+    low_r, high_r = min(window), max(window)
+    if high_r - low_r == 0:
+        return 50.0
+    return (r_ser[-1] - low_r) / (high_r - low_r) * 100.0
+
+
+def macd_metrics(closes, fast=12, slow=26, sig=9):
+    if len(closes) < slow + sig:
+        return 0.0, 0.0, False
+    fast_s = ema_series(closes, fast)
+    slow_s = ema_series(closes, slow)
+    macd_line = [f - s for f, s in zip(fast_s, slow_s)]
+    sig_line = ema_series(macd_line, sig)
+    hist = [m - s for m, s in zip(macd_line, sig_line)]
+    rising = hist[-1] > hist[-2]
+    return macd_line[-1], hist[-1], rising
+
+
+def bollinger_bands(closes, n=20, mult=2.0):
+    if len(closes) < n:
+        p = closes[-1] if closes else 1.0
+        return p * 0.98, p, p * 1.02, 0.5, 4.0
+    window = closes[-n:]
+    mid = sum(window) / n
+    variance = sum((x - mid) ** 2 for x in window) / n
+    std = math.sqrt(variance)
+    up = mid + mult * std
+    low = mid - mult * std
+    pct_b = (closes[-1] - low) / (up - low) if (up - low) > 0 else 0.5
+    bw_pct = (up - low) / mid * 100 if mid > 0 else 0.0
+    return low, mid, up, pct_b, bw_pct
+
+
+def variance_ratio_mr(closes, lag=6):
+    """Variance Ratio (< 1.0 indica Mean-Reversion ideale per Grid Bot,
+
+    > 1.0 indica Mercato Trending unidirezionale).
+    """
+    if len(closes) < 72:
+        return 1.0
+    log_p = [math.log(max(c, 1e-8)) for c in closes[-72:]]
+    r1 = [log_p[i] - log_p[i - 1] for i in range(1, len(log_p))]
+    rk = [log_p[i] - log_p[i - lag] for i in range(lag, len(log_p))]
+    if not r1 or not rk:
+        return 1.0
+    m1 = sum(r1) / len(r1)
+    mk = sum(rk) / len(rk)
+    var1 = sum((x - m1) ** 2 for x in r1) / len(r1)
+    vark = sum((x - mk) ** 2 for x in rk) / len(rk)
+    if var1 <= 0:
+        return 1.0
+    return vark / (lag * var1)
 
 
 def atr_adx_di(high, low, close, n=14):
@@ -233,7 +391,6 @@ def atr_adx_di(high, low, close, n=14):
         return 0.0, 0.0, 0.0, 0.0, []
 
     true_ranges, positive_dm, negative_dm = [], [], []
-
     for i in range(1, len(close)):
         up = high[i] - high[i - 1]
         down = low[i - 1] - low[i]
@@ -251,8 +408,7 @@ def atr_adx_di(high, low, close, n=14):
     smoothed_p = sum(positive_dm[:n])
     smoothed_m = sum(negative_dm[:n])
 
-    dx_values = []
-    atr_series = []
+    dx_values, atr_series = [], []
     pdi, mdi = 0.0, 0.0
 
     for i in range(n, len(true_ranges) + 1):
@@ -262,17 +418,15 @@ def atr_adx_di(high, low, close, n=14):
             smoothed_m = smoothed_m - smoothed_m / n + negative_dm[i - 1]
 
         atr_series.append(smoothed_tr / n)
-
         if smoothed_tr <= 0:
             dx_values.append(0.0)
             continue
 
         pdi = 100 * smoothed_p / smoothed_tr
         mdi = 100 * smoothed_m / smoothed_tr
-        if pdi + mdi == 0:
-            dx_values.append(0.0)
-        else:
-            dx_values.append(100 * abs(pdi - mdi) / (pdi + mdi))
+        dx_values.append(
+            0.0 if (pdi + mdi == 0) else 100 * abs(pdi - mdi) / (pdi + mdi)
+        )
 
     seed = dx_values[:n]
     adx_value = sum(seed) / len(seed)
@@ -289,16 +443,14 @@ def percentile(values, p):
 
 
 # ---------------------------------------------------------------------
-# 4. ANALISI BITCOIN E ANALISI TECNICA SOLANA (PIÙ TOLLERANTE)
+# 5. MOTORE QUANTITATIVO A 8 PILASTRI (100 PUNTI -> SCALA 1-10)
 # ---------------------------------------------------------------------
 
 
-def analyze_btc():
+def analyze_btc(sol_chg4h, sol_chg24h):
     try:
         btc = get_candles(pair="XBTUSD", interval=60)
-        close = btc["close"]
-        high = btc["high"]
-        low = btc["low"]
+        close, high, low = btc["close"], btc["high"], btc["low"]
 
         price = close[-1]
         chg4h = (price / close[-5] - 1) * 100
@@ -306,62 +458,117 @@ def analyze_btc():
         ema200 = ema(close[-300:], 200)
         _, adx, pdi, mdi, _ = atr_adx_di(high[-250:], low[-250:], close[-250:])
 
-        is_dumping = chg4h <= -4.0 or chg24h <= -8.0
-        strong_bear = price < ema200 and mdi > pdi and adx > 34 and chg24h < -3.0
+        rel_24h = sol_chg24h - chg24h  # Forza relativa SOL rispetto a BTC
+        is_dumping = chg4h <= -2.8 or chg24h <= -6.0
+        strong_bear = price < ema200 and mdi > pdi and adx > 28
 
         if is_dumping or strong_bear:
             return {
                 "safe": False,
-                "cap": 3,
-                "status": f"🔴 CROLLO BTC ({price:.0f}$, 4h: {chg4h:+.1f}%, 24h: {chg24h:+.1f}%) — Veto!",
+                "cap": 2 if chg4h <= -3.5 else 3,
+                "chg4h": chg4h,
+                "chg24h": chg24h,
+                "rel_24h": rel_24h,
+                "status": f"🔴 BTC Ostile ({price:.0f}$, 4h: {chg4h:+.1f}%, ADX {adx:.0f}) | Alpha SOL 24h: {rel_24h:+.1f}%",
             }
         return {
             "safe": True,
             "cap": 10,
-            "status": f"🟢 BTC Operabile ({price:.0f}$, 4h: {chg4h:+.1f}%, 24h: {chg24h:+.1f}%)",
+            "chg4h": chg4h,
+            "chg24h": chg24h,
+            "rel_24h": rel_24h,
+            "status": f"🟢 BTC Stabile ({price:.0f}$, 4h: {chg4h:+.1f}%) | Alpha SOL 24h: {rel_24h:+.1f}%",
         }
     except Exception as exc:
         return {
-            "safe": True,
-            "cap": 8,
-            "status": f"🟡 Dati BTC non letti ({type(exc).__name__}) — Nessun blocco",
+            "safe": False,
+            "cap": 5,
+            "chg4h": 0.0,
+            "chg24h": 0.0,
+            "rel_24h": 0.0,
+            "status": f"🟠 BTC non verificabile ({type(exc).__name__})",
         }
 
 
 def analyze():
-    candles = get_candles(pair="SOLUSD", interval=60)
-    opens = candles["open"]
-    high = candles["high"]
-    low = candles["low"]
-    close = candles["close"]
-    volume = candles["volume"]
+    # 1. Candele Multi-Timeframe (1H, 4H, 15m)
+    c1h = get_candles(pair="SOLUSD", interval=60)
+    c4h = get_candles(pair="SOLUSD", interval=240)
+    c15m = get_candles(pair="SOLUSD", interval=15)
 
+    # 2. Orderbook, Derivati e Sentiment
+    ob = get_orderbook_metrics(pair="SOLUSD", depth=50)
+    deriv, fng = get_derivatives_and_sentiment()
+
+    opens, high, low, close, volume = (
+        c1h["open"],
+        c1h["high"],
+        c1h["low"],
+        c1h["close"],
+        c1h["volume"],
+    )
     if len(close) < 250:
-        raise RuntimeError(f"Candele insufficienti: {len(close)}/250.")
+        raise RuntimeError(f"Candele 1H insufficienti: {len(close)}/250.")
 
     price = close[-1]
-    ema20 = ema(close[-250:], 20)
-    ema50 = ema(close[-250:], 50)
-    ema200 = ema(close[-350:], 200)
-    rsi14 = rsi(close[-250:])
+
+    # Indicatori 1H
+    ema20_1h = ema(close[-250:], 20)
+    ema50_1h = ema(close[-250:], 50)
+    ema200_1h = ema(close[-350:], 200)
+    rsi_1h = rsi(close[-250:], 14)
+    srsi_1h = stoch_rsi(close[-250:], 14, 14)
+    _, macd_hist, macd_rising = macd_metrics(close[-250:])
+    _, bb_mid, _, bb_pct_b, bb_width = bollinger_bands(close[-250:], 20, 2.0)
     atr, adx, pdi, mdi, atr_series = atr_adx_di(
         high[-250:], low[-250:], close[-250:]
     )
+    vr_ratio = variance_ratio_mr(close[-120:], lag=6)
 
+    # VWAP 24h istituzionale
+    vol_24h = sum(volume[-24:])
+    vwap_24h = (
+        sum(
+            ((high[-i] + low[-i] + close[-i]) / 3) * volume[-i]
+            for i in range(1, 25)
+        )
+        / vol_24h
+        if vol_24h > 0
+        else price
+    )
+
+    # Indicatori 4H (Macro-Struttura)
+    close_4h = c4h["close"]
+    ema50_4h = ema(close_4h[-200:], 50)
+    ema200_4h = ema(close_4h[-250:], 200)
+    rsi_4h = rsi(close_4h[-150:], 14)
+
+    # Indicatori 15m (Micro-Timing)
+    close_15m = c15m["close"]
+    rsi_15m = rsi(close_15m[-100:], 14)
+    srsi_15m = stoch_rsi(close_15m[-100:], 14, 14)
+    micro_bounce = close_15m[-1] >= c15m["open"][-1] or close_15m[-1] > ema(
+        close_15m[-40:], 9
+    )
+
+    # Variazioni e Volatilità
     chg4h = (price / close[-5] - 1) * 100
     chg24 = (price / close[-25] - 1) * 100
-
     avg_atr_7d = (
         sum(atr_series[-168:]) / len(atr_series[-168:]) if atr_series else atr
     )
     atr_ratio = atr / avg_atr_7d if avg_atr_7d > 0 else 1.0
-    ema_gap_pct = abs(ema20 - ema50) / price * 100
-    is_squeeze = atr_ratio < 0.55 and ema_gap_pct < 0.60
 
+    # Keltner Squeeze Check (BB dentro Keltner Channels)
+    kc_width = (atr * 3.0) / bb_mid * 100 if bb_mid > 0 else 0.0
+    is_keltner_squeeze = bb_width < kc_width and atr_ratio < 0.72
+
+    # Volumi di vendita anomali
     avg_vol_7d = sum(volume[-168:]) / 168 if sum(volume[-168:]) > 0 else 1.0
     red_vols_3h = [volume[-i] for i in range(1, 4) if close[-i] < opens[-i]]
     max_red_vol_ratio = (max(red_vols_3h) / avg_vol_7d) if red_vols_3h else 0.0
 
+    # Calcolo Range Ottimale Pionex
     daily_ranges = [
         (
             max(high[-(d + 1) * 24 : len(high) - d * 24])
@@ -373,8 +580,8 @@ def analyze():
     ]
     avg_daily = sum(daily_ranges) / len(daily_ranges)
 
-    lower = min(max(percentile(low[-168:], 0.08), price * 0.91), price * 0.965)
-    upper = max(min(percentile(high[-168:], 0.92), price * 1.09), price * 1.035)
+    lower = min(max(percentile(low[-168:], 0.10), price * 0.92), price * 0.960)
+    upper = max(min(percentile(high[-168:], 0.90), price * 1.08), price * 1.040)
 
     width_pct = (upper - lower) / price * 100
     invest_usdt = INVEST_EUR * get_eurusd()
@@ -385,12 +592,15 @@ def analyze():
     step_pct = width_pct / grids
     net_step_pct = step_pct - PIONEX_ROUNDTRIP_FEE_PCT
     rotation_ratio = avg_daily / width_pct if width_pct > 0 else 0.0
-    stop_loss = lower * 0.975
+    stop_loss = lower * 0.978
     position_in_range = (price - lower) / (upper - lower) * 100
 
-    btc_info = analyze_btc()
+    btc_info = analyze_btc(chg4h, chg24)
 
-    technical_score = 1
+    # -----------------------------------------------------------------
+    # CALCOLO PUNTEGGIO SU 100 PUNTI (8 PILASTRI QUANTITATIVI)
+    # -----------------------------------------------------------------
+    pts = 0
     reasons = []
     risk_vetoes = []
     tech_cap = 10
@@ -399,113 +609,177 @@ def analyze():
         tech_cap = min(tech_cap, btc_info["cap"])
         risk_vetoes.append(btc_info["status"])
 
-    # PILASTRO 1: Direzione Trend & EMA 200
-    is_downtrend = price < ema200 and mdi > pdi
-    if is_downtrend and (adx > 30 and chg24 < -6.5):
-        reasons.append(
-            f"🔴 1. Forte Downtrend: Sotto EMA200 ({ema200:.1f}$) e ADX {adx:.0f} (+0 pt)"
-        )
-        tech_cap = min(tech_cap, 4)
-        risk_vetoes.append("🚨 Veto Trend: SOL in pesante ribasso.")
-    elif adx < 26 and not (is_downtrend and chg24 < -4.0):
-        technical_score += 2
-        reasons.append(
-            f"🟢 1. Struttura Trend: Ottima per Grid (ADX {adx:.1f}) (+2 pt)"
-        )
-    elif adx < 34 or price >= ema200:
-        technical_score += 1
-        reasons.append(
-            f"🟡 1. Struttura Trend: Operabile (ADX {adx:.1f}, EMA200 {ema200:.1f}$) (+1 pt)"
-        )
-    else:
-        reasons.append(
-            f"🔴 1. Struttura Trend: Mercato direzionale ribassista (ADX {adx:.1f}) (+0 pt)"
-        )
-
-    # PILASTRO 2: Volatilità
-    if 0.60 <= atr_ratio <= 1.65 and ema_gap_pct < 2.8:
-        technical_score += 2
-        reasons.append(
-            f"🟢 2. Volatilità: Ideale per griglia (ATR {atr_ratio:.2f}x) (+2 pt)"
-        )
-    elif is_squeeze:
-        technical_score += 1
-        reasons.append(
-            f"🟡 2. Volatilità: Compressa/Squeeze ({atr_ratio:.2f}x), accumulo laterale (+1 pt)"
-        )
-    elif 0.50 <= atr_ratio <= 2.00:
-        technical_score += 1
-        reasons.append(
-            f"🟡 2. Volatilità: Accettabile (ATR {atr_ratio:.2f}x) (+1 pt)"
-        )
-    else:
-        reasons.append(
-            f"🔴 2. Volatilità: Estrema (ATR {atr_ratio:.2f}x) (+0 pt)"
-        )
-
-    # PILASTRO 3: Posizione nel Canale
-    if position_in_range > 82:
-        tech_cap = min(tech_cap, 5)
-        reasons.append(
-            f"🔴 3. Posizione Range ({position_in_range:.0f}%): Troppo vicino al tetto (+0 pt)"
-        )
-        risk_vetoes.append("⚠️ Prezzo sul tetto del range (>82%).")
-    elif 12 <= position_in_range <= 68 and 28 <= rsi14 <= 66:
-        technical_score += 2
-        reasons.append(
-            f"🟢 3. Posizione Range: Ottima zona ({position_in_range:.0f}%), RSI {rsi14:.0f} (+2 pt)"
-        )
-    elif 5 <= position_in_range <= 82:
-        technical_score += 1
-        reasons.append(
-            f"🟡 3. Posizione Range: Accettabile ({position_in_range:.0f}%), RSI {rsi14:.0f} (+1 pt)"
-        )
-    else:
-        reasons.append(
-            f"🔴 3. Posizione Range: Estrema ({position_in_range:.0f}%) (+0 pt)"
-        )
-
-    # PILASTRO 4: Volumi & Smart Money
-    if max_red_vol_ratio >= 3.2 or chg4h <= -5.5:
-        technical_score -= 1
+    # 1. MULTI-TIMEFRAME TREND (4H + 1H) — Max 15 pt
+    bear_1h = price < ema200_1h and mdi > pdi
+    bear_4h = price < ema200_4h and ema50_4h < ema200_4h
+    if bear_1h and bear_4h and (adx > 25 or chg24 < -5.0):
+        p1 = 0
         tech_cap = min(tech_cap, 3)
-        reasons.append(
-            f"🔴 4. Allarme Dump: Vendite {max_red_vol_ratio:.1f}x media (4h: {chg4h:+.1f}%) (-1 pt)"
+        risk_vetoes.append(
+            "🚨 Veto MTF: Trend ribassista allineato su 4H e 1H."
         )
-        risk_vetoes.append("🚨 Veto Dump: Crollo rapido nelle ultime 4 ore.")
-    elif max_red_vol_ratio < 1.8:
-        technical_score += 2
-        reasons.append(
-            f"🟢 4. Volumi: Regolari, nessuna pressione anomala ({max_red_vol_ratio:.1f}x) (+2 pt)"
-        )
+    elif price >= ema200_1h and price >= ema50_4h and adx < 24:
+        p1 = 15
+    elif price >= ema200_1h or (not bear_1h and adx < 26):
+        p1 = 11
+    elif not bear_4h and adx < 30:
+        p1 = 7
     else:
-        technical_score += 1
-        reasons.append(
-            f"🟡 4. Volumi: Vendite in aumento ({max_red_vol_ratio:.1f}x) ma gestibili (+1 pt)"
-        )
+        p1 = 3
+    pts += p1
+    reasons.append(
+        f"{'🟢' if p1>=11 else ('🟡' if p1>=7 else '🔴')} 1. Trend MTF (4H/1H): EMA200 1H {ema200_1h:.1f}$ | 4H {ema200_4h:.1f}$ | ADX {adx:.0f} ({p1}/15)"
+    )
 
-    # PILASTRO 5: Rendimento Netto Fee & Rotazione
-    if net_step_pct >= MIN_NET_STEP_PCT and rotation_ratio >= 0.30:
-        technical_score += 2
-        reasons.append(
-            f"🟢 5. Rendimento: +{net_step_pct:.2f}% netto | Rotazione {rotation_ratio:.2f}x/gg (+2 pt)"
+    # 2. REGIME MEAN-REVERSION & SQUEEZE (Variance Ratio + ATR + Keltner) — Max 15 pt
+    if is_keltner_squeeze:
+        p2 = 3
+        tech_cap = min(tech_cap, 4)
+        risk_vetoes.append(
+            "⚠️ Keltner Squeeze attivo: volatilità compressa, rischio breakout."
         )
-    elif net_step_pct >= 0.08 and rotation_ratio >= 0.20:
-        technical_score += 1
-        reasons.append(
-            f"🟡 5. Rendimento: +{net_step_pct:.2f}% netto | Rotazione {rotation_ratio:.2f}x/gg (+1 pt)"
-        )
+    elif vr_ratio <= 0.95 and 0.72 <= atr_ratio <= 1.35:
+        p2 = 15
+    elif vr_ratio <= 1.12 and 0.65 <= atr_ratio <= 1.55:
+        p2 = 11
+    elif 0.60 <= atr_ratio <= 1.75:
+        p2 = 7
     else:
-        reasons.append(
-            f"🔴 5. Rendimento: Margine stretto (+{net_step_pct:.2f}%) (+0 pt)"
-        )
+        p2 = 2
+    pts += p2
+    reasons.append(
+        f"{'🟢' if p2>=11 else ('🟡' if p2>=7 else '🔴')} 2. Regime & Volatilità: VR {vr_ratio:.2f} ({'Mean-Rev' if vr_ratio<1 else 'Trend'}) | ATR {atr_ratio:.2f}x ({p2}/15)"
+    )
 
-    raw_tech_score = max(1, min(10, technical_score))
+    # 3. POSIZIONE NEL CANALE & VWAP 24H — Max 15 pt
+    vwap_diff_pct = (price / vwap_24h - 1) * 100
+    if position_in_range > 72:
+        p3 = 2
+        tech_cap = min(tech_cap, 5)
+        risk_vetoes.append(
+            f"⚠️ Prezzo troppo alto nel canale ({position_in_range:.0f}% > 72%)."
+        )
+    elif (
+        20 <= position_in_range <= 52
+        and price <= vwap_24h * 1.006
+        and 0.15 <= bb_pct_b <= 0.60
+    ):
+        p3 = 15
+    elif 18 <= position_in_range <= 62 and vwap_diff_pct <= 1.2:
+        p3 = 11
+    elif 12 <= position_in_range <= 72:
+        p3 = 6
+    else:
+        p3 = 2
+    pts += p3
+    reasons.append(
+        f"{'🟢' if p3>=11 else ('🟡' if p3>=6 else '🔴')} 3. Valore & VWAP: Pos {position_in_range:.0f}% | vs VWAP {vwap_diff_pct:+.1f}% | %B {bb_pct_b:.2f} ({p3}/15)"
+    )
+
+    # 4. MOMENTUM & MICRO-TIMING (MACD + RSI 1H/15m + StochRSI) — Max 15 pt
+    if rsi_1h < 28 or (not macd_rising and macd_hist < 0 and chg4h < -2.5):
+        p4 = 2  # Coltello che cade
+    elif (
+        macd_rising
+        and 36 <= rsi_1h <= 58
+        and 30 <= rsi_15m <= 62
+        and micro_bounce
+    ):
+        p4 = 15
+    elif (macd_rising or micro_bounce) and 33 <= rsi_1h <= 64:
+        p4 = 11
+    elif 30 <= rsi_1h <= 68:
+        p4 = 7
+    else:
+        p4 = 3
+    pts += p4
+    reasons.append(
+        f"{'🟢' if p4>=11 else ('🟡' if p4>=7 else '🔴')} 4. Momentum (1H/15m): MACD {'📈' if macd_rising else '📉'} | RSI 1h:{rsi_1h:.0f} 15m:{rsi_15m:.0f} | Stoch:{srsi_15m:.0f} ({p4}/15)"
+    )
+
+    # 5. ORDERBOOK DEPTH & VOLUMI SMART MONEY — Max 10 pt
+    imb = ob["imbalance"]
+    if max_red_vol_ratio >= 2.3 or chg4h <= -3.8:
+        p5 = 0
+        tech_cap = min(tech_cap, 2)
+        risk_vetoes.append(
+            f"🚨 Veto Volumi: Picco vendite {max_red_vol_ratio:.1f}x media (4h: {chg4h:+.1f}%)."
+        )
+    elif imb >= 1.12 and max_red_vol_ratio < 1.3:
+        p5 = 10
+    elif imb >= 0.90 and max_red_vol_ratio < 1.6:
+        p5 = 7
+    elif imb >= 0.75:
+        p5 = 4
+    else:
+        p5 = 2
+    pts += p5
+    reasons.append(
+        f"{'🟢' if p5>=7 else ('🟡' if p5>=4 else '🔴')} 5. Orderbook & Volumi: Bid/Ask {imb:.2f}x | Vol Rosso Max {max_red_vol_ratio:.1f}x ({p5}/10)"
+    )
+
+    # 6. CORRELAZIONE BTC & FORZA RELATIVA (ALPHA) — Max 10 pt
+    rel = btc_info["rel_24h"]
+    if not btc_info["safe"]:
+        p6 = 0
+    elif rel >= 0.5 and btc_info["chg4h"] >= -0.8:
+        p6 = 10
+    elif rel >= -1.5 and btc_info["chg4h"] >= -1.5:
+        p6 = 7
+    elif rel >= -3.0:
+        p6 = 4
+    else:
+        p6 = 1
+    pts += p6
+    reasons.append(
+        f"{'🟢' if p6>=7 else ('🟡' if p6>=4 else '🔴')} 6. Forza Relativa BTC: Alpha SOL {rel:+.1f}% | BTC 4h {btc_info['chg4h']:+.1f}% ({p6}/10)"
+    )
+
+    # 7. DERIVATI (FUNDING RATE) & SENTIMENT (FEAR & GREED) — Max 10 pt
+    fr = deriv["funding_pct"]
+    fg_val = fng["value"]
+    # Funding troppo alto (>0.04%) + Greed estremo (>78) = Rischio Long Squeeze
+    if fr > 0.05 or fg_val > 82:
+        p7 = 3
+    elif -0.02 <= fr <= 0.025 and 25 <= fg_val <= 72:
+        p7 = 10
+    elif -0.04 <= fr <= 0.04 and 18 <= fg_val <= 78:
+        p7 = 7
+    else:
+        p7 = 5
+    pts += p7
+    fr_str = f"{fr:+.4f}%" if deriv["ok"] else "N/D"
+    reasons.append(
+        f"{'🟢' if p7>=7 else '🟡'} 7. Derivati & Sentiment: Funding {fr_str} | F&G {fg_val} ({fng['label']}) ({p7}/10)"
+    )
+
+    # 8. ECONOMIA DELLA GRIGLIA (MARGINE NETTO & ROTAZIONE) — Max 10 pt
+    if (
+        net_step_pct >= MIN_NET_STEP_PCT
+        and 0.38 <= rotation_ratio <= 0.95
+        and 3.0 <= avg_daily <= 9.0
+    ):
+        p8 = 10
+    elif net_step_pct >= 0.12 and rotation_ratio >= 0.28:
+        p8 = 7
+    elif net_step_pct >= 0.09:
+        p8 = 4
+    else:
+        p8 = 1
+    pts += p8
+    reasons.append(
+        f"{'🟢' if p8>=7 else ('🟡' if p8>=4 else '🔴')} 8. Efficienza Griglia: Netto +{net_step_pct:.2f}% | Rotazione {rotation_ratio:.2f}x/gg ({p8}/10)"
+    )
+
+    raw_tech_score = max(1, min(10, int(round(pts / 10.0))))
     capped_tech_score = min(raw_tech_score, tech_cap)
 
     return {
         "price": price,
-        "ema200": ema200,
+        "vwap_24h": vwap_24h,
+        "ema200_1h": ema200_1h,
+        "ema200_4h": ema200_4h,
+        "rsi_4h": rsi_4h,
         "pdi": pdi,
         "mdi": mdi,
         "chg4h": chg4h,
@@ -517,19 +791,23 @@ def analyze():
         "net_step_pct": net_step_pct,
         "stop": stop_loss,
         "pos": position_in_range,
+        "pts_100": pts,
         "raw_tech_score": raw_tech_score,
         "score": capped_tech_score,
         "tech_cap": tech_cap,
         "reasons": reasons,
         "risk_vetoes": risk_vetoes,
         "btc_info": btc_info,
+        "ob": ob,
+        "deriv": deriv,
+        "fng": fng,
         "invest_usdt": invest_usdt,
-        "candle_times": candles["time"],
+        "candle_times": c1h["time"],
     }
 
 
 # ---------------------------------------------------------------------
-# 5. FUNZIONI DI RACCOLTA CALENDARIO ECONOMICO
+# 6. CALENDARIO ECONOMICO MACRO
 # ---------------------------------------------------------------------
 
 
@@ -558,8 +836,8 @@ def check_surprise_factor(actual_str, estimate_str):
     diff = abs(act - est)
     if abs(est) > 0.5:
         rel_pct = (diff / abs(est)) * 100
-        return rel_pct >= 20.0, rel_pct
-    return diff >= 0.3, diff * 100
+        return rel_pct >= 15.0, rel_pct
+    return diff >= 0.2, diff * 100
 
 
 def is_wall_street_open_window(now_utc):
@@ -567,14 +845,14 @@ def is_wall_street_open_window(now_utc):
     if ny_time.weekday() >= 5:
         return False, ny_time.strftime("%H:%M")
     minutes_of_day = ny_time.hour * 60 + ny_time.minute
-    in_window = 565 <= minutes_of_day <= 600
+    in_window = 560 <= minutes_of_day <= 605  # 09:20 - 10:05 NY
     return in_window, ny_time.strftime("%H:%M")
 
 
 def fetch_macro_events(now):
     headers = {
         "Accept": "application/json",
-        "User-Agent": "Mozilla/5.0 (compatible; GridBot/3.0)",
+        "User-Agent": "Mozilla/5.0 (compatible; QuantGridBot/4.0)",
     }
     response = requests.get(CALENDAR_URL, headers=headers, timeout=20)
     if response.status_code != 200:
@@ -672,8 +950,8 @@ def get_post_news_reaction(event):
     )
     direction = (
         "rialzista 📈"
-        if reaction_pct > 0.35
-        else ("ribassista 📉" if reaction_pct < -0.35 else "neutra ➖")
+        if reaction_pct > 0.30
+        else ("ribassista 📉" if reaction_pct < -0.30 else "neutra ➖")
     )
 
     return {
@@ -683,11 +961,6 @@ def get_post_news_reaction(event):
         "stable": stable,
         "direction": direction,
     }
-
-
-# ---------------------------------------------------------------------
-# 6. VALUTAZIONE NEWS (MENO RESTRITTIVA) E INVIO TELEGRAM
-# ---------------------------------------------------------------------
 
 
 def format_event_line(ev):
@@ -712,7 +985,7 @@ def format_event_line(ev):
     )
 
 
-def get_news_context(hourly_times):
+def get_news_context():
     now = datetime.now(timezone.utc)
     ws_open_active, ny_time_str = is_wall_street_open_window(now)
 
@@ -721,27 +994,30 @@ def get_news_context(hourly_times):
     except Exception as exc:
         return {
             "ok": False,
-            "evaluated_lines": [f"⚠️ Calendario offline: {exc}"],
-            "explanation": "Calendario non raggiungibile. Nessun blocco forzato (Max 8/10).",
-            "penalty": 0,
-            "max_score_cap": 8,
+            "evaluated_lines": [f"⚠️ Errore lettura calendario: {exc}"],
+            "explanation": "Calendario macro non verificabile: cautela (-1 pt, Max 6/10).",
+            "penalty": 1,
+            "max_score_cap": 6,
             "ws_status": f"NY Time: {ny_time_str}",
         }
 
     evaluated_lines = [format_event_line(e) for e in events[:10]]
     if not evaluated_lines:
-        evaluated_lines = ["✅ Nessuna notizia rilevante nelle vicinanze."]
+        evaluated_lines = [
+            "✅ Nessuna notizia ad alto/medio impatto nelle vicinanze."
+        ]
 
     high_impact = [e for e in events if e["impact"] == "high"]
+    med_impact = [e for e in events if e["impact"] == "medium"]
 
     if ws_open_active and high_impact:
         return {
             "ok": True,
             "evaluated_lines": evaluated_lines,
-            "explanation": f"🔔 Apertura Wall Street ({ny_time_str} NY) con news in giornata: leggera cautela (Max 6/10).",
+            "explanation": f"🔔 Apertura Wall Street ({ny_time_str} NY) in giornata di news: attendi le 10:05 NY (Max 4/10).",
             "penalty": 0,
-            "max_score_cap": 6,
-            "ws_status": f"🟡 Apertura NY ({ny_time_str})",
+            "max_score_cap": 4,
+            "ws_status": f"🔴 Finestra Apertura NY ({ny_time_str})",
         }
 
     upcoming_high = [
@@ -750,11 +1026,11 @@ def get_news_context(hourly_times):
     if upcoming_high:
         ev = min(upcoming_high, key=lambda e: e["dt"])
         mins = math.ceil(ev["mins_diff"])
-        cap = 2 if (mins <= 15 and ev["is_critical"]) else 4
+        cap = 1 if (mins <= 20 and ev["is_critical"]) else 3
         return {
             "ok": True,
             "evaluated_lines": evaluated_lines,
-            "explanation": f"Pre-News: '{ev['name']}' tra {mins} min. Punteggio limitato a max {cap}/10.",
+            "explanation": f"Blocco Pre-News: '{ev['name']}' uscirà tra {mins} min (Max {cap}/10).",
             "penalty": 0,
             "max_score_cap": cap,
             "ws_status": f"🟢 NY Time: {ny_time_str}",
@@ -770,13 +1046,15 @@ def get_news_context(hourly_times):
             )
             if elapsed < req_cooldown:
                 rem = math.ceil(req_cooldown - elapsed)
-                surp_txt = " (Sorpresa!)" if ev["is_surprise"] else ""
+                surp_txt = (
+                    " (DATO A SORPRESA!)" if ev["is_surprise"] else ""
+                )
                 return {
                     "ok": True,
                     "evaluated_lines": evaluated_lines,
-                    "explanation": f"Cooldown rapido{surp_txt}: '{ev['name']}' uscita da {round(elapsed)}m. Attendi {rem}m (Max 4/10).",
+                    "explanation": f"Cooldown attivo{surp_txt}: '{ev['name']}' uscita da {round(elapsed)}m. Attendi {rem}m (Max 2/10).",
                     "penalty": 0,
-                    "max_score_cap": 4,
+                    "max_score_cap": 2,
                     "ws_status": f"🟢 NY Time: {ny_time_str}",
                 }
 
@@ -799,32 +1077,49 @@ def get_news_context(hourly_times):
                 return {
                     "ok": True,
                     "evaluated_lines": evaluated_lines,
-                    "explanation": f"{reac_text} ⚠️ Volatilità post-news ancora alta (Max 5/10).",
+                    "explanation": f"{reac_text} ⚠️ Mercato ancora instabile post-news (Max 4/10).",
                     "penalty": 0,
-                    "max_score_cap": 5,
+                    "max_score_cap": 4,
                     "ws_status": f"🟢 NY Time: {ny_time_str}",
                 }
             return {
                 "ok": True,
                 "evaluated_lines": evaluated_lines,
-                "explanation": f"{reac_text} ✅ Notizia assorbita.",
+                "explanation": f"{reac_text} ✅ Volatilità post-news rientrata.",
                 "penalty": 0,
                 "max_score_cap": 10,
                 "ws_status": f"🟢 NY Time: {ny_time_str}",
             }
 
+    upcoming_med = [e for e in med_impact if -10 <= e["mins_diff"] <= 30]
+    if upcoming_med:
+        ev = upcoming_med[0]
+        return {
+            "ok": True,
+            "evaluated_lines": evaluated_lines,
+            "explanation": f"Notizia a medio impatto imminente ('{ev['name']}'). Cautela (-1 pt).",
+            "penalty": 1,
+            "max_score_cap": 8,
+            "ws_status": f"🟢 NY Time: {ny_time_str}",
+        }
+
     return {
         "ok": True,
         "evaluated_lines": evaluated_lines,
-        "explanation": "✅ Via libera macroeconomico (0 penalità).",
+        "explanation": "✅ Via libera macroeconomico: nessuna notizia ostile imminente.",
         "penalty": 0,
         "max_score_cap": 10,
         "ws_status": f"🟢 NY Time: {ny_time_str}",
     }
 
 
+# ---------------------------------------------------------------------
+# 7. COSTRUZIONE REPORT E INVIO TELEGRAM
+# ---------------------------------------------------------------------
+
+
 def make_progress_bar(score):
-    fill = "🟩" if score >= 6 else ("🟨" if score >= 4 else "🟥")
+    fill = "🟩" if score >= 7 else ("🟨" if score >= 5 else "🟥")
     return fill * score + "⬜" * (10 - score)
 
 
@@ -856,10 +1151,10 @@ def build_report(analysis, news):
     now_str = datetime.now(LOCAL_TZ).strftime("%d/%m %H:%M")
 
     lines = [
-        f"🤖 AI GRID ADVISOR SOL/USDT (FAST) — {now_str}",
-        f"💰 SOL: {analysis['price']:.2f}$ (4h: {analysis['chg4h']:+.1f}% | 24h: {analysis['chg24']:+.1f}%)",
+        f"🤖 QUANT GRID ADVISOR SOL/USDT — {now_str}",
+        f"💰 SOL: {analysis['price']:.2f}$ | VWAP 24h: {analysis['vwap_24h']:.2f}$ (4h: {analysis['chg4h']:+.1f}% | 24h: {analysis['chg24']:+.1f}%)",
         "━━━━━━━━━━━━━━━━━━━━",
-        f"📊 PUNTEGGIO FINALE: {final_score}/10",
+        f"📊 PUNTEGGIO FINALE: {final_score}/10 (Quant Score: {analysis['pts_100']}/100)",
         f"{bar}",
         "",
         f"{action_info['title']}",
@@ -873,9 +1168,9 @@ def build_report(analysis, news):
     lines.extend(
         [
             "━━━━━━━━━━━━━━━━━━━━",
-            "🛡️ STATO DI MERCATO:",
+            "🛡️ CHECK MULTI-ASSET & RISCHIO:",
             f"• {analysis['btc_info']['status']}",
-            f"• Trend EMA200: {'🟢 Sopra' if analysis['price'] >= analysis['ema200'] else '🟠 Sotto'} ({analysis['ema200']:.1f}$) | +DI:{analysis['pdi']:.0f} vs -DI:{analysis['mdi']:.0f}",
+            f"• Macro 4H: {'🟢 Sopra' if analysis['price'] >= analysis['ema200_4h'] else '🔴 Sotto'} EMA200 ({analysis['ema200_4h']:.1f}$) | RSI 4H: {analysis['rsi_4h']:.0f}",
             f"• Wall Street: {news['ws_status']}",
         ]
     )
@@ -884,27 +1179,22 @@ def build_report(analysis, news):
         for veto in analysis["risk_vetoes"]:
             lines.append(f"• {veto}")
     else:
-        lines.append("• ✅ Nessun blocco critico attivo.")
+        lines.append("• ✅ Nessun Veto di sicurezza attivo.")
 
     lines.append("━━━━━━━━━━━━━━━━━━━━")
-    if final_score >= 6:
+    if final_score >= 7:
         lines.append("🛠️ PARAMETRI PIONEX CONSIGLIATI:")
     else:
-        lines.append("🛠️ PARAMETRI IPOTETICI (ATTENDERE):")
+        lines.append("🛠️ PARAMETRI IPOTETICI (NON APRIRE ORA):")
 
     lines.extend(
         [
             f"• Range: {analysis['lower']:.2f}$ — {analysis['upper']:.2f}$ (Pos: {analysis['pos']:.0f}%)",
             f"• Griglie: {analysis['grids']} (Lordo: {analysis['step_pct']:.2f}% | Netto: +{analysis['net_step_pct']:.2f}%)",
-            f"• Stop Loss: {analysis['stop']:.2f}$",
+            f"• Stop Loss Salva-Capitale: {analysis['stop']:.2f}$",
             f"• Budget: ~{analysis['invest_usdt']:.0f} USDT",
-        ]
-    )
-
-    lines.extend(
-        [
             "━━━━━━━━━━━━━━━━━━━━",
-            f"🧠 VALUTAZIONE TECNICA (Punti: {analysis['raw_tech_score']}/10 | Tetto: {analysis['tech_cap']}/10):",
+            f"🧠 GLI 8 PILASTRI QUANTITATIVI ({analysis['pts_100']}/100 pt | Cap: {analysis['tech_cap']}/10):",
         ]
     )
     lines.extend(analysis["reasons"])
@@ -928,7 +1218,7 @@ def main():
         print(f"Errore analisi ({type(exc).__name__}): {exc}")
         sys.exit(1)
 
-    news = get_news_context(analysis.get("candle_times"))
+    news = get_news_context()
     report = build_report(analysis, news)
 
     print(report)
