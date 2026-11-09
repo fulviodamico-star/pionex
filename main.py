@@ -1,23 +1,3 @@
-Ho modificato il codice per renderlo **molto più dinamico e propenso all'apertura (meno prudente)**, pur mantenendo i salvavita essenziali per evitare di aprire il bot proprio mentre il mercato sta crollando a picco.
-
-### 📋 Cosa ho modificato per renderlo meno prudente:
-1. **Soglia di apertura abbassata:** Ora il bot ti consiglia di aprire già a partire dal punteggio **6/10** (prima serviva 7/10). Inoltre, parte da un punteggio base di +1.
-2. **Filtri Notizie molto più rapidi:**
-   * Blocco pre-news ridotto da 120 a **30 minuti**.
-   * Cooldown post-news ridotto da 45 a **15 minuti** (e da 3 ore a **45 minuti** in caso di dati a sorpresa).
-   * **Rimosso** l'obbligo di aspettare la chiusura della candela oraria intera dopo una notizia.
-   * Le notizie a "medio impatto" non danno più penalità.
-   * L'apertura di Wall Street non blocca più il bot (tetto alzato a 6/10).
-3. **Filtro Bitcoin più tollerante:** Le crypto sono volatili. Il veto di BTC ora scatta solo se perde il **-4% in 4h** (prima era -2.2%) o il **-8% in 24h** (prima -5%).
-4. **Analisi Tecnica SOL ammorbidita:**
-   * **Posizione nel canale:** Ora ti permette di entrare fino all'**80% dell'altezza del range** (prima bloccava a 68%) e non pretende più che l'ultima candela sia per forza verde per darti il massimo dei punti.
-   * **Trappola Squeeze (bassa volatilità):** Rimosso il blocco e la penalità. I Grid Bot lavorano bene in laterale, quindi una compressione moderata non blocca più l' operatività.
-   * **Volumi rossi:** Tolleranza alzata (fino a -5.5% in 4h prima di far scattare l'allarme balene).
-   * **Rendimento griglie:** Abbassato il requisito minimo netto da 0.18% a **0.12%** per griglia, facilitando il punteggio pieno.
-
-Ecco il codice completo pronto da sostituire nel tuo repository GitHub:
-
-```python
 from datetime import datetime, timezone
 import math
 import os
@@ -88,7 +68,6 @@ try:
 except Exception:
     NY_TZ = timezone.utc
 
-# Tempi di blocco news ridotti drasticamente per operatività più frequente
 NEWS_BLOCK_BEFORE_MIN = int(os.getenv("NEWS_BLOCK_BEFORE_MIN", "30"))
 NEWS_COOLDOWN_MIN = int(os.getenv("NEWS_COOLDOWN_MIN", "15"))
 NEWS_SURPRISE_COOLDOWN_MIN = int(os.getenv("NEWS_SURPRISE_COOLDOWN_MIN", "45"))
@@ -107,15 +86,14 @@ CRITICAL_KEYWORDS = [
     "core pce",
 ]
 
-# Tolleranza volatilità post-news aumentata
 NEWS_MAX_15M_RANGE_PCT = float(os.getenv("NEWS_MAX_15M_RANGE_PCT", "1.8"))
 NEWS_MAX_15M_MOVE_PCT = float(os.getenv("NEWS_MAX_15M_MOVE_PCT", "1.5"))
 
 INVEST_EUR = 50
 MIN_ORDER_USDT = 5.0
-TARGET_STEP_PCT = 0.28  # Più griglie, scalping più veloce
+TARGET_STEP_PCT = 0.28
 PIONEX_ROUNDTRIP_FEE_PCT = 0.10
-MIN_NET_STEP_PCT = 0.12  # Requisito minimo abbassato
+MIN_NET_STEP_PCT = 0.12
 
 
 # ---------------------------------------------------------------------
@@ -328,7 +306,6 @@ def analyze_btc():
         ema200 = ema(close[-300:], 200)
         _, adx, pdi, mdi, _ = atr_adx_di(high[-250:], low[-250:], close[-250:])
 
-        # Soglie più larghe: interviene solo in caso di vero crollo di BTC
         is_dumping = chg4h <= -4.0 or chg24h <= -8.0
         strong_bear = price < ema200 and mdi > pdi and adx > 34 and chg24h < -3.0
 
@@ -413,7 +390,6 @@ def analyze():
 
     btc_info = analyze_btc()
 
-    # Bonus base di +1 per rendere il bot più propenso all'azione
     technical_score = 1
     reasons = []
     risk_vetoes = []
@@ -423,7 +399,7 @@ def analyze():
         tech_cap = min(tech_cap, btc_info["cap"])
         risk_vetoes.append(btc_info["status"])
 
-    # PILASTRO 1: Direzione Trend & EMA 200 (Più permissivo)
+    # PILASTRO 1: Direzione Trend & EMA 200
     is_downtrend = price < ema200 and mdi > pdi
     if is_downtrend and (adx > 30 and chg24 < -6.5):
         reasons.append(
@@ -446,7 +422,7 @@ def analyze():
             f"🔴 1. Struttura Trend: Mercato direzionale ribassista (ADX {adx:.1f}) (+0 pt)"
         )
 
-    # PILASTRO 2: Volatilità (Rimosso il blocco Squeeze)
+    # PILASTRO 2: Volatilità
     if 0.60 <= atr_ratio <= 1.65 and ema_gap_pct < 2.8:
         technical_score += 2
         reasons.append(
@@ -467,7 +443,7 @@ def analyze():
             f"🔴 2. Volatilità: Estrema (ATR {atr_ratio:.2f}x) (+0 pt)"
         )
 
-    # PILASTRO 3: Posizione nel Canale (Fino all'80% senza blocchi duri)
+    # PILASTRO 3: Posizione nel Canale
     if position_in_range > 82:
         tech_cap = min(tech_cap, 5)
         reasons.append(
@@ -489,7 +465,7 @@ def analyze():
             f"🔴 3. Posizione Range: Estrema ({position_in_range:.0f}%) (+0 pt)"
         )
 
-    # PILASTRO 4: Volumi & Smart Money (Soglie di allarme più alte)
+    # PILASTRO 4: Volumi & Smart Money
     if max_red_vol_ratio >= 3.2 or chg4h <= -5.5:
         technical_score -= 1
         tech_cap = min(tech_cap, 3)
@@ -508,7 +484,7 @@ def analyze():
             f"🟡 4. Volumi: Vendite in aumento ({max_red_vol_ratio:.1f}x) ma gestibili (+1 pt)"
         )
 
-    # PILASTRO 5: Rendimento Netto Fee & Rotazione (Più facile prendere +2)
+    # PILASTRO 5: Rendimento Netto Fee & Rotazione
     if net_step_pct >= MIN_NET_STEP_PCT and rotation_ratio >= 0.30:
         technical_score += 2
         reasons.append(
@@ -582,7 +558,7 @@ def check_surprise_factor(actual_str, estimate_str):
     diff = abs(act - est)
     if abs(est) > 0.5:
         rel_pct = (diff / abs(est)) * 100
-        return rel_pct >= 20.0, rel_pct  # Alzata soglia sorpresa al 20%
+        return rel_pct >= 20.0, rel_pct
     return diff >= 0.3, diff * 100
 
 
@@ -591,7 +567,7 @@ def is_wall_street_open_window(now_utc):
     if ny_time.weekday() >= 5:
         return False, ny_time.strftime("%H:%M")
     minutes_of_day = ny_time.hour * 60 + ny_time.minute
-    in_window = 565 <= minutes_of_day <= 600  # Ridotta a 9:25 - 10:00 NY
+    in_window = 565 <= minutes_of_day <= 600
     return in_window, ny_time.strftime("%H:%M")
 
 
@@ -743,7 +719,6 @@ def get_news_context(hourly_times):
     try:
         events = fetch_macro_events(now)
     except Exception as exc:
-        # Se il calendario fallisce, non blocca più a 1/10 ma avvisa solamente
         return {
             "ok": False,
             "evaluated_lines": [f"⚠️ Calendario offline: {exc}"],
@@ -759,7 +734,6 @@ def get_news_context(hourly_times):
 
     high_impact = [e for e in events if e["impact"] == "high"]
 
-    # Apertura WS non blocca più il bot (cap a 6 anziché 3)
     if ws_open_active and high_impact:
         return {
             "ok": True,
@@ -982,4 +956,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-```
