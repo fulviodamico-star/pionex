@@ -1,39 +1,43 @@
-name: Pionex AI Scalper
+name: AI Grid Advisor Autonomous
 
 on:
-  schedule:
-    - cron: "*/15 * * * *"
   workflow_dispatch:
+  schedule:
+    - cron: '*/15 * * * *'  # Esegue il controllo ogni 15 minuti per reagire subito agli Stop Loss!
 
 permissions:
-  contents: read
+  contents: write  # <--- FONDAMENTALE: Permette al bot di salvare la memoria (bot_state.json)
 
 jobs:
   run-bot:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
-
     steps:
-      - name: Checkout
+      - name: Checkout codice
         uses: actions/checkout@v4
 
-      - name: Python Setup
+      - name: Configura Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: '3.11'
 
-      - name: Install Dependencies
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install google-genai requests
+      - name: Installa dipendenze
+        run: pip install requests
 
-      - name: Execute
+      - name: Avvia il Bot Autonomo
         env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          ACTIVE_LOWER: ${{ vars.ACTIVE_LOWER }}
-          ACTIVE_UPPER: ${{ vars.ACTIVE_UPPER }}
-          LOCAL_TZ: Europe/Rome
-          NEWS_COUNTRIES: USD
+          AUTO_TRADE_ENABLED: "true"
+          PIONEX_WEBHOOK_URL: ${{ secrets.PIONEX_WEBHOOK_URL }}
+          PIONEX_SIGNAL_TOKEN: ${{ secrets.PIONEX_SIGNAL_TOKEN }}
+          PIONEX_API_KEY: ${{ secrets.PIONEX_API_KEY }}
+          PIONEX_API_SECRET: ${{ secrets.PIONEX_API_SECRET }}
         run: python main.py
+
+      - name: Salva Memoria del Bot (bot_state.json)
+        run: |
+          git config --global user.name "TradingBot"
+          git config --global user.email "bot@github.com"
+          git add bot_state.json || true
+          git diff --staged --quiet || git commit -m "Aggiornamento stato bot automatico"
+          git push
