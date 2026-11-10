@@ -66,5 +66,37 @@
   "opened_date": "",
   "last_dashboard_ts": 1794299863.6744392,
   "pending_close_fail": 0,
-  "qty_sol": 0.0
+  "qty_sol": 0.0,
+  "position": {
+    "is_open": false,
+    "coin_code": "SOL",
+    "symbol": "SOL_USDT",
+    "entry_price": 0.0,
+    "amount_coin": 0.0,
+    "invested_usdt": 0.0,
+    "sl_price": 0.0,
+    "tp_price": 0.0,
+    "initial_sl": 0.0,
+    "one_r": 0.0,
+    "highest_price": 0.0,
+    "breakeven_locked": false,
+    "tp1_locked": false,
+    "tp2_locked": false,
+    "alerts_triggered": [],
+    "opened_at": "",
+    "opened_ts": 0,
+    "mode": "SIMULATION",
+    "order_id": ""
+  },
+  "stats": {
+    "total_trades": 0,
+    "wins": 0,
+    "losses": 0,
+    "total_pnl_pct": 0.0,
+    "total_pnl_usdt": 0.0,
+    "daily_date": "2026-11-10",
+    "daily_pnl_pct": 0.0,
+    "daily_trades": 0,
+    "last_action": "Nessuna operazione recente"
+  }
 }
