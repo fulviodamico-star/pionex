@@ -895,7 +895,7 @@ def fetch_macro_calendar():
                     date_s = (ev.findtext("date") or "").strip()
                     time_s = (ev.findtext("time") or "").strip()
                     if country == "USD" and impact in ("High", "Medium") and date_s and time_s:
-                        dt_ parsed = datetime.strptime(f"{date_s} {time_s}", "%m-%d-%Y %I:%M%p")
+                        dt_parsed = datetime.strptime(f"{date_s} {time_s}", "%m-%d-%Y %I:%M%p")
                         dt_utc = dt_parsed.replace(tzinfo=timezone.utc)
                         diff_h = (dt_utc - now_utc).total_seconds() / 3600.0
                         if -2.0 <= diff_h <= 36.0:
