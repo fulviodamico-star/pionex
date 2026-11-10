@@ -3,31 +3,64 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Pionex AI Live Trading Console v9.0</title>
+<title>Pionex AI Live Trading Console v7.3</title>
 <style>
-  :root { --bg: #070b14; --card: #111827; --card-border: #1f2937; --text: #f8fafc; --muted: #94a3b8;
-          --accent: #38bdf8; --green: #10b981; --amber: #f59e0b; --red: #ef4444; }
+  :root {
+    --bg: #070b14;
+    --card: #111827;
+    --card-border: #1f2937;
+    --text: #f8fafc;
+    --muted: #94a3b8;
+    --accent: #38bdf8;
+    --green: #10b981;
+    --amber: #f59e0b;
+    --red: #ef4444;
+  }
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    background: radial-gradient(circle at top, #131c31 0%, var(--bg) 70%); color: var(--text);
-    padding: 14px; max-width: 960px; margin: 0 auto; }
-  .topbar { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px;
-    padding: 12px 16px; background: rgba(17,24,39,0.9); border: 1px solid var(--card-border); border-radius: 14px; margin-bottom: 14px; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: radial-gradient(circle at top, #131c31 0%, var(--bg) 70%);
+    color: var(--text);
+    padding: 14px;
+    max-width: 960px;
+    margin: 0 auto;
+  }
+  .topbar {
+    display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center;
+    gap: 10px; padding: 12px 16px; background: rgba(17,24,39,0.9);
+    border: 1px solid var(--card-border); border-radius: 14px; margin-bottom: 14px;
+  }
   .brand { font-size: 17px; font-weight: 800; display: flex; align-items: center; gap: 8px; }
-  .live-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--green); box-shadow: 0 0 10px var(--green); display: inline-block; animation: pulse 1.6s infinite; }
+  .live-dot {
+    width: 10px; height: 10px; border-radius: 50%; background: var(--green);
+    box-shadow: 0 0 10px var(--green); display: inline-block; animation: pulse 1.6s infinite;
+  }
   @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.35; } 100% { opacity: 1; } }
   .meta-bar { font-size: 12px; color: var(--muted); display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
-  .btn-refresh { background: rgba(56,189,248,0.15); color: var(--accent); border: 1px solid rgba(56,189,248,0.4); padding: 6px 12px; border-radius: 8px; font-size: 12px; font-weight: 700; cursor: pointer; }
-  .advisor-box { border-radius: 14px; padding: 16px; margin-bottom: 14px; border: 1px solid var(--card-border); }
+  .btn-refresh {
+    background: rgba(56,189,248,0.15); color: var(--accent); border: 1px solid rgba(56,189,248,0.4);
+    padding: 6px 12px; border-radius: 8px; font-size: 12px; font-weight: 700; cursor: pointer;
+  }
+  .advisor-box {
+    border-radius: 14px; padding: 16px; margin-bottom: 14px;
+    border: 1px solid var(--card-border);
+  }
   .advisor-badge { font-size: 15px; font-weight: 800; margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 6px; }
   .advisor-text { font-size: 13.5px; line-height: 1.45; color: #e2e8f0; }
   .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px; }
   @media (max-width: 720px) { .grid-2 { grid-template-columns: 1fr; } }
-  .card { background: rgba(17, 24, 39, 0.9); border: 1px solid var(--card-border); border-radius: 14px; padding: 15px; box-shadow: 0 8px 24px rgba(0,0,0,0.3); }
-  .card-title { font-size: 12px; text-transform: uppercase; letter-spacing: 0.8px; color: var(--muted); font-weight: 700; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; }
-  .stat-row { display: flex; justify-content: space-between; gap: 10px; font-size: 13px; padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.05); }
+  .card {
+    background: rgba(17, 24, 39, 0.9); border: 1px solid var(--card-border);
+    border-radius: 14px; padding: 15px; box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+  }
+  .card-title {
+    font-size: 12px; text-transform: uppercase; letter-spacing: 0.8px;
+    color: var(--muted); font-weight: 700; margin-bottom: 12px;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .stat-row { display: flex; justify-content: space-between; font-size: 13px; padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.05); }
   .stat-row:last-child { border-bottom: none; }
-  .val-bold { font-weight: 700; text-align: right; }
+  .val-bold { font-weight: 700; }
   .pnl-big { font-size: 24px; font-weight: 800; margin: 6px 0; }
   .progress-wrap { background: #1e293b; height: 10px; border-radius: 8px; overflow: hidden; margin: 10px 0 4px; position: relative; }
   .progress-bar { height: 100%; transition: width 0.4s ease; }
@@ -46,57 +79,109 @@
 </style>
 </head>
 <body>
+
 <div class="topbar">
-  <div class="brand"><span class="live-dot" id="ws-dot"></span><span>PIONEX AI FAST-SCALP CONSOLE v9.0</span></div>
+  <div class="brand">
+    <span class="live-dot" id="ws-dot"></span>
+    <span>PIONEX AI FAST-SCALP CONSOLE v7.3</span>
+  </div>
   <div class="meta-bar">
-    <span id="ws-status">Connessione Kraken Live...</span><span>|</span>
+    <span id="ws-status">Connessione Kraken Live...</span>
+    <span>|</span>
     <span id="session-label"></span>
     <button class="btn-refresh" onclick="forcePollKraken()">🔄 Aggiorna Prezzi Live</button>
   </div>
 </div>
+
 <div class="advisor-box" id="advisor-box">
-  <div class="advisor-badge"><span id="advisor-badge-text"></span><span style="font-size:11px; font-weight:600; opacity:0.85;" id="snapshot-time"></span></div>
+  <div class="advisor-badge">
+    <span id="advisor-badge-text"></span>
+    <span style="font-size:11px; font-weight:600; opacity:0.85;" id="snapshot-time"></span>
+  </div>
   <div class="advisor-text" id="advisor-instruction"></div>
 </div>
+
 <div class="grid-2">
   <div class="card">
-    <div class="card-title"><span>📌 POSIZIONE APERTA IN TEMPO REALE</span><span id="pos-status-pill" class="pill"></span></div>
+    <div class="card-title">
+      <span>📌 POSIZIONE APERTA IN TEMPO REALE</span>
+      <span id="pos-status-pill" class="pill"></span>
+    </div>
     <div id="open-pos-content"></div>
   </div>
+
   <div class="card">
-    <div class="card-title"><span>📊 STATISTICHE & RISCHIO PORTAFOGLIO</span><span id="fng-badge" class="pill pill-amber"></span></div>
+    <div class="card-title">
+      <span>📊 STATISTICHE & RISCHIO PORTAFOGLIO</span>
+      <span id="fng-badge" class="pill pill-amber"></span>
+    </div>
     <div id="portfolio-stats-content"></div>
   </div>
 </div>
+
 <div class="card" style="margin-bottom:14px;">
-  <div class="card-title"><span>📡 SCANNER LIVE 10 CRIPTOVALUTE (CLICCA UNA RIGA PER I DETTAGLI)</span><span style="color:var(--accent);">Prezzi Live via Kraken WebSocket</span></div>
+  <div class="card-title">
+    <span>📡 SCANNER LIVE 10 CRIPTOVALUTE (CLICCA UNA RIGA PER I DETTAGLI)</span>
+    <span style="color:var(--accent);">Prezzi Live via Kraken WebSocket</span>
+  </div>
   <div class="table-wrap">
     <table>
-      <thead><tr><th>Coin</th><th>Prezzo Live</th><th>Score</th><th>AI Prob</th><th>Timer 15m</th><th>R:R & Risk</th><th>Azione Manuale Consigliata</th></tr></thead>
+      <thead>
+        <tr>
+          <th>Coin</th>
+          <th>Prezzo Live</th>
+          <th>Score</th>
+          <th>AI Prob</th>
+          <th>Timer 15m</th>
+          <th>R:R & Risk</th>
+          <th>Azione Manuale Consigliata</th>
+        </tr>
+      </thead>
       <tbody id="scanner-tbody"></tbody>
     </table>
   </div>
 </div>
+
 <div class="card" style="margin-bottom:14px;" id="detail-card">
-  <div class="card-title"><span id="detail-title">🔍 PIANO OPERATIVO DETTAGLIATO</span><span id="detail-pair" style="color:var(--accent);"></span></div>
+  <div class="card-title">
+    <span id="detail-title">🔍 PIANO OPERATIVO DETTAGLIATO</span>
+    <span id="detail-pair" style="color:var(--accent);"></span>
+  </div>
   <div id="detail-content"></div>
 </div>
+
 <div class="card">
-  <div class="card-title"><span>📜 STORICO POSIZIONI CHIUSE</span><span id="history-count"></span></div>
+  <div class="card-title">
+    <span>📜 STORICO POSIZIONI CHIUSE</span>
+    <span id="history-count"></span>
+  </div>
   <div class="table-wrap">
     <table>
-      <thead><tr><th>Data Chiusura</th><th>Coin</th><th>Prezzo Entry</th><th>Prezzo Exit</th><th>PnL Netto</th><th>Motivo Chiusura</th></tr></thead>
+      <thead>
+        <tr>
+          <th>Data Chiusura</th>
+          <th>Coin</th>
+          <th>Prezzo Entry</th>
+          <th>Prezzo Exit</th>
+          <th>PnL Netto</th>
+          <th>Motivo Chiusura</th>
+        </tr>
+      </thead>
       <tbody id="history-tbody"></tbody>
     </table>
   </div>
 </div>
+
 <script>
-const DATA = {"updated_at": "10/11/2026 15:15:35 UTC", "session": "🇺🇸 Sessione Wall Street Attiva (Alta Liquidita') | Ingressi: PRIME: overlap Londra/New York", "fng_val": 32, "fng_class": "Fear", "advisor": {"badge": "✅ MANTIENI POSIZIONE (HOLD)", "color": "#38bdf8", "bg": "rgba(56,189,248,0.14)", "instruction": "Posizione aperta su AVAX (PnL netto -0.41%). Mantieni attiva la protezione con Stop-Loss a $8.257 e Take-Profit a $8.589."}, "position": {"is_open": true, "coin_code": "AVAX", "symbol": "AVAX_USDT", "entry_price": 8.38, "amount_coin": 6.33, "invested_usdt": 53.11, "sl_price": 8.25741883252364, "tp_price": 8.5895, "initial_sl": 8.25741883252364, "one_r": 0.12258116747636016, "highest_price": 8.452, "breakeven_locked": false, "tp1_locked": false, "tp2_locked": false, "alerts_triggered": [], "opened_at": "10/11 14:35 UTC", "opened_ts": 1794321350, "mode": "SIMULATION", "order_id": "SIM", "last_check_ts": 1794323734, "close_fail_count": 0}, "stats": {"total_trades": 0, "wins": 0, "losses": 0, "total_pnl_pct": 0.0, "total_pnl_usdt": 0.0, "daily_date": "2026-11-10", "daily_pnl_pct": 0.0, "daily_trades": 1, "last_action": "APERTO LONG AVAX a $8.380 il 10/11 14:35 UTC", "daily_pnl_usdt": 0.0, "consec_losses": 0, "last_close_ts": 0, "last_loss_ts": 0, "coin_last_close": {}}, "history": [{"closed_at": "10/11/2026 11:26", "coin": "LINK", "entry": 10.6168, "exit": 10.4738, "pnl_usdt": -0.0, "pnl_pct": -0.69, "reason": "🎯 TAKE PROFIT GRIGLIA RAGGIUNTO su LINK (10.47$ >= 0.00$)"}], "coins": [{"code": "SOL", "name": "Solana", "pionex": "SOL_USDT", "kraken": "SOLUSD", "ws": "SOL/USD", "price": 84.49, "sl_price": 83.30770400773473, "tp_price": 86.95740033168403, "final_score": 7, "raw_100": 70, "ai_prob": 45.7, "prob_mlp": 50.0, "prob_knn": 46.3, "prob_mc": 38.1, "rsi_1h": 33.7, "rsi_15m": 45.9, "ob_imb": 12.2, "tm_wr": 50.0, "tm_exp": 0.01, "timer_ok": true, "timer_triggers": 4, "timer_summary": "VWAP Active + EMA20 15m Hold/Bounce + Vol Active (Z=+2.68) + L2 Bid (+12.2%)", "vwap_15m": 85.33729481933007, "risk_ok": true, "risk_status": "PASS (Rischio OK)", "rr_ratio": 1.88, "pos_usdt": 53.08, "entry_ok": false, "be_trigger": 85.25849239497242, "tp1_trigger": 85.67229599226526, "tp2_trigger": 85.96786999033158, "raw_min": 55, "atr_pct": 1.22}, {"code": "DOT", "name": "Polkadot", "pionex": "DOT_USDT", "kraken": "DOTUSD", "ws": "DOT/USD", "price": 0.864, "sl_price": 0.8530158616145979, "tp_price": 0.8869234192391, "final_score": 6, "raw_100": 65, "ai_prob": 45.9, "prob_mlp": 50.0, "prob_knn": 47.7, "prob_mc": 36.9, "rsi_1h": 52.7, "rsi_15m": 60.6, "ob_imb": 22.1, "tm_wr": 55.0, "tm_exp": 0.17, "timer_ok": true, "timer_triggers": 3, "timer_summary": "EMA20 15m Hold/Bounce + Vol Active (Z=+1.23) + L2 Bid (+22.1%)", "vwap_15m": 0.8623718230733375, "risk_ok": true, "risk_status": "PASS (Rischio OK)", "rr_ratio": 1.86, "pos_usdt": 53.08, "entry_ok": false, "be_trigger": 0.8711396899505114, "tp1_trigger": 0.8749841383854021, "tp2_trigger": 0.8777301729817526, "raw_min": 55, "atr_pct": 1.11}, {"code": "ETH", "name": "Ethereum", "pionex": "ETH_USDT", "kraken": "ETHUSD", "ws": "ETH/USD", "price": 2074.65, "sl_price": 2044.1354485184766, "tp_price": 2136.8895, "final_score": 6, "raw_100": 62, "ai_prob": 46.0, "prob_mlp": 50.0, "prob_knn": 46.4, "prob_mc": 39.1, "rsi_1h": 35.8, "rsi_15m": 40.7, "ob_imb": 13.0, "tm_wr": 50.0, "tm_exp": -0.2, "timer_ok": true, "timer_triggers": 2, "timer_summary": "Vol Active (Z=+0.96) + L2 Bid (+13.0%)", "vwap_15m": 2104.8905452659997, "risk_ok": true, "risk_status": "PASS (Rischio OK)", "rr_ratio": 1.85, "pos_usdt": 53.08, "entry_ok": false, "be_trigger": 2094.4844584629905, "tp1_trigger": 2105.1645514815236, "tp2_trigger": 2112.7931893519044, "raw_min": 55, "atr_pct": 1.28}, {"code": "BTC", "name": "Bitcoin", "pionex": "BTC_USDT", "kraken": "XBTUSD", "ws": "XBT/USD", "price": 74430.37, "sl_price": 73760.49667, "tp_price": 75546.82555, "final_score": 6, "raw_100": 59, "ai_prob": 45.9, "prob_mlp": 50.0, "prob_knn": 41.8, "prob_mc": 45.3, "rsi_1h": 45.9, "rsi_15m": 54.2, "ob_imb": -77.8, "tm_wr": 50.0, "tm_exp": 0.07, "timer_ok": true, "timer_triggers": 3, "timer_summary": "VWAP Active + EMA20 15m Hold/Bounce + Vol Active (Z=+2.03)", "vwap_15m": 74634.80052095439, "risk_ok": true, "risk_status": "PASS (Rischio OK)", "rr_ratio": 1.4, "pos_usdt": 53.08, "entry_ok": false, "be_trigger": 74865.78766449999, "tp1_trigger": 75100.24333, "tp2_trigger": 75267.71166249999, "raw_min": 55, "atr_pct": 0.74}, {"code": "ADA", "name": "Cardano", "pionex": "ADA_USDT", "kraken": "ADAUSD", "ws": "ADA/USD", "price": 0.1774, "sl_price": 0.17532392591885293, "tp_price": 0.18173267634326343, "final_score": 6, "raw_100": 59, "ai_prob": 45.4, "prob_mlp": 50.0, "prob_knn": 44.6, "prob_mc": 39.3, "rsi_1h": 47.0, "rsi_15m": 50.3, "ob_imb": -11.8, "tm_wr": 35.0, "tm_exp": -0.25, "timer_ok": true, "timer_triggers": 3, "timer_summary": "VWAP Active + EMA20 15m Hold/Bounce + Vol Active (Z=+0.53)", "vwap_15m": 0.17765870438620318, "risk_ok": true, "risk_status": "PASS (Rischio OK)", "rr_ratio": 1.84, "pos_usdt": 53.08, "entry_ok": false, "be_trigger": 0.1787494481527456, "tp1_trigger": 0.17947607408114707, "tp2_trigger": 0.17999509260143384, "raw_min": 55, "atr_pct": 1.02}, {"code": "LINK", "name": "Chainlink", "pionex": "LINK_USDT", "kraken": "LINKUSD", "ws": "LINK/USD", "price": 10.5, "sl_price": 10.363043229331632, "tp_price": 10.785822825742681, "final_score": 6, "raw_100": 59, "ai_prob": 42.1, "prob_mlp": 50.0, "prob_knn": 32.9, "prob_mc": 42.5, "rsi_1h": 46.0, "rsi_15m": 52.0, "ob_imb": -3.9, "tm_wr": 25.0, "tm_exp": -0.41, "timer_ok": true, "timer_triggers": 3, "timer_summary": "VWAP Active + EMA20 15m Hold/Bounce + Vol Active (Z=+2.14)", "vwap_15m": 10.562980581978028, "risk_ok": true, "risk_status": "PASS (Rischio OK)", "rr_ratio": 1.87, "pos_usdt": 53.08, "entry_ok": false, "be_trigger": 10.589021900934439, "tp1_trigger": 10.636956770668368, "tp2_trigger": 10.67119596333546, "raw_min": 55, "atr_pct": 1.13}, {"code": "AVAX", "name": "Avalanche", "pionex": "AVAX_USDT", "kraken": "AVAXUSD", "ws": "AVAX/USD", "price": 8.36, "sl_price": 8.229842988187155, "tp_price": 8.6108, "final_score": 6, "raw_100": 59, "ai_prob": 49.5, "prob_mlp": 50.0, "prob_knn": 51.6, "prob_mc": 46.0, "rsi_1h": 46.9, "rsi_15m": 48.4, "ob_imb": 0.8, "tm_wr": 65.0, "tm_exp": 0.17, "timer_ok": false, "timer_triggers": 1, "timer_summary": "Vol Active (Z=+0.05)", "vwap_15m": 8.596720957192831, "risk_ok": true, "risk_status": "PASS (Rischio OK)", "rr_ratio": 1.75, "pos_usdt": 50.59, "entry_ok": false, "be_trigger": 8.444602057678349, "tp1_trigger": 8.490157011812844, "tp2_trigger": 8.522696264766054, "raw_min": 55, "atr_pct": 1.35}, {"code": "SUI", "name": "Sui", "pionex": "SUI_USDT", "kraken": "SUIUSD", "ws": "SUI/USD", "price": 0.8368, "sl_price": 0.8251993217259159, "tp_price": 0.861010111180697, "final_score": 5, "raw_100": 53, "ai_prob": 42.9, "prob_mlp": 50.0, "prob_knn": 34.8, "prob_mc": 42.8, "rsi_1h": 47.7, "rsi_15m": 52.7, "ob_imb": -1.9, "tm_wr": 20.0, "tm_exp": -0.43, "timer_ok": false, "timer_triggers": 1, "timer_summary": "Vol Active (Z=+0.88)", "vwap_15m": 0.8414554421521402, "risk_ok": true, "risk_status": "PASS (Rischio OK)", "rr_ratio": 1.88, "pos_usdt": 53.08, "entry_ok": false, "be_trigger": 0.8443404408781546, "tp1_trigger": 0.848400678274084, "tp2_trigger": 0.8513008478426051, "raw_min": 55, "atr_pct": 1.21}, {"code": "XRP", "name": "Ripple", "pionex": "XRP_USDT", "kraken": "XRPUSD", "ws": "XRP/USD", "price": 1.061, "sl_price": 1.0453919837694772, "tp_price": 1.09283, "final_score": 5, "raw_100": 47, "ai_prob": 46.7, "prob_mlp": 50.0, "prob_knn": 57.8, "prob_mc": 25.8, "rsi_1h": 29.4, "rsi_15m": 32.6, "ob_imb": 3.3, "tm_wr": 50.0, "tm_exp": -0.02, "timer_ok": true, "timer_triggers": 2, "timer_summary": "Vol Active (Z=+2.32) + L2 Bid (+3.3%)", "vwap_15m": 1.0856694933269366, "risk_ok": true, "risk_status": "PASS (Rischio OK)", "rr_ratio": 1.85, "pos_usdt": 53.08, "entry_ok": false, "be_trigger": 1.0711452105498398, "tp1_trigger": 1.0766080162305227, "tp2_trigger": 1.0805100202881535, "raw_min": 55, "atr_pct": 1.32}, {"code": "DOGE", "name": "Dogecoin", "pionex": "DOGE_USDT", "kraken": "XDGUSD", "ws": "XDG/USD", "price": 0.06927, "sl_price": 0.06855256318098038, "tp_price": 0.0706578012, "final_score": 4, "raw_100": 45, "ai_prob": 42.9, "prob_mlp": 50.0, "prob_knn": 36.1, "prob_mc": 41.3, "rsi_1h": 45.1, "rsi_15m": 47.7, "ob_imb": -13.9, "tm_wr": 35.0, "tm_exp": -0.19, "timer_ok": false, "timer_triggers": 1, "timer_summary": "Vol Active (Z=+0.37)", "vwap_15m": 0.06951899917914274, "risk_ok": true, "risk_status": "PASS (Rischio OK)", "rr_ratio": 1.68, "pos_usdt": 53.08, "entry_ok": false, "be_trigger": 0.06973633393236275, "tp1_trigger": 0.06998743681901962, "tp2_trigger": 0.07016679602377451, "raw_min": 55, "atr_pct": 0.9}], "regime": "Risk-on: BTC +0.24% su 4h", "entry_window": "PRIME: overlap Londra/New York", "limits": {"max_trades": 4, "daily_max_loss": 3.5, "fee_rt": 0.1}};
+const DATA = {"updated_at": "10/11/2026 15:18:44 UTC", "session": "🇺🇸 Sessione Wall Street Attiva (Alta Liquidita')", "fng_val": 32, "fng_class": "Fear", "advisor": {"badge": "⚠️ CONSIGLIO MANUALE: VALUTA CHIUSURA ANTICIPATA", "color": "#f59e0b", "bg": "rgba(245,158,11,0.14)", "instruction": "Il punteggio di AVAX si sta indebolendo (5/10, AI 34.2%). Se operi manualmente su Pionex, valuta di chiudere o stringere lo Stop-Loss."}, "position": {"is_open": true, "coin_code": "AVAX", "symbol": "AVAX_USDT", "entry_price": 8.38, "amount_coin": 6.33, "invested_usdt": 53.11, "sl_price": 8.25741883252364, "tp_price": 8.5895, "initial_sl": 8.25741883252364, "one_r": 0.12258116747636016, "highest_price": 8.452, "breakeven_locked": false, "tp1_locked": false, "tp2_locked": false, "alerts_triggered": [], "opened_at": "10/11 14:35 UTC", "opened_ts": 1794321350, "mode": "SIMULATION", "order_id": "SIM", "last_check_ts": 1794323734, "close_fail_count": 0}, "stats": {"total_trades": 0, "wins": 0, "losses": 0, "total_pnl_pct": 0.0, "total_pnl_usdt": 0.0, "daily_date": "2026-11-10", "daily_pnl_pct": 0.0, "daily_trades": 1, "last_action": "APERTO LONG AVAX a $8.380 il 10/11 14:35 UTC", "daily_pnl_usdt": 0.0, "consec_losses": 0, "last_close_ts": 0, "last_loss_ts": 0, "coin_last_close": {}}, "history": [{"closed_at": "10/11/2026 11:26", "coin": "LINK", "entry": 10.6168, "exit": 10.4738, "pnl_usdt": -0.0, "pnl_pct": -0.69, "reason": "🎯 TAKE PROFIT GRIGLIA RAGGIUNTO su LINK (10.47$ >= 0.00$)"}], "coins": [{"code": "BTC", "name": "Bitcoin", "pionex": "BTC_USDT", "kraken": "XBTUSD", "ws": "XBT/USD", "price": 74239.9, "sl_price": 73571.74089999999, "tp_price": 75297.7028, "final_score": 5, "raw_100": 51, "ai_prob": 33.4, "prob_mlp": 45.1, "prob_knn": 15.9, "prob_mc": 39.3, "rsi_1h": 44.9, "rsi_15m": 50.3, "ob_imb": 50.9, "tm_wr": 30.0, "tm_exp": -0.4, "timer_ok": true, "timer_triggers": 2, "timer_summary": "Vol Active (Z=+0.12) + L2 Bid (+50.9%)", "vwap_15m": 74624.44845914615, "risk_ok": true, "risk_status": "PASS (Rischio OK)", "rr_ratio": 1.58, "pos_usdt": 53.08, "be_trigger": 74674.203415, "tp1_trigger": 74908.0591, "tp2_trigger": 75208.730695}, {"code": "SUI", "name": "Sui", "pionex": "SUI_USDT", "kraken": "SUIUSD", "ws": "SUI/USD", "price": 0.8331, "sl_price": 0.8210527454957938, "tp_price": 0.8539274999999998, "final_score": 5, "raw_100": 50, "ai_prob": 44.5, "prob_mlp": 53.9, "prob_knn": 37.0, "prob_mc": 40.1, "rsi_1h": 44.0, "rsi_15m": 47.8, "ob_imb": -14.9, "tm_wr": 40.0, "tm_exp": -0.21, "timer_ok": false, "timer_triggers": 1, "timer_summary": "Vol Active (Z=+0.31)", "vwap_15m": 0.8411522741516075, "risk_ok": true, "risk_status": "PASS (Rischio OK)", "rr_ratio": 1.73, "pos_usdt": 53.08, "be_trigger": 0.840930715427734, "tp1_trigger": 0.8451472545042061, "tp2_trigger": 0.8505685190310989}, {"code": "AVAX", "name": "Avalanche", "pionex": "AVAX_USDT", "kraken": "AVAXUSD", "ws": "AVAX/USD", "price": 8.354, "sl_price": 8.2220305897622, "tp_price": 8.56285, "final_score": 5, "raw_100": 48, "ai_prob": 34.2, "prob_mlp": 26.6, "prob_knn": 36.7, "prob_mc": 43.0, "rsi_1h": 45.7, "rsi_15m": 48.7, "ob_imb": -0.4, "tm_wr": 30.0, "tm_exp": -0.47, "timer_ok": false, "timer_triggers": 1, "timer_summary": "EMA20 15m Hold/Bounce", "vwap_15m": 8.585177222513007, "risk_ok": true, "risk_status": "PASS (Rischio OK)", "rr_ratio": 1.58, "pos_usdt": 53.08, "be_trigger": 8.43978011665457, "tp1_trigger": 8.485969410237798, "tp2_trigger": 8.545355644844808}, {"code": "DOGE", "name": "Dogecoin", "pionex": "DOGE_USDT", "kraken": "XDGUSD", "ws": "XDG/USD", "price": 0.0691105, "sl_price": 0.06837844409018301, "tp_price": 0.07051095478399774, "final_score": 5, "raw_100": 47, "ai_prob": 47.7, "prob_mlp": 47.6, "prob_knn": 56.4, "prob_mc": 35.7, "rsi_1h": 42.5, "rsi_15m": 44.8, "ob_imb": 3.4, "tm_wr": 50.0, "tm_exp": 0.08, "timer_ok": false, "timer_triggers": 1, "timer_summary": "L2 Bid (+3.4%)", "vwap_15m": 0.06951588592709333, "risk_ok": true, "risk_status": "PASS (Rischio OK)", "rr_ratio": 1.91, "pos_usdt": 53.08, "be_trigger": 0.06958633634138105, "tp1_trigger": 0.069842555909817, "tp2_trigger": 0.07017198106923465}, {"code": "DOT", "name": "Polkadot", "pionex": "DOT_USDT", "kraken": "DOTUSD", "ws": "DOT/USD", "price": 0.8609, "sl_price": 0.8497857467326515, "tp_price": 0.8821620497288406, "final_score": 5, "raw_100": 47, "ai_prob": 35.7, "prob_mlp": 27.3, "prob_knn": 47.8, "prob_mc": 32.3, "rsi_1h": 51.0, "rsi_15m": 58.3, "ob_imb": -10.2, "tm_wr": 45.0, "tm_exp": 0.17, "timer_ok": false, "timer_triggers": 1, "timer_summary": "Vol Active (Z=+14.00)", "vwap_15m": 0.862064168152982, "risk_ok": true, "risk_status": "PASS (Rischio OK)", "rr_ratio": 1.91, "pos_usdt": 53.08, "be_trigger": 0.8681242646237766, "tp1_trigger": 0.8720142532673485, "tp2_trigger": 0.8770156672376553}, {"code": "SOL", "name": "Solana", "pionex": "SOL_USDT", "kraken": "SOLUSD", "ws": "SOL/USD", "price": 84.07, "sl_price": 82.8981434733701, "tp_price": 86.17174999999999, "final_score": 4, "raw_100": 45, "ai_prob": 44.0, "prob_mlp": 52.6, "prob_knn": 40.1, "prob_mc": 35.9, "rsi_1h": 32.4, "rsi_15m": 40.3, "ob_imb": 30.9, "tm_wr": 60.0, "tm_exp": 0.22, "timer_ok": false, "timer_triggers": 1, "timer_summary": "L2 Bid (+30.9%)", "vwap_15m": 85.313495904005, "risk_ok": true, "risk_status": "PASS (Rischio OK)", "rr_ratio": 1.79, "pos_usdt": 53.08, "be_trigger": 84.83170674230942, "tp1_trigger": 85.24185652662989, "tp2_trigger": 85.76919196361334}, {"code": "LINK", "name": "Chainlink", "pionex": "LINK_USDT", "kraken": "LINKUSD", "ws": "LINK/USD", "price": 10.46, "sl_price": 10.321639132087416, "tp_price": 10.7215, "final_score": 4, "raw_100": 40, "ai_prob": 40.8, "prob_mlp": 46.5, "prob_knn": 36.6, "prob_mc": 37.6, "rsi_1h": 44.0, "rsi_15m": 47.6, "ob_imb": 10.0, "tm_wr": 40.0, "tm_exp": -0.13, "timer_ok": false, "timer_triggers": 1, "timer_summary": "L2 Bid (+10.0%)", "vwap_15m": 10.561315822628309, "risk_ok": true, "risk_status": "PASS (Rischio OK)", "rr_ratio": 1.89, "pos_usdt": 53.08, "be_trigger": 10.54993456414318, "tp1_trigger": 10.598360867912586, "tp2_trigger": 10.66062325847325}, {"code": "ADA", "name": "Cardano", "pionex": "ADA_USDT", "kraken": "ADAUSD", "ws": "ADA/USD", "price": 0.176915, "sl_price": 0.1748535357963392, "tp_price": 0.1808586706504815, "final_score": 4, "raw_100": 39, "ai_prob": 41.2, "prob_mlp": 43.2, "prob_knn": 42.6, "prob_mc": 36.1, "rsi_1h": 45.7, "rsi_15m": 46.3, "ob_imb": -31.3, "tm_wr": 45.0, "tm_exp": -0.07, "timer_ok": false, "timer_triggers": 1, "timer_summary": "Vol Active (Z=-0.17)", "vwap_15m": 0.17762794317912847, "risk_ok": true, "risk_status": "PASS (Rischio OK)", "rr_ratio": 1.91, "pos_usdt": 53.08, "be_trigger": 0.1782549517323795, "tp1_trigger": 0.17897646420366078, "tp2_trigger": 0.17990412309530815}, {"code": "ETH", "name": "Ethereum", "pionex": "ETH_USDT", "kraken": "ETHUSD", "ws": "ETH/USD", "price": 2068.79, "sl_price": 2038.3083220493463, "tp_price": 2120.5097499999997, "final_score": 4, "raw_100": 35, "ai_prob": 53.1, "prob_mlp": 53.5, "prob_knn": 65.0, "prob_mc": 36.0, "rsi_1h": 32.6, "rsi_15m": 37.6, "ob_imb": -7.8, "tm_wr": 60.0, "tm_exp": 0.1, "timer_ok": false, "timer_triggers": 0, "timer_summary": "In attesa trigger 15m", "vwap_15m": 2104.428180169088, "risk_ok": true, "risk_status": "PASS (Rischio OK)", "rr_ratio": 1.7, "pos_usdt": 53.08, "be_trigger": 2088.603090667925, "tp1_trigger": 2099.2716779506536, "tp2_trigger": 2112.9884330284476}, {"code": "XRP", "name": "Ripple", "pionex": "XRP_USDT", "kraken": "XRPUSD", "ws": "XRP/USD", "price": 1.05773, "sl_price": 1.0453340526002135, "tp_price": 1.0841732499999999, "final_score": 3, "raw_100": 28, "ai_prob": 45.7, "prob_mlp": 39.2, "prob_knn": 72.3, "prob_mc": 18.8, "rsi_1h": 26.9, "rsi_15m": 30.5, "ob_imb": -9.1, "tm_wr": 55.0, "tm_exp": 0.12, "timer_ok": false, "timer_triggers": 0, "timer_summary": "In attesa trigger 15m", "vwap_15m": 1.0853732625824346, "risk_ok": true, "risk_status": "PASS (Rischio OK)", "rr_ratio": 2.13, "pos_usdt": 53.08, "be_trigger": 1.0657873658098613, "tp1_trigger": 1.0701259473997866, "tp2_trigger": 1.0757041237296905}]};
 const livePrices = {};
 const wsMap = {};
-DATA.coins.forEach(c => { livePrices[c.code] = c.price; wsMap[c.ws] = c.code; });
+DATA.coins.forEach(c => {
+  livePrices[c.code] = c.price;
+  wsMap[c.ws] = c.code;
+});
 let selectedCoinCode = DATA.position.is_open ? DATA.position.coin_code : DATA.coins[0].code;
-function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, m => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m])); }
+
 function fmtPrice(p) {
   p = Number(p || 0);
   if (p <= 0) return "$0.00";
@@ -105,6 +190,7 @@ function fmtPrice(p) {
   if (p >= 1) return "$" + p.toFixed(3);
   return "$" + p.toFixed(4);
 }
+
 function renderAdvisor() {
   const box = document.getElementById("advisor-box");
   box.style.background = DATA.advisor.bg;
@@ -117,113 +203,165 @@ function renderAdvisor() {
   document.getElementById("session-label").textContent = DATA.session;
   document.getElementById("fng-badge").textContent = "Fear & Greed: " + DATA.fng_val + " (" + DATA.fng_class + ")";
 }
+
 function renderOpenPosition() {
   const pos = DATA.position;
   const pill = document.getElementById("pos-status-pill");
   const container = document.getElementById("open-pos-content");
+
   if (!pos.is_open) {
     pill.className = "pill pill-amber";
     pill.textContent = "FLAT (100% USDT)";
-    container.innerHTML = `<div style="padding:18px 4px; text-align:center; color:var(--muted); font-size:13.5px;">Nessuna posizione aperta al momento.
-<span style="color:#e2e8f0; font-weight:600; display:block; margin-top:6px;">Il capitale e' protetto in USDT in attesa di un segnale Fast-Scalp.</span></div>`;
+    container.innerHTML = `
+      <div style="padding:18px 4px; text-align:center; color:var(--muted); font-size:13.5px;">
+        Nessuna posizione aperta al momento.<br>
+        <span style="color:#e2e8f0; font-weight:600; display:block; margin-top:6px;">
+          Il capitale e' protetto in USDT in attesa di un segnale Fast-Scalp.
+        </span>
+      </div>
+    `;
     return;
   }
+
   const code = pos.coin_code;
   const cur = livePrices[code] || pos.entry_price;
-  const entry = pos.entry_price, sl = pos.sl_price, tp = pos.tp_price;
+  const entry = pos.entry_price;
+  const sl = pos.sl_price;
+  const tp = pos.tp_price;
   const oneR = pos.one_r || Math.max(entry - pos.initial_sl, entry * 0.009);
+
   const grossPct = ((cur - entry) / entry) * 100.0;
-  const netPct = grossPct - DATA.limits.fee_rt;
+  const netPct = grossPct - 0.10;
   const pnlUsdt = pos.invested_usdt * (netPct / 100.0);
   const curR = oneR > 0 ? (cur - entry) / oneR : 0.0;
+
   pill.className = "pill " + (netPct >= 0 ? "pill-green" : "pill-red");
   pill.textContent = "LONG " + code + " (" + pos.mode + ")";
+
   const totalSpan = Math.max(tp - sl, 1e-8);
   const progressPct = Math.max(0, Math.min(100, ((cur - sl) / totalSpan) * 100));
   const barColor = netPct >= 0 ? "var(--green)" : "var(--red)";
+
   let manualPosAdvice = "✅ MANTIENI POSIZIONE (In linea con il piano)";
-  if (cur <= sl) manualPosAdvice = "🛑 ATTENZIONE: Prezzo sotto lo Stop-Loss! Il bot chiude al prossimo giro: valuta chiusura manuale.";
+  if (cur <= sl) manualPosAdvice = "🛑 ATTENZIONE: Prezzo sotto lo Stop-Loss! Chiudi subito se non automatico.";
   else if (cur >= tp) manualPosAdvice = "🎯 TARGET RAGGIUNTO: Prendi profitto!";
+
   container.innerHTML = `
     <div style="display:flex; justify-content:space-between; align-items:baseline;">
-      <div><div style="font-size:12px; color:var(--muted);">PnL Netto Live (${esc(code)})</div>
-        <div class="pnl-big" style="color:${barColor};">${netPct >= 0 ? "+" : ""}${netPct.toFixed(2)}% (${pnlUsdt >= 0 ? "+" : ""}${pnlUsdt.toFixed(2)} USDT)</div></div>
-      <div style="text-align:right;"><div style="font-size:12px; color:var(--muted);">Multiplo R Live</div>
-        <div style="font-size:18px; font-weight:800; color:var(--accent);">${curR >= 0 ? "+" : ""}${curR.toFixed(2)}R</div></div>
+      <div>
+        <div style="font-size:12px; color:var(--muted);">PnL Netto Live (${code})</div>
+        <div class="pnl-big" style="color:${barColor};">
+          ${netPct >= 0 ? "+" : ""}${netPct.toFixed(2)}% (${pnlUsdt >= 0 ? "+" : ""}${pnlUsdt.toFixed(2)} USDT)
+        </div>
+      </div>
+      <div style="text-align:right;">
+        <div style="font-size:12px; color:var(--muted);">Multiplo R Live</div>
+        <div style="font-size:18px; font-weight:800; color:var(--accent);">${curR >= 0 ? "+" : ""}${curR.toFixed(2)}R</div>
+      </div>
     </div>
-    <div class="progress-wrap"><div class="progress-bar" style="width:${progressPct.toFixed(1)}%; background:${barColor};"></div></div>
+
+    <div class="progress-wrap">
+      <div class="progress-bar" style="width:${progressPct.toFixed(1)}%; background:${barColor};"></div>
+    </div>
     <div style="display:flex; justify-content:space-between; font-size:11px; color:var(--muted); margin-bottom:10px;">
-      <span>🛑 SL: ${fmtPrice(sl)}</span><span>📍 Live: <strong style="color:#fff;">${fmtPrice(cur)}</strong></span><span>🎯 TP: ${fmtPrice(tp)}</span>
+      <span>🛑 SL: ${fmtPrice(sl)}</span>
+      <span>📍 Live: <strong style="color:#fff;">${fmtPrice(cur)}</strong></span>
+      <span>🎯 TP: ${fmtPrice(tp)}</span>
     </div>
-    <div class="stat-row"><span>Prezzo Ingresso (Aperta il ${esc(pos.opened_at)})</span><span class="val-bold">${fmtPrice(entry)}</span></div>
-    <div class="stat-row"><span>Capitale Investito / Quantita'</span><span class="val-bold">${pos.invested_usdt.toFixed(2)} USDT (${pos.amount_coin} ${esc(code)})</span></div>
-    <div class="stat-row"><span>Stato Protezione Trailing</span><span class="val-bold">${pos.tp2_locked ? "🚀 +1.25R Locked" : (pos.tp1_locked ? "🔒 +1R Locked" : (pos.breakeven_locked ? "🛡️ Break-Even Netto" : "Iniziale"))}</span></div>
-    <div class="stat-row"><span>Indicazione Operativa</span><span class="val-bold" style="color:var(--accent);">${manualPosAdvice}</span></div>`;
+
+    <div class="stat-row"><span>Prezzo Ingresso (Aperta il ${pos.opened_at})</span><span class="val-bold">${fmtPrice(entry)}</span></div>
+    <div class="stat-row"><span>Capitale Investito / Quantita'</span><span class="val-bold">${pos.invested_usdt.toFixed(2)} USDT (${pos.amount_coin} ${code})</span></div>
+    <div class="stat-row"><span>Stato Protezione Trailing</span><span class="val-bold">${pos.tp2_locked ? "🚀 +1.45R Locked" : (pos.tp1_locked ? "🔒 +1R Locked" : (pos.breakeven_locked ? "🛡️ Break-Even Netto" : "Iniziale"))}</span></div>
+    <div class="stat-row"><span>Indicazione Operativa</span><span class="val-bold" style="color:var(--accent);">${manualPosAdvice}</span></div>
+  `;
 }
+
 function renderPortfolioStats() {
   const s = DATA.stats;
   const wr = s.total_trades > 0 ? ((s.wins / s.total_trades) * 100).toFixed(1) + "%" : "N/A";
   const pnlColor = s.total_pnl_pct >= 0 ? "var(--green)" : "var(--red)";
   const dailyColor = (s.daily_pnl_pct || 0) >= 0 ? "var(--green)" : "var(--red)";
+
   document.getElementById("portfolio-stats-content").innerHTML = `
     <div class="stat-row"><span>Operazioni Concluse Totali</span><span class="val-bold">${s.total_trades} (${s.wins} Vinte / ${s.losses} Perse)</span></div>
     <div class="stat-row"><span>Win Rate Reale</span><span class="val-bold">${wr}</span></div>
     <div class="stat-row"><span>PnL Netto Cumulato</span><span class="val-bold" style="color:${pnlColor};">${s.total_pnl_pct >= 0 ? "+" : ""}${s.total_pnl_pct.toFixed(2)}% (${s.total_pnl_usdt >= 0 ? "+" : ""}${s.total_pnl_usdt.toFixed(2)} USDT)</span></div>
-    <div class="stat-row"><span>PnL Giornaliero (stop a -${DATA.limits.daily_max_loss}% del capitale)</span><span class="val-bold" style="color:${dailyColor};">${(s.daily_pnl_pct || 0) >= 0 ? "+" : ""}${(s.daily_pnl_pct || 0).toFixed(2)}% (${s.daily_trades || 0}/${DATA.limits.max_trades} trade oggi)</span></div>
-    <div class="stat-row"><span>Finestra di ingresso</span><span class="val-bold" style="font-size:12px;">${esc(DATA.entry_window)}</span></div>
-    <div class="stat-row"><span>Regime di mercato (BTC)</span><span class="val-bold" style="font-size:12px;">${esc(DATA.regime)}</span></div>
-    <div class="stat-row"><span>Ultima Azione Bot</span><span class="val-bold" style="font-size:12px;">${esc(s.last_action)}</span></div>`;
+    <div class="stat-row"><span>PnL Giornaliero (Max Loss -6%)</span><span class="val-bold" style="color:${dailyColor};">${(s.daily_pnl_pct || 0) >= 0 ? "+" : ""}${(s.daily_pnl_pct || 0).toFixed(2)}% (${s.daily_trades || 0}/5 trade oggi)</span></div>
+    <div class="stat-row"><span>Ultima Azione Bot</span><span class="val-bold" style="font-size:12px;">${s.last_action}</span></div>
+  `;
 }
+
 function renderScannerTable() {
   const tbody = document.getElementById("scanner-tbody");
   tbody.innerHTML = "";
+
   DATA.coins.forEach(c => {
     const cur = livePrices[c.code] || c.price;
     const scoreClass = c.final_score >= 7 ? "pill-green" : (c.final_score >= 6 ? "pill-amber" : "pill-red");
-    const timerBadge = c.timer_ok ? `<span class="pill pill-green">⚡ OK (${c.timer_triggers}/4)</span>` : `<span class="pill pill-amber">⏳ ${c.timer_triggers}/4</span>`;
-    const riskBadge = c.risk_ok ? `<span class="pill pill-green">${c.rr_ratio}x PASS</span>` : `<span class="pill pill-red">${c.rr_ratio}x STOP</span>`;
+    const timerBadge = c.timer_ok
+      ? `<span class="pill pill-green">⚡ OK (${c.timer_triggers}/4)</span>`
+      : `<span class="pill pill-amber">⏳ ${c.timer_triggers}/4</span>`;
+    const riskBadge = c.risk_ok
+      ? `<span class="pill pill-green">${c.rr_ratio}x PASS</span>`
+      : `<span class="pill pill-red">${c.rr_ratio}x STOP</span>`;
+
     let manualAdvice = "🛡️ Attendi (Non aprire)";
     let adviceColor = "var(--muted)";
-    if (DATA.position.is_open && DATA.position.coin_code === c.code) { manualAdvice = "📌 POSIZIONE ATTIVA"; adviceColor = "var(--accent)"; }
-    else if (c.entry_ok) { manualAdvice = "🚀 APRI LONG ORA"; adviceColor = "var(--green)"; }
-    else if (c.raw_100 >= 54) { manualAdvice = "👀 Quasi pronto (Attendi)"; adviceColor = "var(--amber)"; }
+    if (DATA.position.is_open && DATA.position.coin_code === c.code) {
+      manualAdvice = "📌 POSIZIONE ATTIVA";
+      adviceColor = "var(--accent)";
+    } else if (c.final_score >= 6 && c.raw_100 >= 58 && c.ai_prob >= 50 && c.timer_ok && c.risk_ok) {
+      manualAdvice = "🚀 APRI LONG ORA";
+      adviceColor = "var(--green)";
+    } else if (c.raw_100 >= 54) {
+      manualAdvice = "👀 Quasi pronto (Attendi 15m)";
+      adviceColor = "var(--amber)";
+    }
+
     const tr = document.createElement("tr");
     tr.className = "clickable-row";
     if (c.code === selectedCoinCode) tr.style.background = "rgba(56,189,248,0.12)";
     tr.onclick = () => { selectedCoinCode = c.code; renderScannerTable(); renderCoinDetail(); };
+
     tr.innerHTML = `
-      <td><strong>${esc(c.code)}</strong> <span style="color:var(--muted); font-size:11px;">${esc(c.name)}</span></td>
+      <td><strong>${c.code}</strong> <span style="color:var(--muted); font-size:11px;">${c.name}</span></td>
       <td id="price-cell-${c.code}" class="val-bold">${fmtPrice(cur)}</td>
-      <td><span class="pill ${scoreClass}">${c.final_score}/10 (${c.raw_100}/${c.raw_min})</span></td>
-      <td class="val-bold">${c.ai_prob}%</td><td>${timerBadge}</td><td>${riskBadge}</td>
-      <td style="font-weight:700; color:${adviceColor};">${manualAdvice}</td>`;
+      <td><span class="pill ${scoreClass}">${c.final_score}/10 (${c.raw_100})</span></td>
+      <td class="val-bold">${c.ai_prob}%</td>
+      <td>${timerBadge}</td>
+      <td>${riskBadge}</td>
+      <td style="font-weight:700; color:${adviceColor};">${manualAdvice}</td>
+    `;
     tbody.appendChild(tr);
   });
 }
+
 function renderCoinDetail() {
   const c = DATA.coins.find(x => x.code === selectedCoinCode) || DATA.coins[0];
   const cur = livePrices[c.code] || c.price;
   document.getElementById("detail-title").textContent = `🔍 PIANO OPERATIVO DETTAGLIATO: ${c.name.toUpperCase()} (${c.code})`;
   document.getElementById("detail-pair").textContent = `Pionex Spot: ${c.pionex}`;
+
   document.getElementById("detail-content").innerHTML = `
     <div class="grid-2" style="margin-bottom:0;">
       <div>
         <div class="stat-row"><span>Prezzo Live / VWAP 15m</span><span class="val-bold">${fmtPrice(cur)} / ${fmtPrice(c.vwap_15m)}</span></div>
-        <div class="stat-row"><span>Budget a rischio fisso</span><span class="val-bold">${c.pos_usdt.toFixed(2)} USDT</span></div>
+        <div class="stat-row"><span>Budget Consigliato (con Riserva 5%)</span><span class="val-bold">${c.pos_usdt.toFixed(2)} USDT</span></div>
         <div class="stat-row"><span>Stop-Loss Iniziale</span><span class="val-bold" style="color:var(--red);">${fmtPrice(c.sl_price)}</span></div>
-        <div class="stat-row"><span>Take-Profit Target</span><span class="val-bold" style="color:var(--green);">${fmtPrice(c.tp_price)}</span></div>
-        <div class="stat-row"><span>Livelli Profit-Lock (BE / +1R / +1.25R)</span><span class="val-bold">${fmtPrice(c.be_trigger)} / ${fmtPrice(c.tp1_trigger)} / ${fmtPrice(c.tp2_trigger)}</span></div>
+        <div class="stat-row"><span>Take-Profit Target (+3 Stadi R)</span><span class="val-bold" style="color:var(--green);">${fmtPrice(c.tp_price)}</span></div>
+        <div class="stat-row"><span>Livelli Profit-Lock (BE / +1R / +1.45R)</span><span class="val-bold">${fmtPrice(c.be_trigger)} / ${fmtPrice(c.tp1_trigger)} / ${fmtPrice(c.tp2_trigger)}</span></div>
       </div>
       <div>
         <div class="stat-row"><span>Reti Neurali (MLP / k-NN / MonteCarlo)</span><span class="val-bold">${c.prob_mlp}% / ${c.prob_knn}% / ${c.prob_mc}%</span></div>
         <div class="stat-row"><span>Time Machine (20 pattern simili)</span><span class="val-bold">WinRate ${c.tm_wr}% (${c.tm_exp >= 0 ? "+" : ""}${c.tm_exp}R)</span></div>
         <div class="stat-row"><span>RSI 1H / RSI 15m / Orderbook L2</span><span class="val-bold">${c.rsi_1h} / ${c.rsi_15m} / ${c.ob_imb >= 0 ? "+" : ""}${c.ob_imb}%</span></div>
-        <div class="stat-row"><span>Volatilita' ATR 1h</span><span class="val-bold">${c.atr_pct}%</span></div>
-        <div class="stat-row"><span>Dettaglio Entry Timer 15m</span><span class="val-bold">${esc(c.timer_summary)}</span></div>
-        <div class="stat-row"><span>Stato Risk Manager</span><span class="val-bold">${esc(c.risk_status)}</span></div>
+        <div class="stat-row"><span>Dettaglio Entry Timer 15m</span><span class="val-bold">${c.timer_summary}</span></div>
+        <div class="stat-row"><span>Stato Risk Manager</span><span class="val-bold">${c.risk_status}</span></div>
       </div>
-    </div>`;
+    </div>
+  `;
 }
+
 function renderHistoryTable() {
   const hist = DATA.history || [];
   document.getElementById("history-count").textContent = hist.length + " operazioni registrate";
@@ -235,45 +373,74 @@ function renderHistoryTable() {
   tbody.innerHTML = hist.map(h => {
     const cls = h.pnl_pct >= 0 ? "pill-green" : "pill-red";
     const sign = h.pnl_pct >= 0 ? "+" : "";
-    return `<tr><td>${esc(h.closed_at)}</td>
-      <td><strong>${esc(h.coin)}</strong> <span style="font-size:10px; color:var(--muted);">(${esc(h.mode || "SIM")})</span></td>
-      <td>${fmtPrice(h.entry)}</td><td>${fmtPrice(h.exit)}</td>
-      <td><span class="pill ${cls}">${sign}${Number(h.pnl_pct).toFixed(2)}% (${sign}${Number(h.pnl_usdt || 0).toFixed(2)} USDT)</span></td>
-      <td>${esc(h.reason)}</td></tr>`;
+    return `
+      <tr>
+        <td>${h.closed_at}</td>
+        <td><strong>${h.coin}</strong> <span style="font-size:10px; color:var(--muted);">(${h.mode || "SIM"})</span></td>
+        <td>${fmtPrice(h.entry)}</td>
+        <td>${fmtPrice(h.exit)}</td>
+        <td><span class="pill ${cls}">${sign}${Number(h.pnl_pct).toFixed(2)}% (${sign}${Number(h.pnl_usdt || 0).toFixed(2)} USDT)</span></td>
+        <td>${h.reason}</td>
+      </tr>
+    `;
   }).join("");
 }
+
 function updateLivePrice(code, newPrice) {
   if (!newPrice || newPrice <= 0) return;
   const oldPrice = livePrices[code] || newPrice;
   livePrices[code] = newPrice;
+
   const cell = document.getElementById("price-cell-" + code);
   if (cell) {
     cell.textContent = fmtPrice(newPrice);
-    if (newPrice > oldPrice) { cell.classList.add("flash-up"); setTimeout(() => cell.classList.remove("flash-up"), 350); }
-    else if (newPrice < oldPrice) { cell.classList.add("flash-dn"); setTimeout(() => cell.classList.remove("flash-dn"), 350); }
+    if (newPrice > oldPrice) {
+      cell.classList.add("flash-up");
+      setTimeout(() => cell.classList.remove("flash-up"), 350);
+    } else if (newPrice < oldPrice) {
+      cell.classList.add("flash-dn");
+      setTimeout(() => cell.classList.remove("flash-dn"), 350);
+    }
   }
-  if (DATA.position.is_open && DATA.position.coin_code === code) renderOpenPosition();
-  if (selectedCoinCode === code) renderCoinDetail();
+  if (DATA.position.is_open && DATA.position.coin_code === code) {
+    renderOpenPosition();
+  }
+  if (selectedCoinCode === code) {
+    renderCoinDetail();
+  }
 }
+
 function connectKrakenWebSocket() {
   try {
     const ws = new WebSocket("wss://ws.kraken.com");
     ws.onopen = () => {
       document.getElementById("ws-status").textContent = "🟢 Streaming Live Kraken Attivo";
-      ws.send(JSON.stringify({ event: "subscribe", pair: DATA.coins.map(c => c.ws), subscription: { name: "ticker" } }));
+      ws.send(JSON.stringify({
+        event: "subscribe",
+        pair: DATA.coins.map(c => c.ws),
+        subscription: { name: "ticker" }
+      }));
     };
     ws.onmessage = (event) => {
       const msg = JSON.parse(event.data);
       if (Array.isArray(msg) && msg.length >= 4 && msg[1] && msg[1].c) {
-        const code = wsMap[msg[3]];
+        const pairName = msg[3];
         const price = parseFloat(msg[1].c[0]);
+        const code = wsMap[pairName];
         if (code && price > 0) updateLivePrice(code, price);
       }
     };
-    ws.onerror = () => { document.getElementById("ws-status").textContent = "🟡 Fallback Polling REST Live"; };
-    ws.onclose = () => { setTimeout(connectKrakenWebSocket, 5000); };
-  } catch (e) { console.warn("WS error:", e); }
+    ws.onerror = () => {
+      document.getElementById("ws-status").textContent = "🟡 Fallback Polling REST Live";
+    };
+    ws.onclose = () => {
+      setTimeout(connectKrakenWebSocket, 5000);
+    };
+  } catch (e) {
+    console.warn("WS error:", e);
+  }
 }
+
 async function forcePollKraken() {
   try {
     const pairs = DATA.coins.map(c => c.kraken).join(",");
@@ -283,15 +450,25 @@ async function forcePollKraken() {
       Object.keys(j.result).forEach(k => {
         const p = parseFloat(j.result[k].c[0]);
         DATA.coins.forEach(c => {
-          if (k.includes(c.code) || (c.code === "BTC" && k.includes("XBT")) || (c.code === "DOGE" && k.includes("XDG"))) updateLivePrice(c.code, p);
+          if (k.includes(c.code) || (c.code === "BTC" && k.includes("XBT")) || (c.code === "DOGE" && k.includes("XDG"))) {
+            updateLivePrice(c.code, p);
+          }
         });
       });
     }
-  } catch (e) { console.warn("Poll error:", e); }
+  } catch (e) {
+    console.warn("Poll error:", e);
+  }
 }
-renderAdvisor(); renderOpenPosition(); renderPortfolioStats(); renderScannerTable(); renderCoinDetail(); renderHistoryTable();
+
+renderAdvisor();
+renderOpenPosition();
+renderPortfolioStats();
+renderScannerTable();
+renderCoinDetail();
+renderHistoryTable();
 connectKrakenWebSocket();
 setInterval(forcePollKraken, 8000);
-<\/script>
+</script>
 </body>
 </html>
