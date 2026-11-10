@@ -1,13 +1,17 @@
-name: Pionex Neural Quant Bot
+name: Pionex Fast-Scalp AI Bot
 
 on:
   schedule:
-    # 1) Fascia Clou Wall Street (13:00 - 19:59 UTC = 15:00 - 21:59 Ora Italiana) -> Ogni 15 minuti
-    - cron: '0,15,30,45 13-19 * * *'
-    # 2) Fascia Europea Mattina/Sera (06:00 - 12:59 UTC e 20:00 - 21:59 UTC) -> Ogni 30 minuti
-    - cron: '0,30 6-12,20-21 * * *'
-    # 3) Fascia Notturna (22:00 - 05:59 UTC = 00:00 - 07:59 Ora Italiana) -> Ogni 60 minuti
-    - cron: '0 22-23,0-5 * * *'
+    # Fascia Peak Wall Street / Europa (15:00 - 21:59 ora italiana) -> Ogni 15 minuti
+    - cron: '*/15 13-19 * * *'
+    # Fascia Mattina Europea (08:00 - 14:59 ora italiana) -> Ogni 30 minuti
+    - cron: '*/30 6-12 * * *'
+    # Fascia Sera Europea (22:00 - 23:59 ora italiana) -> Ogni 30 minuti
+    - cron: '*/30 20-21 * * *'
+    # Fascia Notturna 1 (00:00 - 01:59 ora italiana) -> Ogni 60 minuti
+    - cron: '0 22-23 * * *'
+    # Fascia Notturna 2 (02:00 - 07:59 ora italiana) -> Ogni 60 minuti
+    - cron: '0 0-5 * * *'
   workflow_dispatch:
 
 permissions:
@@ -16,31 +20,34 @@ permissions:
 jobs:
   run-bot:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Setup Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install requests
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests
 
-      - name: Run python main.py
+      - name: Run Pionex AI Fast-Scalp Engine
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN || secrets.TELEGRAM_BOT_TOKEN || secrets.BOT_TOKEN || secrets.TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || secrets.CHAT_ID || secrets.TELEGRAM_CHAT }}
-          PIONEX_API_KEY: ${{ secrets.PIONEX_API_KEY }}
-          PIONEX_API_SECRET: ${{ secrets.PIONEX_API_SECRET }}
-          LIVE_TRADING: ${{ secrets.LIVE_TRADING }}
+          PIONEX_API_KEY: ${{ secrets.PIONEX_API_KEY || secrets.API_KEY }}
+          PIONEX_API_SECRET: ${{ secrets.PIONEX_API_SECRET || secrets.API_SECRET }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
         run: python main.py
 
-      - name: Salva Stato Bot e Dashboard nel Repository
+      - name: Save Bot State & Live Console (Auto-Commit)
         run: |
-          git config --global user.name "NeuralGridBot"
-          git config --global user.email "bot@noreply.github.com"
-          git add bot_state.json index.html || true
-          git diff --staged --quiet || git commit -m "Aggiornamento Dashboard e Stato Bot [skip ci]"
-          git push
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add bot_state.json index.html
+          git diff --staged --quiet || (git commit -m "chore: update fast-scalp state and live console [skip ci]" && git pull --rebase origin ${{ github.ref_name }} && git push)
