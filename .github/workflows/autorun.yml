@@ -2,25 +2,18 @@ name: Pionex Fast-Scalp AI Bot
 
 on:
   schedule:
-    # 🔥 CORE US SESSION: Wall Street + ETF + overlap Londra/NY + macro USD (13:00-20:59 UTC) -> ogni 15 min
-    - cron: '2,17,32,47 13-20 * * *'
-    # Pre-market e post-chiusura USA (12:00-12:59 e 21:00-21:59 UTC) -> ogni 30 min
-    - cron: '2,32 12,21 * * *'
-    # Londra/Europa + funding 08:00 UTC (07:00-11:59 UTC) -> ogni 30 min
-    - cron: '2,32 7-11 * * *'
-    # Chiusura candela giornaliera + funding 00:00 UTC (00:00-00:59 UTC) -> ogni 30 min
-    - cron: '2,32 0 * * *'
-    # Bassa liquidità: notte USA e Asia (22:00, 02:00, 04:00, 06:00 UTC) -> ogni 2 ore
-    - cron: '7 22,2,4,6 * * *'
+    # Unico cron pulito ogni 15 minuti (evita il bug dei cron multipli su GitHub)
+    - cron: '2,17,32,47 * * * *'
   workflow_dispatch:
+  repository_dispatch:
+    types: [cron-trigger]
 
 permissions:
   contents: write
 
-# Evita run sovrapposti e conflitti sul commit di bot_state.json
 concurrency:
   group: pionex-bot
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   run-bot:
@@ -54,4 +47,4 @@ jobs:
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
           git add bot_state.json index.html
-          git diff --staged --quiet || (git commit -m "chore: update fast-scalp state and live console" && git pull --rebase -X theirs origin ${{ github.ref_name }} && git push)
+          git diff --staged --quiet || (git commit -m "chore: update fast-scalp state [skip ci]" && git pull --rebase -X theirs origin ${{ github.ref_name }} && git push)
