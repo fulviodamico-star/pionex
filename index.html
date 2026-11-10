@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Pionex AI Live Trading Console v8.0</title>
+<title>Pionex AI Live Trading Console v9.0</title>
 <style>
   :root { --bg: #070b14; --card: #111827; --card-border: #1f2937; --text: #f8fafc; --muted: #94a3b8;
           --accent: #38bdf8; --green: #10b981; --amber: #f59e0b; --red: #ef4444; }
@@ -46,21 +46,18 @@
 </style>
 </head>
 <body>
-
 <div class="topbar">
-  <div class="brand"><span class="live-dot" id="ws-dot"></span><span>PIONEX AI FAST-SCALP CONSOLE v8.0</span></div>
+  <div class="brand"><span class="live-dot" id="ws-dot"></span><span>PIONEX AI FAST-SCALP CONSOLE v9.0</span></div>
   <div class="meta-bar">
     <span id="ws-status">Connessione Kraken Live...</span><span>|</span>
     <span id="session-label"></span>
     <button class="btn-refresh" onclick="forcePollKraken()">🔄 Aggiorna Prezzi Live</button>
   </div>
 </div>
-
 <div class="advisor-box" id="advisor-box">
   <div class="advisor-badge"><span id="advisor-badge-text"></span><span style="font-size:11px; font-weight:600; opacity:0.85;" id="snapshot-time"></span></div>
   <div class="advisor-text" id="advisor-instruction"></div>
 </div>
-
 <div class="grid-2">
   <div class="card">
     <div class="card-title"><span>📌 POSIZIONE APERTA IN TEMPO REALE</span><span id="pos-status-pill" class="pill"></span></div>
@@ -71,7 +68,6 @@
     <div id="portfolio-stats-content"></div>
   </div>
 </div>
-
 <div class="card" style="margin-bottom:14px;">
   <div class="card-title"><span>📡 SCANNER LIVE 10 CRIPTOVALUTE (CLICCA UNA RIGA PER I DETTAGLI)</span><span style="color:var(--accent);">Prezzi Live via Kraken WebSocket</span></div>
   <div class="table-wrap">
@@ -81,12 +77,10 @@
     </table>
   </div>
 </div>
-
 <div class="card" style="margin-bottom:14px;" id="detail-card">
   <div class="card-title"><span id="detail-title">🔍 PIANO OPERATIVO DETTAGLIATO</span><span id="detail-pair" style="color:var(--accent);"></span></div>
   <div id="detail-content"></div>
 </div>
-
 <div class="card">
   <div class="card-title"><span>📜 STORICO POSIZIONI CHIUSE</span><span id="history-count"></span></div>
   <div class="table-wrap">
@@ -96,16 +90,13 @@
     </table>
   </div>
 </div>
-
 <script>
-const DATA = {"updated_at": "10/11/2026 14:35:50 UTC", "session": "🔔 NYSE OPENING BELL (Alta Volatilita' USA)", "fng_val": 32, "fng_class": "Fear", "advisor": {"badge": "✅ MANTIENI POSIZIONE (HOLD)", "color": "#38bdf8", "bg": "rgba(56,189,248,0.14)", "instruction": "Posizione aperta su AVAX (PnL netto +0.00%). Mantieni attiva la protezione con Stop-Loss a $8.257 e Take-Profit a $8.589."}, "position": {"is_open": true, "coin_code": "AVAX", "symbol": "AVAX_USDT", "entry_price": 8.38, "amount_coin": 6.33, "invested_usdt": 53.11, "sl_price": 8.25741883252364, "tp_price": 8.5895, "initial_sl": 8.25741883252364, "one_r": 0.12258116747636016, "highest_price": 8.38, "breakeven_locked": false, "tp1_locked": false, "tp2_locked": false, "alerts_triggered": [], "opened_at": "10/11 14:35 UTC", "opened_ts": 1794321350, "mode": "SIMULATION", "order_id": "SIM", "last_check_ts": 1794321350, "close_fail_count": 0}, "stats": {"total_trades": 0, "wins": 0, "losses": 0, "total_pnl_pct": 0.0, "total_pnl_usdt": 0.0, "daily_date": "2026-11-10", "daily_pnl_pct": 0.0, "daily_trades": 1, "last_action": "APERTO LONG AVAX a $8.380 il 10/11 14:35 UTC", "daily_pnl_usdt": 0.0, "consec_losses": 0, "last_close_ts": 0, "last_loss_ts": 0, "coin_last_close": {}}, "history": [{"closed_at": "10/11/2026 11:26", "coin": "LINK", "entry": 10.6168, "exit": 10.4738, "pnl_usdt": -0.0, "pnl_pct": -0.69, "reason": "🎯 TAKE PROFIT GRIGLIA RAGGIUNTO su LINK (10.47$ >= 0.00$)"}], "coins": [{"code": "AVAX", "name": "Avalanche", "pionex": "AVAX_USDT", "kraken": "AVAXUSD", "ws": "AVAX/USD", "price": 8.38, "sl_price": 8.25741883252364, "tp_price": 8.5895, "final_score": 8, "raw_100": 76, "ai_prob": 55.4, "prob_mlp": 50.0, "prob_knn": 72.2, "prob_mc": 40.4, "rsi_1h": 40.6, "rsi_15m": 40.9, "ob_imb": 8.9, "tm_wr": 60.0, "tm_exp": 0.12, "timer_ok": true, "timer_triggers": 2, "timer_summary": "Vol Active (Z=+0.65) + L2 Bid (+8.9%)", "vwap_15m": 8.62525982323673, "risk_ok": true, "risk_status": "PASS (Rischio OK)", "rr_ratio": 1.54, "pos_usdt": 53.11, "entry_ok": true, "be_trigger": 8.459677758859636, "tp1_trigger": 8.502581167476361, "tp2_trigger": 8.557742692840723}, {"code": "DOT", "name": "Polkadot", "pionex": "DOT_USDT", "kraken": "DOTUSD", "ws": "DOT/USD", "price": 0.859, "sl_price": 0.8486259941706898, "tp_price": 0.878845924195202, "final_score": 6, "raw_100": 55, "ai_prob": 41.0, "prob_mlp": 50.0, "prob_knn": 36.4, "prob_mc": 33.2, "rsi_1h": 40.9, "rsi_15m": 48.9, "ob_imb": 4.5, "tm_wr": 45.0, "tm_exp": 0.02, "timer_ok": true, "timer_triggers": 2, "timer_summary": "Vol Active (Z=+2.06) + L2 Bid (+4.5%)", "vwap_15m": 0.8630856489516708, "risk_ok": true, "risk_status": "PASS (Rischio OK)", "rr_ratio": 1.69, "pos_usdt": 53.11, "entry_ok": false, "be_trigger": 0.8657431037890516, "tp1_trigger": 0.8693740058293101, "tp2_trigger": 0.8740423084524996}, {"code": "ADA", "name": "Cardano", "pionex": "ADA_USDT", "kraken": "ADAUSD", "ws": "ADA/USD", "price": 0.1767, "sl_price": 0.17482202990636878, "tp_price": 0.18029263843999016, "final_score": 5, "raw_100": 50, "ai_prob": 52.1, "prob_mlp": 50.0, "prob_knn": 64.5, "prob_mc": 38.0, "rsi_1h": 39.8, "rsi_15m": 35.0, "ob_imb": -20.4, "tm_wr": 50.0, "tm_exp": -0.03, "timer_ok": false, "timer_triggers": 1, "timer_summary": "Vol Active (Z=+6.39)", "vwap_15m": 0.1777596667245189, "risk_ok": true, "risk_status": "PASS (Rischio OK)", "rr_ratio": 1.66, "pos_usdt": 53.11, "entry_ok": false, "be_trigger": 0.1779206805608603, "tp1_trigger": 0.17857797009363122, "tp2_trigger": 0.17942305663576527}, {"code": "SOL", "name": "Solana", "pionex": "SOL_USDT", "kraken": "SOLUSD", "ws": "SOL/USD", "price": 84.16, "sl_price": 83.01519693200161, "tp_price": 86.264, "final_score": 4, "raw_100": 45, "ai_prob": 51.0, "prob_mlp": 50.0, "prob_knn": 65.0, "prob_mc": 33.1, "rsi_1h": 30.5, "rsi_15m": 26.1, "ob_imb": 33.9, "tm_wr": 60.0, "tm_exp": 0.16, "timer_ok": false, "timer_triggers": 2, "timer_summary": "Vol Active (Z=+5.13) + L2 Bid (+33.9%) + RSI 15m estremo (26)", "vwap_15m": 85.62872982628403, "risk_ok": true, "risk_status": "PASS (Rischio OK)", "rr_ratio": 1.64, "pos_usdt": 53.11, "entry_ok": false, "be_trigger": 84.90412199419895, "tp1_trigger": 85.30480306799838, "tp2_trigger": 85.81996444859764}, {"code": "SUI", "name": "Sui", "pionex": "SUI_USDT", "kraken": "SUIUSD", "ws": "SUI/USD", "price": 0.8331, "sl_price": 0.8221207558375954, "tp_price": 0.8539274999999998, "final_score": 4, "raw_100": 45, "ai_prob": 50.6, "prob_mlp": 50.0, "prob_knn": 60.4, "prob_mc": 37.9, "rsi_1h": 37.7, "rsi_15m": 36.3, "ob_imb": -31.7, "tm_wr": 55.0, "tm_exp": 0.31, "timer_ok": false, "timer_triggers": 1, "timer_summary": "Vol Active (Z=+1.68)", "vwap_15m": 0.8428790363007258, "risk_ok": true, "risk_status": "PASS (Rischio OK)", "rr_ratio": 1.69, "pos_usdt": 53.11, "entry_ok": false, "be_trigger": 0.840236508705563, "tp1_trigger": 0.8440792441624045, "tp2_trigger": 0.8490199040354867}, {"code": "DOGE", "name": "Dogecoin", "pionex": "DOGE_USDT", "kraken": "XDGUSD", "ws": "XDG/USD", "price": 0.06914, "sl_price": 0.06847097674728506, "tp_price": 0.07041987057041119, "final_score": 4, "raw_100": 44, "ai_prob": 51.4, "prob_mlp": 50.0, "prob_knn": 65.1, "prob_mc": 34.5, "rsi_1h": 37.0, "rsi_15m": 27.9, "ob_imb": 1.6, "tm_wr": 50.0, "tm_exp": 0.0, "timer_ok": false, "timer_triggers": 2, "timer_summary": "Vol Active (Z=+12.73) + L2 Bid (+1.6%) + RSI 15m estremo (28)", "vwap_15m": 0.06954124631547166, "risk_ok": true, "risk_status": "PASS (Rischio OK)", "rr_ratio": 1.64, "pos_usdt": 53.11, "entry_ok": false, "be_trigger": 0.06957486511426471, "tp1_trigger": 0.06980902325271493, "tp2_trigger": 0.07011008371643665}, {"code": "BTC", "name": "Bitcoin", "pionex": "BTC_USDT", "kraken": "XBTUSD", "ws": "XBT/USD", "price": 74098.72, "sl_price": 73431.83152, "tp_price": 75240.68806478892, "final_score": 4, "raw_100": 40, "ai_prob": 54.2, "prob_mlp": 46.8, "prob_knn": 75.4, "prob_mc": 36.6, "rsi_1h": 33.9, "rsi_15m": 33.7, "ob_imb": -6.2, "tm_wr": 60.0, "tm_exp": 0.14, "timer_ok": false, "timer_triggers": 1, "timer_summary": "Vol Active (Z=+2.01)", "vwap_15m": 74680.65674458497, "risk_ok": true, "risk_status": "PASS (Rischio OK)", "rr_ratio": 1.44, "pos_usdt": 53.11, "entry_ok": false, "be_trigger": 74532.197512, "tp1_trigger": 74765.60848, "tp2_trigger": 75065.708296}, {"code": "XRP", "name": "Ripple", "pionex": "XRP_USDT", "kraken": "XRPUSD", "ws": "XRP/USD", "price": 1.0654, "sl_price": 1.0496342410376818, "tp_price": 1.0920349999999999, "final_score": 4, "raw_100": 38, "ai_prob": 50.3, "prob_mlp": 50.0, "prob_knn": 70.4, "prob_mc": 22.6, "rsi_1h": 29.5, "rsi_15m": 23.4, "ob_imb": -3.1, "tm_wr": 50.0, "tm_exp": 0.02, "timer_ok": false, "timer_triggers": 1, "timer_summary": "Vol Active (Z=+8.52) + RSI 15m estremo (23)", "vwap_15m": 1.0874005615201299, "risk_ok": true, "risk_status": "PASS (Rischio OK)", "rr_ratio": 1.52, "pos_usdt": 53.09, "entry_ok": false, "be_trigger": 1.0756477433255067, "tp1_trigger": 1.081165758962318, "tp2_trigger": 1.0882603504953612}, {"code": "LINK", "name": "Chainlink", "pionex": "LINK_USDT", "kraken": "LINKUSD", "ws": "LINK/USD", "price": 10.47, "sl_price": 10.342147187690346, "tp_price": 10.714587988766297, "final_score": 3, "raw_100": 33, "ai_prob": 53.3, "prob_mlp": 50.0, "prob_knn": 68.4, "prob_mc": 37.3, "rsi_1h": 34.8, "rsi_15m": 36.4, "ob_imb": -40.9, "tm_wr": 40.0, "tm_exp": -0.31, "timer_ok": false, "timer_triggers": 1, "timer_summary": "Vol Active (Z=+5.05)", "vwap_15m": 10.57567765460643, "risk_ok": true, "risk_status": "PASS (Rischio OK)", "rr_ratio": 1.69, "pos_usdt": 53.11, "entry_ok": false, "be_trigger": 10.553104328001277, "tp1_trigger": 10.597852812309656, "tp2_trigger": 10.655386577849}, {"code": "ETH", "name": "Ethereum", "pionex": "ETH_USDT", "kraken": "ETHUSD", "ws": "ETH/USD", "price": 2077.74, "sl_price": 2047.5679021367034, "tp_price": 2129.6834999999996, "final_score": 3, "raw_100": 32, "ai_prob": 45.7, "prob_mlp": 50.0, "prob_knn": 49.9, "prob_mc": 32.9, "rsi_1h": 26.0, "rsi_15m": 27.7, "ob_imb": -35.1, "tm_wr": 50.0, "tm_exp": -0.09, "timer_ok": false, "timer_triggers": 1, "timer_summary": "Vol Active (Z=+6.28) + RSI 15m estremo (28)", "vwap_15m": 2107.6630409256427, "risk_ok": true, "risk_status": "PASS (Rischio OK)", "rr_ratio": 1.55, "pos_usdt": 53.11, "entry_ok": false, "be_trigger": 2097.3518636111426, "tp1_trigger": 2107.9120978632964, "tp2_trigger": 2121.4895419017794}], "limits": {"max_trades": 5, "daily_max_loss": 4.0, "fee_rt": 0.1}};
+const DATA = {"updated_at": "10/11/2026 15:15:35 UTC", "session": "🇺🇸 Sessione Wall Street Attiva (Alta Liquidita') | Ingressi: PRIME: overlap Londra/New York", "fng_val": 32, "fng_class": "Fear", "advisor": {"badge": "✅ MANTIENI POSIZIONE (HOLD)", "color": "#38bdf8", "bg": "rgba(56,189,248,0.14)", "instruction": "Posizione aperta su AVAX (PnL netto -0.41%). Mantieni attiva la protezione con Stop-Loss a $8.257 e Take-Profit a $8.589."}, "position": {"is_open": true, "coin_code": "AVAX", "symbol": "AVAX_USDT", "entry_price": 8.38, "amount_coin": 6.33, "invested_usdt": 53.11, "sl_price": 8.25741883252364, "tp_price": 8.5895, "initial_sl": 8.25741883252364, "one_r": 0.12258116747636016, "highest_price": 8.452, "breakeven_locked": false, "tp1_locked": false, "tp2_locked": false, "alerts_triggered": [], "opened_at": "10/11 14:35 UTC", "opened_ts": 1794321350, "mode": "SIMULATION", "order_id": "SIM", "last_check_ts": 1794323734, "close_fail_count": 0}, "stats": {"total_trades": 0, "wins": 0, "losses": 0, "total_pnl_pct": 0.0, "total_pnl_usdt": 0.0, "daily_date": "2026-11-10", "daily_pnl_pct": 0.0, "daily_trades": 1, "last_action": "APERTO LONG AVAX a $8.380 il 10/11 14:35 UTC", "daily_pnl_usdt": 0.0, "consec_losses": 0, "last_close_ts": 0, "last_loss_ts": 0, "coin_last_close": {}}, "history": [{"closed_at": "10/11/2026 11:26", "coin": "LINK", "entry": 10.6168, "exit": 10.4738, "pnl_usdt": -0.0, "pnl_pct": -0.69, "reason": "🎯 TAKE PROFIT GRIGLIA RAGGIUNTO su LINK (10.47$ >= 0.00$)"}], "coins": [{"code": "SOL", "name": "Solana", "pionex": "SOL_USDT", "kraken": "SOLUSD", "ws": "SOL/USD", "price": 84.49, "sl_price": 83.30770400773473, "tp_price": 86.95740033168403, "final_score": 7, "raw_100": 70, "ai_prob": 45.7, "prob_mlp": 50.0, "prob_knn": 46.3, "prob_mc": 38.1, "rsi_1h": 33.7, "rsi_15m": 45.9, "ob_imb": 12.2, "tm_wr": 50.0, "tm_exp": 0.01, "timer_ok": true, "timer_triggers": 4, "timer_summary": "VWAP Active + EMA20 15m Hold/Bounce + Vol Active (Z=+2.68) + L2 Bid (+12.2%)", "vwap_15m": 85.33729481933007, "risk_ok": true, "risk_status": "PASS (Rischio OK)", "rr_ratio": 1.88, "pos_usdt": 53.08, "entry_ok": false, "be_trigger": 85.25849239497242, "tp1_trigger": 85.67229599226526, "tp2_trigger": 85.96786999033158, "raw_min": 55, "atr_pct": 1.22}, {"code": "DOT", "name": "Polkadot", "pionex": "DOT_USDT", "kraken": "DOTUSD", "ws": "DOT/USD", "price": 0.864, "sl_price": 0.8530158616145979, "tp_price": 0.8869234192391, "final_score": 6, "raw_100": 65, "ai_prob": 45.9, "prob_mlp": 50.0, "prob_knn": 47.7, "prob_mc": 36.9, "rsi_1h": 52.7, "rsi_15m": 60.6, "ob_imb": 22.1, "tm_wr": 55.0, "tm_exp": 0.17, "timer_ok": true, "timer_triggers": 3, "timer_summary": "EMA20 15m Hold/Bounce + Vol Active (Z=+1.23) + L2 Bid (+22.1%)", "vwap_15m": 0.8623718230733375, "risk_ok": true, "risk_status": "PASS (Rischio OK)", "rr_ratio": 1.86, "pos_usdt": 53.08, "entry_ok": false, "be_trigger": 0.8711396899505114, "tp1_trigger": 0.8749841383854021, "tp2_trigger": 0.8777301729817526, "raw_min": 55, "atr_pct": 1.11}, {"code": "ETH", "name": "Ethereum", "pionex": "ETH_USDT", "kraken": "ETHUSD", "ws": "ETH/USD", "price": 2074.65, "sl_price": 2044.1354485184766, "tp_price": 2136.8895, "final_score": 6, "raw_100": 62, "ai_prob": 46.0, "prob_mlp": 50.0, "prob_knn": 46.4, "prob_mc": 39.1, "rsi_1h": 35.8, "rsi_15m": 40.7, "ob_imb": 13.0, "tm_wr": 50.0, "tm_exp": -0.2, "timer_ok": true, "timer_triggers": 2, "timer_summary": "Vol Active (Z=+0.96) + L2 Bid (+13.0%)", "vwap_15m": 2104.8905452659997, "risk_ok": true, "risk_status": "PASS (Rischio OK)", "rr_ratio": 1.85, "pos_usdt": 53.08, "entry_ok": false, "be_trigger": 2094.4844584629905, "tp1_trigger": 2105.1645514815236, "tp2_trigger": 2112.7931893519044, "raw_min": 55, "atr_pct": 1.28}, {"code": "BTC", "name": "Bitcoin", "pionex": "BTC_USDT", "kraken": "XBTUSD", "ws": "XBT/USD", "price": 74430.37, "sl_price": 73760.49667, "tp_price": 75546.82555, "final_score": 6, "raw_100": 59, "ai_prob": 45.9, "prob_mlp": 50.0, "prob_knn": 41.8, "prob_mc": 45.3, "rsi_1h": 45.9, "rsi_15m": 54.2, "ob_imb": -77.8, "tm_wr": 50.0, "tm_exp": 0.07, "timer_ok": true, "timer_triggers": 3, "timer_summary": "VWAP Active + EMA20 15m Hold/Bounce + Vol Active (Z=+2.03)", "vwap_15m": 74634.80052095439, "risk_ok": true, "risk_status": "PASS (Rischio OK)", "rr_ratio": 1.4, "pos_usdt": 53.08, "entry_ok": false, "be_trigger": 74865.78766449999, "tp1_trigger": 75100.24333, "tp2_trigger": 75267.71166249999, "raw_min": 55, "atr_pct": 0.74}, {"code": "ADA", "name": "Cardano", "pionex": "ADA_USDT", "kraken": "ADAUSD", "ws": "ADA/USD", "price": 0.1774, "sl_price": 0.17532392591885293, "tp_price": 0.18173267634326343, "final_score": 6, "raw_100": 59, "ai_prob": 45.4, "prob_mlp": 50.0, "prob_knn": 44.6, "prob_mc": 39.3, "rsi_1h": 47.0, "rsi_15m": 50.3, "ob_imb": -11.8, "tm_wr": 35.0, "tm_exp": -0.25, "timer_ok": true, "timer_triggers": 3, "timer_summary": "VWAP Active + EMA20 15m Hold/Bounce + Vol Active (Z=+0.53)", "vwap_15m": 0.17765870438620318, "risk_ok": true, "risk_status": "PASS (Rischio OK)", "rr_ratio": 1.84, "pos_usdt": 53.08, "entry_ok": false, "be_trigger": 0.1787494481527456, "tp1_trigger": 0.17947607408114707, "tp2_trigger": 0.17999509260143384, "raw_min": 55, "atr_pct": 1.02}, {"code": "LINK", "name": "Chainlink", "pionex": "LINK_USDT", "kraken": "LINKUSD", "ws": "LINK/USD", "price": 10.5, "sl_price": 10.363043229331632, "tp_price": 10.785822825742681, "final_score": 6, "raw_100": 59, "ai_prob": 42.1, "prob_mlp": 50.0, "prob_knn": 32.9, "prob_mc": 42.5, "rsi_1h": 46.0, "rsi_15m": 52.0, "ob_imb": -3.9, "tm_wr": 25.0, "tm_exp": -0.41, "timer_ok": true, "timer_triggers": 3, "timer_summary": "VWAP Active + EMA20 15m Hold/Bounce + Vol Active (Z=+2.14)", "vwap_15m": 10.562980581978028, "risk_ok": true, "risk_status": "PASS (Rischio OK)", "rr_ratio": 1.87, "pos_usdt": 53.08, "entry_ok": false, "be_trigger": 10.589021900934439, "tp1_trigger": 10.636956770668368, "tp2_trigger": 10.67119596333546, "raw_min": 55, "atr_pct": 1.13}, {"code": "AVAX", "name": "Avalanche", "pionex": "AVAX_USDT", "kraken": "AVAXUSD", "ws": "AVAX/USD", "price": 8.36, "sl_price": 8.229842988187155, "tp_price": 8.6108, "final_score": 6, "raw_100": 59, "ai_prob": 49.5, "prob_mlp": 50.0, "prob_knn": 51.6, "prob_mc": 46.0, "rsi_1h": 46.9, "rsi_15m": 48.4, "ob_imb": 0.8, "tm_wr": 65.0, "tm_exp": 0.17, "timer_ok": false, "timer_triggers": 1, "timer_summary": "Vol Active (Z=+0.05)", "vwap_15m": 8.596720957192831, "risk_ok": true, "risk_status": "PASS (Rischio OK)", "rr_ratio": 1.75, "pos_usdt": 50.59, "entry_ok": false, "be_trigger": 8.444602057678349, "tp1_trigger": 8.490157011812844, "tp2_trigger": 8.522696264766054, "raw_min": 55, "atr_pct": 1.35}, {"code": "SUI", "name": "Sui", "pionex": "SUI_USDT", "kraken": "SUIUSD", "ws": "SUI/USD", "price": 0.8368, "sl_price": 0.8251993217259159, "tp_price": 0.861010111180697, "final_score": 5, "raw_100": 53, "ai_prob": 42.9, "prob_mlp": 50.0, "prob_knn": 34.8, "prob_mc": 42.8, "rsi_1h": 47.7, "rsi_15m": 52.7, "ob_imb": -1.9, "tm_wr": 20.0, "tm_exp": -0.43, "timer_ok": false, "timer_triggers": 1, "timer_summary": "Vol Active (Z=+0.88)", "vwap_15m": 0.8414554421521402, "risk_ok": true, "risk_status": "PASS (Rischio OK)", "rr_ratio": 1.88, "pos_usdt": 53.08, "entry_ok": false, "be_trigger": 0.8443404408781546, "tp1_trigger": 0.848400678274084, "tp2_trigger": 0.8513008478426051, "raw_min": 55, "atr_pct": 1.21}, {"code": "XRP", "name": "Ripple", "pionex": "XRP_USDT", "kraken": "XRPUSD", "ws": "XRP/USD", "price": 1.061, "sl_price": 1.0453919837694772, "tp_price": 1.09283, "final_score": 5, "raw_100": 47, "ai_prob": 46.7, "prob_mlp": 50.0, "prob_knn": 57.8, "prob_mc": 25.8, "rsi_1h": 29.4, "rsi_15m": 32.6, "ob_imb": 3.3, "tm_wr": 50.0, "tm_exp": -0.02, "timer_ok": true, "timer_triggers": 2, "timer_summary": "Vol Active (Z=+2.32) + L2 Bid (+3.3%)", "vwap_15m": 1.0856694933269366, "risk_ok": true, "risk_status": "PASS (Rischio OK)", "rr_ratio": 1.85, "pos_usdt": 53.08, "entry_ok": false, "be_trigger": 1.0711452105498398, "tp1_trigger": 1.0766080162305227, "tp2_trigger": 1.0805100202881535, "raw_min": 55, "atr_pct": 1.32}, {"code": "DOGE", "name": "Dogecoin", "pionex": "DOGE_USDT", "kraken": "XDGUSD", "ws": "XDG/USD", "price": 0.06927, "sl_price": 0.06855256318098038, "tp_price": 0.0706578012, "final_score": 4, "raw_100": 45, "ai_prob": 42.9, "prob_mlp": 50.0, "prob_knn": 36.1, "prob_mc": 41.3, "rsi_1h": 45.1, "rsi_15m": 47.7, "ob_imb": -13.9, "tm_wr": 35.0, "tm_exp": -0.19, "timer_ok": false, "timer_triggers": 1, "timer_summary": "Vol Active (Z=+0.37)", "vwap_15m": 0.06951899917914274, "risk_ok": true, "risk_status": "PASS (Rischio OK)", "rr_ratio": 1.68, "pos_usdt": 53.08, "entry_ok": false, "be_trigger": 0.06973633393236275, "tp1_trigger": 0.06998743681901962, "tp2_trigger": 0.07016679602377451, "raw_min": 55, "atr_pct": 0.9}], "regime": "Risk-on: BTC +0.24% su 4h", "entry_window": "PRIME: overlap Londra/New York", "limits": {"max_trades": 4, "daily_max_loss": 3.5, "fee_rt": 0.1}};
 const livePrices = {};
 const wsMap = {};
 DATA.coins.forEach(c => { livePrices[c.code] = c.price; wsMap[c.ws] = c.code; });
 let selectedCoinCode = DATA.position.is_open ? DATA.position.coin_code : DATA.coins[0].code;
-
 function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, m => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m])); }
-
 function fmtPrice(p) {
   p = Number(p || 0);
   if (p <= 0) return "$0.00";
@@ -114,7 +105,6 @@ function fmtPrice(p) {
   if (p >= 1) return "$" + p.toFixed(3);
   return "$" + p.toFixed(4);
 }
-
 function renderAdvisor() {
   const box = document.getElementById("advisor-box");
   box.style.background = DATA.advisor.bg;
@@ -127,7 +117,6 @@ function renderAdvisor() {
   document.getElementById("session-label").textContent = DATA.session;
   document.getElementById("fng-badge").textContent = "Fear & Greed: " + DATA.fng_val + " (" + DATA.fng_class + ")";
 }
-
 function renderOpenPosition() {
   const pos = DATA.position;
   const pill = document.getElementById("pos-status-pill");
@@ -135,7 +124,8 @@ function renderOpenPosition() {
   if (!pos.is_open) {
     pill.className = "pill pill-amber";
     pill.textContent = "FLAT (100% USDT)";
-    container.innerHTML = `<div style="padding:18px 4px; text-align:center; color:var(--muted); font-size:13.5px;">Nessuna posizione aperta al momento.<br><span style="color:#e2e8f0; font-weight:600; display:block; margin-top:6px;">Il capitale e' protetto in USDT in attesa di un segnale Fast-Scalp.</span></div>`;
+    container.innerHTML = `<div style="padding:18px 4px; text-align:center; color:var(--muted); font-size:13.5px;">Nessuna posizione aperta al momento.
+<span style="color:#e2e8f0; font-weight:600; display:block; margin-top:6px;">Il capitale e' protetto in USDT in attesa di un segnale Fast-Scalp.</span></div>`;
     return;
   }
   const code = pos.coin_code;
@@ -167,10 +157,9 @@ function renderOpenPosition() {
     </div>
     <div class="stat-row"><span>Prezzo Ingresso (Aperta il ${esc(pos.opened_at)})</span><span class="val-bold">${fmtPrice(entry)}</span></div>
     <div class="stat-row"><span>Capitale Investito / Quantita'</span><span class="val-bold">${pos.invested_usdt.toFixed(2)} USDT (${pos.amount_coin} ${esc(code)})</span></div>
-    <div class="stat-row"><span>Stato Protezione Trailing</span><span class="val-bold">${pos.tp2_locked ? "🚀 +1.45R Locked" : (pos.tp1_locked ? "🔒 +1R Locked" : (pos.breakeven_locked ? "🛡️ Break-Even Netto" : "Iniziale"))}</span></div>
+    <div class="stat-row"><span>Stato Protezione Trailing</span><span class="val-bold">${pos.tp2_locked ? "🚀 +1.25R Locked" : (pos.tp1_locked ? "🔒 +1R Locked" : (pos.breakeven_locked ? "🛡️ Break-Even Netto" : "Iniziale"))}</span></div>
     <div class="stat-row"><span>Indicazione Operativa</span><span class="val-bold" style="color:var(--accent);">${manualPosAdvice}</span></div>`;
 }
-
 function renderPortfolioStats() {
   const s = DATA.stats;
   const wr = s.total_trades > 0 ? ((s.wins / s.total_trades) * 100).toFixed(1) + "%" : "N/A";
@@ -181,9 +170,10 @@ function renderPortfolioStats() {
     <div class="stat-row"><span>Win Rate Reale</span><span class="val-bold">${wr}</span></div>
     <div class="stat-row"><span>PnL Netto Cumulato</span><span class="val-bold" style="color:${pnlColor};">${s.total_pnl_pct >= 0 ? "+" : ""}${s.total_pnl_pct.toFixed(2)}% (${s.total_pnl_usdt >= 0 ? "+" : ""}${s.total_pnl_usdt.toFixed(2)} USDT)</span></div>
     <div class="stat-row"><span>PnL Giornaliero (stop a -${DATA.limits.daily_max_loss}% del capitale)</span><span class="val-bold" style="color:${dailyColor};">${(s.daily_pnl_pct || 0) >= 0 ? "+" : ""}${(s.daily_pnl_pct || 0).toFixed(2)}% (${s.daily_trades || 0}/${DATA.limits.max_trades} trade oggi)</span></div>
+    <div class="stat-row"><span>Finestra di ingresso</span><span class="val-bold" style="font-size:12px;">${esc(DATA.entry_window)}</span></div>
+    <div class="stat-row"><span>Regime di mercato (BTC)</span><span class="val-bold" style="font-size:12px;">${esc(DATA.regime)}</span></div>
     <div class="stat-row"><span>Ultima Azione Bot</span><span class="val-bold" style="font-size:12px;">${esc(s.last_action)}</span></div>`;
 }
-
 function renderScannerTable() {
   const tbody = document.getElementById("scanner-tbody");
   tbody.innerHTML = "";
@@ -204,13 +194,12 @@ function renderScannerTable() {
     tr.innerHTML = `
       <td><strong>${esc(c.code)}</strong> <span style="color:var(--muted); font-size:11px;">${esc(c.name)}</span></td>
       <td id="price-cell-${c.code}" class="val-bold">${fmtPrice(cur)}</td>
-      <td><span class="pill ${scoreClass}">${c.final_score}/10 (${c.raw_100})</span></td>
+      <td><span class="pill ${scoreClass}">${c.final_score}/10 (${c.raw_100}/${c.raw_min})</span></td>
       <td class="val-bold">${c.ai_prob}%</td><td>${timerBadge}</td><td>${riskBadge}</td>
       <td style="font-weight:700; color:${adviceColor};">${manualAdvice}</td>`;
     tbody.appendChild(tr);
   });
 }
-
 function renderCoinDetail() {
   const c = DATA.coins.find(x => x.code === selectedCoinCode) || DATA.coins[0];
   const cur = livePrices[c.code] || c.price;
@@ -223,18 +212,18 @@ function renderCoinDetail() {
         <div class="stat-row"><span>Budget a rischio fisso</span><span class="val-bold">${c.pos_usdt.toFixed(2)} USDT</span></div>
         <div class="stat-row"><span>Stop-Loss Iniziale</span><span class="val-bold" style="color:var(--red);">${fmtPrice(c.sl_price)}</span></div>
         <div class="stat-row"><span>Take-Profit Target</span><span class="val-bold" style="color:var(--green);">${fmtPrice(c.tp_price)}</span></div>
-        <div class="stat-row"><span>Livelli Profit-Lock (BE / +1R / +1.45R)</span><span class="val-bold">${fmtPrice(c.be_trigger)} / ${fmtPrice(c.tp1_trigger)} / ${fmtPrice(c.tp2_trigger)}</span></div>
+        <div class="stat-row"><span>Livelli Profit-Lock (BE / +1R / +1.25R)</span><span class="val-bold">${fmtPrice(c.be_trigger)} / ${fmtPrice(c.tp1_trigger)} / ${fmtPrice(c.tp2_trigger)}</span></div>
       </div>
       <div>
         <div class="stat-row"><span>Reti Neurali (MLP / k-NN / MonteCarlo)</span><span class="val-bold">${c.prob_mlp}% / ${c.prob_knn}% / ${c.prob_mc}%</span></div>
         <div class="stat-row"><span>Time Machine (20 pattern simili)</span><span class="val-bold">WinRate ${c.tm_wr}% (${c.tm_exp >= 0 ? "+" : ""}${c.tm_exp}R)</span></div>
         <div class="stat-row"><span>RSI 1H / RSI 15m / Orderbook L2</span><span class="val-bold">${c.rsi_1h} / ${c.rsi_15m} / ${c.ob_imb >= 0 ? "+" : ""}${c.ob_imb}%</span></div>
+        <div class="stat-row"><span>Volatilita' ATR 1h</span><span class="val-bold">${c.atr_pct}%</span></div>
         <div class="stat-row"><span>Dettaglio Entry Timer 15m</span><span class="val-bold">${esc(c.timer_summary)}</span></div>
         <div class="stat-row"><span>Stato Risk Manager</span><span class="val-bold">${esc(c.risk_status)}</span></div>
       </div>
     </div>`;
 }
-
 function renderHistoryTable() {
   const hist = DATA.history || [];
   document.getElementById("history-count").textContent = hist.length + " operazioni registrate";
@@ -253,7 +242,6 @@ function renderHistoryTable() {
       <td>${esc(h.reason)}</td></tr>`;
   }).join("");
 }
-
 function updateLivePrice(code, newPrice) {
   if (!newPrice || newPrice <= 0) return;
   const oldPrice = livePrices[code] || newPrice;
@@ -267,7 +255,6 @@ function updateLivePrice(code, newPrice) {
   if (DATA.position.is_open && DATA.position.coin_code === code) renderOpenPosition();
   if (selectedCoinCode === code) renderCoinDetail();
 }
-
 function connectKrakenWebSocket() {
   try {
     const ws = new WebSocket("wss://ws.kraken.com");
@@ -287,7 +274,6 @@ function connectKrakenWebSocket() {
     ws.onclose = () => { setTimeout(connectKrakenWebSocket, 5000); };
   } catch (e) { console.warn("WS error:", e); }
 }
-
 async function forcePollKraken() {
   try {
     const pairs = DATA.coins.map(c => c.kraken).join(",");
@@ -303,10 +289,9 @@ async function forcePollKraken() {
     }
   } catch (e) { console.warn("Poll error:", e); }
 }
-
 renderAdvisor(); renderOpenPosition(); renderPortfolioStats(); renderScannerTable(); renderCoinDetail(); renderHistoryTable();
 connectKrakenWebSocket();
 setInterval(forcePollKraken, 8000);
-</script>
+<\/script>
 </body>
 </html>
