@@ -1,8 +1,3 @@
-"""
-Pionex Fast-Scalp AI Engine v8.0
-- Esecuzione ogni 30 min nelle ore migliori (vedi workflow), max 5 trade/giorno.
-- Modalita' LIVE solo se: chiavi Pionex presenti E AUTO_TRADE_ENABLED=true (altrimenti SIMULAZIONE).
-"""
 import os
 import re
 import json
@@ -19,11 +14,9 @@ from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import urlencode
-
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
-
 
 # ==============================================================================
 # CONFIGURAZIONE
@@ -31,7 +24,6 @@ from urllib3.util.retry import Retry
 def _env(name, default):
     v = os.getenv(name)
     return v.strip() if v is not None and v.strip() != "" else str(default)
-
 
 TELEGRAM_TOKEN = (
     os.getenv("TELEGRAM_TOKEN") or os.getenv("TELEGRAM_BOT_TOKEN")
@@ -43,39 +35,46 @@ TELEGRAM_CHAT_ID = (
 PIONEX_API_KEY = (os.getenv("PIONEX_API_KEY") or os.getenv("API_KEY") or "").strip()
 PIONEX_API_SECRET = (os.getenv("PIONEX_API_SECRET") or os.getenv("API_SECRET") or "").strip()
 GITHUB_EVENT_NAME = _env("GITHUB_EVENT_NAME", "manual")
-
 INVEST_EUR = float(_env("INVEST_EUR", 50.0))
 # SICUREZZA: default FALSE. Il trading reale parte solo con AUTO_TRADE_ENABLED=true esplicito.
 AUTO_TRADE_ENABLED = _env("AUTO_TRADE_ENABLED", "false").lower() == "true"
 
 # Ingressi / rischio
 Entry_Score_Min = 6
-Entry_Raw_100_Min = 58
+Entry_Raw_100_Min = int(_env("ENTRY_RAW_MIN", 57))            # soglia base (adattiva in base a sessione e trade del giorno)
+Entry_Raw_100_Floor = 55                                      # mai sotto questa soglia
+MIN_AI_PROB = float(_env("MIN_AI_PROB", 0.52))
 RISK_PER_TRADE_PCT = float(_env("RISK_PER_TRADE_PCT", 1.5))   # % del capitale rischiato per trade
-DAILY_MAX_LOSS_PCT = float(_env("DAILY_MAX_LOSS_PCT", 4.0))   # % del CAPITALE (non somma di % per-trade)
-MAX_TRADES_PER_DAY = int(_env("MAX_TRADES_PER_DAY", 5))
-MAX_CONSEC_LOSSES = int(_env("MAX_CONSEC_LOSSES", 3))
-MIN_REWARD_RISK_R = 1.15          # R:R NETTO di commissioni (~1.25 lordo)
+DAILY_MAX_LOSS_PCT = float(_env("DAILY_MAX_LOSS_PCT", 3.5))   # % del CAPITALE
+DAILY_PROFIT_LOCK_PCT = float(_env("DAILY_PROFIT_LOCK_PCT", 4.5))  # a +4.5% del capitale si smette per oggi
+MAX_TRADES_PER_DAY = int(_env("MAX_TRADES_PER_DAY", 4))
+TARGET_TRADES_PER_DAY = int(_env("TARGET_TRADES_PER_DAY", 3))
+MAX_CONSEC_LOSSES = int(_env("MAX_CONSEC_LOSSES", 2))
+MIN_REWARD_RISK_R = 1.15          # R:R NETTO di commissioni
 CASH_BUFFER_PCT = 5.0
 MIN_ORDER_USDT = float(_env("MIN_ORDER_USDT", 10.5))
 FEE_PCT_PER_SIDE = float(_env("FEE_PCT_PER_SIDE", 0.05))      # verifica sul tuo account Pionex
 PIONEX_FEE_ROUNDTRIP_PCT = 2.0 * FEE_PCT_PER_SIDE
-SCALP_MIN_NET_PROFIT_PCT = 0.65
-TIME_STOP_PROFIT_HOURS = 4.5
-TIME_STOP_STALE_HOURS = 6.0
+SCALP_MIN_NET_PROFIT_PCT = 0.70
+TIME_STOP_PROFIT_HOURS = 3.5
+TIME_STOP_STALE_HOURS = 5.0
 
-# Finestra operativa (UTC): nuovi ingressi solo qui. Copre Londra + Wall Street (ora legale e solare).
-ENTRY_START_UTC = int(_env("ENTRY_START_UTC", 7))
-ENTRY_END_UTC = int(_env("ENTRY_END_UTC", 21))
-MIN_MINUTES_BETWEEN_TRADES = int(_env("MIN_MINUTES_BETWEEN_TRADES", 60))
-COOLDOWN_AFTER_LOSS_MIN = int(_env("COOLDOWN_AFTER_LOSS_MIN", 150))
-SAME_COIN_COOLDOWN_H = float(_env("SAME_COIN_COOLDOWN_H", 6.0))
+# Filtri di qualita' del setup
+MAX_SPREAD_BPS = float(_env("MAX_SPREAD_BPS", 12.0))
+ATR_PCT_MIN = float(_env("ATR_PCT_MIN", 0.50))   # sotto: il TP (>=1.5%) e' poco raggiungibile
+ATR_PCT_MAX = float(_env("ATR_PCT_MAX", 3.50))   # sopra: mercato troppo nervoso
+BTC_REGIME_MAX_DROP_4H = float(_env("BTC_REGIME_MAX_DROP_4H", 1.3))  # % di calo BTC su 4h che blocca i long
 
+# Sessioni operative (calcolate con fusi reali: Londra e New York gestiscono ora legale/solare)
+ALLOW_WEEKEND = _env("ALLOW_WEEKEND", "false").lower() == "true"
+MIN_MINUTES_BETWEEN_TRADES = int(_env("MIN_MINUTES_BETWEEN_TRADES", 45))
+COOLDOWN_AFTER_LOSS_MIN = int(_env("COOLDOWN_AFTER_LOSS_MIN", 90))
+SAME_COIN_COOLDOWN_H = float(_env("SAME_COIN_COOLDOWN_H", 3.0))
 STATE_FILE = "bot_state.json"
 WEBAPP_FILE = "index.html"
 HTTP_TIMEOUT = 12
 PIONEX_BASE = "https://api.pionex.com"
-HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; PionexAutonomousQuantBot/8.0)"}
+HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; PionexAutonomousQuantBot/9.0)"}
 
 COINS = [
     {"code": "SOL",  "name": "Solana",    "kraken": "SOLUSD",  "ws": "SOL/USD",  "futures": "PF_SOLUSD",  "pionex": "SOL_USDT",  "prec": 3},
@@ -92,12 +91,10 @@ COINS = [
 COIN_MAP = {c["code"]: c for c in COINS}
 LIVE_PX = {}  # prezzi live Pionex (symbol -> last)
 
-
 # ==============================================================================
 # 1. UTILITA' (log con redazione segreti, sessione HTTP con retry, throttle Kraken)
 # ==============================================================================
 _SECRETS = [s for s in (TELEGRAM_TOKEN, PIONEX_API_KEY, PIONEX_API_SECRET) if s]
-
 
 def redact(text):
     t = str(text)
@@ -105,10 +102,8 @@ def redact(text):
         t = t.replace(s, "***")
     return t
 
-
 def log(level, msg):
     print(f"[{level}] {redact(msg)}", flush=True)
-
 
 def _build_session():
     s = requests.Session()
@@ -121,11 +116,9 @@ def _build_session():
     s.headers.update(HEADERS)
     return s
 
-
 SESSION = _build_session()
 _KRAKEN_LOCK = threading.Lock()
 _KRAKEN_LAST = [0.0]
-
 
 def kraken_throttle(min_gap=0.40):
     with _KRAKEN_LOCK:
@@ -133,7 +126,6 @@ def kraken_throttle(min_gap=0.40):
         if wait > 0:
             time.sleep(wait)
         _KRAKEN_LAST[0] = time.monotonic()
-
 
 def safe_get_json(url, params=None, retries=2):
     is_kraken = "api.kraken.com" in url
@@ -155,15 +147,12 @@ def safe_get_json(url, params=None, retries=2):
                 log("WARN", f"JSON fetch error ({url}): {e}")
     return None
 
-
 def clamp(val, low, high):
     return max(low, min(high, val))
-
 
 def sigmoid(x):
     x = clamp(x, -20.0, 20.0)
     return 1.0 / (1.0 + math.exp(-x))
-
 
 def fmt_price(p):
     if p <= 0:
@@ -176,16 +165,59 @@ def fmt_price(p):
         return f"${p:.3f}"
     return f"${p:.4f}"
 
-
 def floor_to_scale(x, scale):
     f = 10 ** int(scale)
     return math.floor(x * f + 1e-9) / f
-
 
 def fmt_qty(x, scale):
     s = f"{x:.{int(scale)}f}"
     return s.rstrip("0").rstrip(".") if "." in s else s
 
+# ==============================================================================
+# 1b. SESSIONI DI MERCATO (orari migliori) E REGIME
+# ==============================================================================
+def entry_session(now=None):
+    """Valuta se ora e' una buona finestra per NUOVI ingressi.
+    quality 2 = PRIME  : New York 08:30-12:30 locale (overlap con Londra, dati USA, apertura Wall Street)
+    quality 1 = BUONA  : Londra 08:00-11:00 locale oppure New York 12:30-15:30 locale
+    quality 0 = niente nuovi ingressi (pausa pranzo, notte asiatica, weekend)."""
+    now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    if now.weekday() >= 5 and not ALLOW_WEEKEND:
+        return {"allowed": False, "quality": 0, "label": "Weekend: liquidita' ridotta, nessun nuovo ingresso"}
+    lon = now.astimezone(ZoneInfo("Europe/London"))
+    ny = now.astimezone(ZoneInfo("America/New_York"))
+    lm = lon.hour * 60 + lon.minute
+    nm = ny.hour * 60 + ny.minute
+    if 8 * 60 + 30 <= nm < 12 * 60 + 30:
+        return {"allowed": True, "quality": 2, "label": "PRIME: overlap Londra/New York"}
+    if 8 * 60 <= lm < 11 * 60:
+        return {"allowed": True, "quality": 1, "label": "Buona: apertura Londra"}
+    if 12 * 60 + 30 <= nm < 15 * 60 + 30:
+        return {"allowed": True, "quality": 1, "label": "Buona: pomeriggio Wall Street"}
+    return {"allowed": False, "quality": 0, "label": "Fuori dalle sessioni migliori (Londra/New York)"}
+
+def required_raw_min(stats, sess):
+    """Soglia di ingresso adattiva: piu' severa fuori dalle sessioni prime, leggermente piu' morbida
+    in sessione prime se oggi si e' operato poco (obiettivo 3-4 trade/giorno senza forzare setup deboli)."""
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    done = stats.get("daily_trades", 0) if stats.get("daily_date") == today else 0
+    thr = Entry_Raw_100_Min
+    if sess["quality"] < 2:
+        thr += 3
+    elif done < max(1, TARGET_TRADES_PER_DAY - 1):
+        thr -= 2
+    return int(max(Entry_Raw_100_Floor, thr))
+
+def market_regime(all_evals):
+    """Filtro di regime: niente long sulle alt se BTC e' in debolezza (risk-off)."""
+    btc = all_evals.get("BTC")
+    if not btc or btc.get("fallback") or not btc.get("ema50_1h"):
+        return True, "BTC n/d (filtro neutro)"
+    below = btc["price"] < btc["ema50_1h"] * 0.992
+    drop = btc.get("ret_4h_pct", 0.0) <= -BTC_REGIME_MAX_DROP_4H
+    if below or drop:
+        return False, f"RISK-OFF: BTC {btc.get('ret_4h_pct', 0.0):+.2f}% su 4h, {'sotto' if below else 'sopra'} EMA50 1h"
+    return True, f"Risk-on: BTC {btc.get('ret_4h_pct', 0.0):+.2f}% su 4h"
 
 # ==============================================================================
 # 2. MEMORIA PERSISTENTE
@@ -222,7 +254,6 @@ def load_state():
             log("WARN", f"Impossibile leggere {STATE_FILE}: {e}")
     return default_state
 
-
 def save_state(state):
     try:
         tmp = STATE_FILE + ".tmp"
@@ -232,13 +263,11 @@ def save_state(state):
     except Exception as e:
         log("ERROR", f"Salvataggio {STATE_FILE} fallito: {e}")
 
-
 # ==============================================================================
 # 3. CLIENT PIONEX (firma HMAC-SHA256 con query ordinata, saldi, regole simbolo)
 # ==============================================================================
 def pionex_live_enabled():
     return bool(PIONEX_API_KEY and PIONEX_API_SECRET and AUTO_TRADE_ENABLED)
-
 
 def pionex_request(method, path, params=None, body=None, timeout=HTTP_TIMEOUT):
     """Richiesta firmata: METHOD + PATH + '?' + query ordinata (con timestamp) + body JSON compatto."""
@@ -258,14 +287,12 @@ def pionex_request(method, path, params=None, body=None, timeout=HTTP_TIMEOUT):
             return {"ok": False, "msg": f"HTTP {r.status_code} risposta non JSON", "data": None}
     except Exception as e:
         return {"ok": False, "msg": f"Errore connessione Pionex: {redact(e)}", "data": None, "network_error": True}
-
     # Pionex puo' rispondere HTTP 200 con result=false; alcune risposte hanno 'code' senza 'result'.
     failed = (rj.get("result") is False) or ("result" not in rj and "code" in rj)
     if r.status_code != 200 or failed:
         txt = f"{rj.get('code', '')} {rj.get('message', rj.get('reason', ''))}".strip()
         return {"ok": False, "msg": txt or f"HTTP {r.status_code}", "data": rj.get("data")}
     return {"ok": True, "msg": "OK", "data": rj.get("data")}
-
 
 def pionex_get_balances():
     r = pionex_request("GET", "/api/v1/account/balances")
@@ -279,7 +306,6 @@ def pionex_get_balances():
         except Exception:
             continue
     return out
-
 
 def pionex_symbol_rules(symbol):
     default = {"min_amount": 10.0, "min_qty": 0.0, "base_scale": 4, "ok": False}
@@ -298,7 +324,6 @@ def pionex_symbol_rules(symbol):
     except Exception:
         return default
 
-
 def fetch_pionex_prices():
     j = safe_get_json(f"{PIONEX_BASE}/api/v1/market/tickers")
     out = {}
@@ -310,7 +335,6 @@ def fetch_pionex_prices():
     except Exception:
         pass
     return out
-
 
 def pionex_place_market_order(symbol, side, size=None, amount=None):
     body = {"symbol": symbol, "side": side.upper(), "type": "MARKET",
@@ -325,7 +349,6 @@ def pionex_place_market_order(symbol, side, size=None, amount=None):
         return {"ok": True, "order_id": oid, "msg": f"Ordine Pionex ID {oid}"}
     return {"ok": False, "order_id": "", "msg": f"Rifiuto/errore Pionex: {r['msg']}"}
 
-
 def live_buy(coin_cfg, usdt, price):
     """Acquisto con riconciliazione dei saldi: entry/quantita' REALI, non stimate."""
     sym, base = coin_cfg["pionex"], coin_cfg["code"]
@@ -333,7 +356,6 @@ def live_buy(coin_cfg, usdt, price):
         amount = floor_to_scale(usdt / price * (1 - FEE_PCT_PER_SIDE / 100.0), max(coin_cfg["prec"], 2))
         return {"ok": True, "mode": "SIMULATION", "entry_price": price, "amount_coin": amount,
                 "invested_usdt": usdt, "order_id": "SIM", "msg": "Simulazione (nessun ordine reale)"}
-
     rules = pionex_symbol_rules(sym)
     bal0 = pionex_get_balances()
     if bal0 is None:
@@ -343,10 +365,8 @@ def live_buy(coin_cfg, usdt, price):
         usdt = floor_to_scale(usdt_free * 0.995, 2)
     if usdt < max(rules["min_amount"], MIN_ORDER_USDT):
         return {"ok": False, "mode": "LIVE_ERROR", "msg": f"USDT liberi insufficienti ({usdt_free:.2f}) / minimo ordine"}
-
     res = pionex_place_market_order(sym, "BUY", amount=usdt)
     base0 = bal0.get(base, {}).get("free", 0.0)
-
     base_delta, spent, bal1 = 0.0, 0.0, None
     for _ in range(2):  # riconcilia anche se la risposta e' ambigua (timeout di rete)
         time.sleep(2.0)
@@ -356,14 +376,12 @@ def live_buy(coin_cfg, usdt, price):
             spent = bal0.get("USDT", {}).get("free", 0.0) - bal1.get("USDT", {}).get("free", 0.0)
             if base_delta * price >= 0.5 * usdt:
                 break
-
     filled = base_delta * price >= 0.5 * usdt
     if not filled and res["ok"] and bal1 is None:  # ordine accettato ma saldi illeggibili: stima prudente
         base_delta = usdt / price * (1 - FEE_PCT_PER_SIDE / 100.0)
         spent, filled = usdt, True
     if not filled:
         return {"ok": False, "mode": "LIVE_ERROR", "msg": res["msg"] if not res["ok"] else "Ordine non risulta eseguito"}
-
     if spent <= 0:
         spent = usdt
     gross = base_delta / (1 - FEE_PCT_PER_SIDE / 100.0)
@@ -373,7 +391,6 @@ def live_buy(coin_cfg, usdt, price):
             "invested_usdt": spent, "order_id": res["order_id"] or "RECONCILED",
             "msg": f"{res['msg']} | fill reale {amount} {base} per {spent:.2f} USDT"}
 
-
 def live_sell(pos, coin_cfg, price):
     """Vendita con quantita' limitata al saldo reale. Se fallisce NON si chiude la posizione nello stato."""
     base, sym = coin_cfg["code"], coin_cfg["pionex"]
@@ -381,7 +398,6 @@ def live_sell(pos, coin_cfg, price):
     if pos.get("mode") != "LIVE_PIONEX" or not pionex_live_enabled():
         proceeds = pos["amount_coin"] * price * (1 - FEE_PCT_PER_SIDE / 100.0)
         return {"ok": True, "exit_price": price, "pnl_usdt": proceeds - invested, "msg": "Chiusura simulata"}
-
     rules = pionex_symbol_rules(sym)
     bal0 = pionex_get_balances()
     if bal0 is None:
@@ -390,10 +406,9 @@ def live_sell(pos, coin_cfg, price):
     size = floor_to_scale(min(pos["amount_coin"], free), rules["base_scale"])
     if size <= 0 or size * price < rules["min_amount"] * 0.98:
         return {"ok": False, "msg": f"Quantita' vendibile {size} {base} sotto il minimo: chiudi a mano su Pionex"}
-
     res = pionex_place_market_order(sym, "SELL", size=fmt_qty(size, rules["base_scale"]))
     usdt0 = bal0.get("USDT", {}).get("free", 0.0)
-    sold, proceeds = False, 0.0
+    sold, proceeds, bal1 = False, 0.0, None
     for _ in range(2):
         time.sleep(2.0)
         bal1 = pionex_get_balances()
@@ -409,7 +424,6 @@ def live_sell(pos, coin_cfg, price):
     exit_price = proceeds / (size * (1 - FEE_PCT_PER_SIDE / 100.0)) if size > 0 and proceeds > 0 else price
     return {"ok": True, "exit_price": exit_price, "pnl_usdt": proceeds - invested, "msg": res["msg"]}
 
-
 # ==============================================================================
 # 4. ACQUISIZIONE DATI
 # ==============================================================================
@@ -422,7 +436,6 @@ def fetch_eur_usd_rate():
     except Exception:
         pass
     return 1.08
-
 
 def fetch_kraken_ohlc(pair="SOLUSD", interval=60):
     data = safe_get_json("https://api.kraken.com/0/public/OHLC", params={"pair": pair, "interval": interval})
@@ -445,13 +458,11 @@ def fetch_kraken_ohlc(pair="SOLUSD", interval=60):
             continue
     return candles
 
-
 def drop_unfinished(candles, interval_sec):
     """Kraken restituisce l'ultima candela ancora in formazione: va scartata (volume/RSI falsati)."""
     if candles and candles[-1]["time"] + interval_sec > time.time():
         return candles[:-1]
     return candles
-
 
 def build_4h_from_1h(candles_1h):
     if not candles_1h:
@@ -473,7 +484,6 @@ def build_4h_from_1h(candles_1h):
     if out and out[-1]["time"] + 3 * 3600 > candles_1h[-1]["time"]:
         out.pop()  # ultimo bucket 4h incompleto
     return out
-
 
 def fetch_kraken_orderbook(pair="SOLUSD", count=50):
     data = safe_get_json("https://api.kraken.com/0/public/Depth", params={"pair": pair, "count": count})
@@ -503,7 +513,6 @@ def fetch_kraken_orderbook(pair="SOLUSD", count=50):
     except Exception:
         return default
 
-
 def fetch_all_kraken_futures():
     data = safe_get_json("https://futures.kraken.com/derivatives/api/v3/tickers")
     futures_map = {}
@@ -521,7 +530,6 @@ def fetch_all_kraken_futures():
         pass
     return futures_map
 
-
 def fetch_fear_and_greed():
     data = safe_get_json("https://api.alternative.me/fng/?limit=1")
     try:
@@ -531,7 +539,6 @@ def fetch_fear_and_greed():
     except Exception:
         pass
     return 50, "Neutral"
-
 
 def fetch_macro_calendar():
     now_utc = datetime.now(timezone.utc)
@@ -584,9 +591,8 @@ def fetch_macro_calendar():
     events.sort(key=lambda x: abs(x["diff_hours"]))
     return events
 
-
 # ==============================================================================
-# 5. INDICATORI TECNICI (invariati)
+# 5. INDICATORI TECNICI
 # ==============================================================================
 def calc_ema_series(values, period):
     if not values:
@@ -597,11 +603,9 @@ def calc_ema_series(values, period):
         ema.append(price * k + ema[-1] * (1.0 - k))
     return ema
 
-
 def calc_ema(values, period):
     series = calc_ema_series(values, period)
     return series[-1] if series else 0.0
-
 
 def calc_rsi_series(closes, period=14):
     if len(closes) < period + 1:
@@ -623,10 +627,8 @@ def calc_rsi_series(closes, period=14):
         rsis.append(100.0 if avg_loss == 0 else 100.0 - (100.0 / (1.0 + avg_gain / avg_loss)))
     return rsis
 
-
 def calc_rsi(closes, period=14):
     return calc_rsi_series(closes, period)[-1]
-
 
 def calc_atr_series(candles, period=14):
     if len(candles) < 2:
@@ -637,11 +639,9 @@ def calc_atr_series(candles, period=14):
         trs.append(max(h - l, abs(h - pc), abs(l - pc)))
     return calc_ema_series(trs, period)
 
-
 def calc_atr(candles, period=14):
     s = calc_atr_series(candles, period)
     return s[-1] if s else 0.0
-
 
 def calc_macd_hist_series(closes, fast=12, slow=26, signal=9):
     if len(closes) < slow + signal:
@@ -651,7 +651,6 @@ def calc_macd_hist_series(closes, fast=12, slow=26, signal=9):
     macd_line = [f - s for f, s in zip(ema_f, ema_s)]
     sig_line = calc_ema_series(macd_line, signal)
     return [m - s for m, s in zip(macd_line, sig_line)]
-
 
 def calc_bollinger(closes, period=20, mult=2.0):
     if len(closes) < period:
@@ -665,7 +664,6 @@ def calc_bollinger(closes, period=20, mult=2.0):
     pct_b = (c - lower) / (upper - lower) if (upper - lower) > 0 else 0.5
     bw = (upper - lower) / mid if mid > 0 else 0.0
     return lower, mid, upper, pct_b, bw
-
 
 def calc_adx(candles, period=14):
     if len(candles) < period * 2 + 2:
@@ -694,7 +692,6 @@ def calc_adx(candles, period=14):
     adx = calc_ema(dx_list[-period * 2:], period)
     return adx, plus_di, minus_di
 
-
 def calc_supertrend(candles, period=10, multiplier=3.0):
     if len(candles) < period + 2:
         return 1, candles[-1]["close"] if candles else 0.0
@@ -720,7 +717,6 @@ def calc_supertrend(candles, period=10, multiplier=3.0):
             direction = -1
     return direction, (final_lower if direction == 1 else final_upper)
 
-
 def calc_hurst_exponent(closes, max_lag=20):
     if len(closes) < 60:
         return 0.50
@@ -739,7 +735,6 @@ def calc_hurst_exponent(closes, max_lag=20):
     den = sum((x - mx) ** 2 for x in x_vals)
     return clamp(num / den if den > 0 else 0.50, 0.20, 0.85)
 
-
 def calc_linreg_zscore(closes, window=40):
     if len(closes) < window:
         return 0.0, 0.0
@@ -754,7 +749,6 @@ def calc_linreg_zscore(closes, window=40):
     std_res = statistics.pstdev(residuals)
     z_score = residuals[-1] / std_res if std_res > 0 else 0.0
     return z_score, ((slope / my) * 100.0 if my > 0 else 0.0)
-
 
 def calc_volume_profile_poc(candles, bins=24, lookback=120):
     subset = candles[-lookback:] if len(candles) >= lookback else candles
@@ -773,7 +767,6 @@ def calc_volume_profile_poc(candles, bins=24, lookback=120):
     best_idx = max(range(bins), key=lambda i: vol_bins[i])
     return low_min + (best_idx + 0.5) * step
 
-
 def calc_rolling_vwap(candles_15m, bars=96):
     subset = candles_15m[-bars:] if len(candles_15m) >= bars else candles_15m
     if not subset:
@@ -782,14 +775,12 @@ def calc_rolling_vwap(candles_15m, bars=96):
     vv = sum(c["volume"] for c in subset)
     return pv / vv if vv > 0 else subset[-1]["close"]
 
-
 def calc_volume_zscore(candles, window=30):
     if len(candles) < window + 2:
         return 0.0
     vols = [c["volume"] for c in candles[-window - 1:-1]]
     mean_v, std_v = sum(vols) / len(vols), statistics.pstdev(vols)
     return (candles[-1]["volume"] - mean_v) / std_v if std_v > 0 else 0.0
-
 
 # ==============================================================================
 # 6. ML (MLP con holdout temporale + Lorentzian k-NN + Monte Carlo)
@@ -820,7 +811,6 @@ def build_feature_matrix(candles_1h):
         features.append([f1, f2, f3, f4, f5, f6])
     return features
 
-
 def lorentzian_knn_predict(candles_1h, features, horizon=4, k=18):
     n = len(candles_1h)
     if n < 120:
@@ -846,7 +836,6 @@ def lorentzian_knn_predict(candles_1h, features, horizon=4, k=18):
         wt += w
     return clamp(ws / wt if wt > 0 else 0.50, 0.05, 0.95)
 
-
 def online_mlp_neural_net(candles_1h, features, horizon=4, epochs=35, lr=0.045):
     """Ritorna (prob, holdout_acc). La previsione e' ridotta verso 0.5 se il modello non batte
     il baseline (classe maggioritaria) sul 25% piu' recente dei dati: niente 'AI' non validata."""
@@ -859,7 +848,6 @@ def online_mlp_neural_net(candles_1h, features, horizon=4, epochs=35, lr=0.045):
         dataset.append((features[i], 1.0 if closes[i + horizon] > closes[i] else 0.0))
     if len(dataset) < 60:
         return 0.50, 0.50
-
     split = int(len(dataset) * 0.75)
     train, hold = dataset[:split], dataset[split:]
     rng = random.Random(42)
@@ -886,7 +874,6 @@ def online_mlp_neural_net(candles_1h, features, horizon=4, epochs=35, lr=0.045):
                 for i in range(in_dim):
                     W1[j][i] -= step_lr * (dh * x[i] + 0.001 * W1[j][i])
             b2 -= step_lr * dz2
-
     hits = sum(1 for x, y in hold if (forward(x)[0] > 0.5) == (y == 1.0))
     acc = hits / len(hold)
     up_rate = sum(y for _, y in hold) / len(hold)
@@ -894,7 +881,6 @@ def online_mlp_neural_net(candles_1h, features, horizon=4, epochs=35, lr=0.045):
     shrink = clamp(edge / 0.06, 0.0, 1.0)
     raw = forward(features[-1])[0]
     return clamp(0.5 + (raw - 0.5) * shrink, 0.05, 0.95), acc
-
 
 def monte_carlo_Barrier_sim(candles_1h, curr_price, tp_price, sl_price, paths=350, horizon_bars=10):
     if len(candles_1h) < 50 or curr_price <= 0:
@@ -921,7 +907,6 @@ def monte_carlo_Barrier_sim(candles_1h, curr_price, tp_price, sl_price, paths=35
         wins += outcome
     return clamp(wins / paths, 0.05, 0.95)
 
-
 # ==============================================================================
 # 7. SKILL OPERATIVE
 # ==============================================================================
@@ -943,23 +928,22 @@ def skill_time_machine_backtest(candles_1h, features, horizon_bars=6):
     for _, idx in top:
         entry = closes[idx]
         risk = max(atrs[idx] * 1.15, entry * 0.01)
-        tp, sl = entry + 1.45 * risk, entry - 1.0 * risk
+        tp, sl = entry + 1.5 * risk, entry - 1.0 * risk
         outcome_r = None
         for h in range(1, horizon_bars + 1):
             if lows[idx + h] <= sl:
                 outcome_r = -1.0
                 break
             if highs[idx + h] >= tp:
-                outcome_r = 1.45
+                outcome_r = 1.5
                 break
         if outcome_r is None:
-            outcome_r = clamp((closes[idx + horizon_bars] - entry) / risk, -1.0, 1.45)
+            outcome_r = clamp((closes[idx + horizon_bars] - entry) / risk, -1.0, 1.5)
         if outcome_r > 0:
             wins += 1
         total_r += outcome_r
     n = len(top)
     return {"win_rate": (wins / n) * 100.0 if n else 50.0, "expectancy_r": total_r / n if n else 0.0, "matches": n}
-
 
 def skill_chart_scanner_entry_timer(candles_15m, vol_z_1h, ob_imbalance):
     if len(candles_15m) < 25:
@@ -971,7 +955,6 @@ def skill_chart_scanner_entry_timer(candles_15m, vol_z_1h, ob_imbalance):
     rsi_15m = rsi_s[-1]
     rsi_15m_prev = rsi_s[-2] if len(rsi_s) >= 2 else rsi_15m
     vwap_15m = calc_rolling_vwap(candles_15m, 96)
-
     triggers, notes = 0, []
     vwap_diff_pct = (c15 - vwap_15m) / vwap_15m if vwap_15m > 0 else 0.0
     if -0.015 <= vwap_diff_pct <= 0.028 and (c15 >= o15 or c15 >= p15):
@@ -986,8 +969,7 @@ def skill_chart_scanner_entry_timer(candles_15m, vol_z_1h, ob_imbalance):
     if ob_imbalance >= 0.01:
         triggers += 1
         notes.append(f"L2 Bid ({ob_imbalance * 100:+.1f}%)")
-
-    rsi_ok = 28.0 <= rsi_15m <= 72.0
+    rsi_ok = 28.0 <= rsi_15m <= 70.0
     triggered = (triggers >= 2) and rsi_ok
     if not rsi_ok:
         notes.append(f"RSI 15m estremo ({rsi_15m:.0f})")
@@ -995,17 +977,14 @@ def skill_chart_scanner_entry_timer(candles_15m, vol_z_1h, ob_imbalance):
             "rsi_15m": rsi_15m, "rsi_15m_prev": rsi_15m_prev,
             "summary": " + ".join(notes) if notes else "In attesa trigger 15m"}
 
-
 def skill_budget_and_risk_manager(invest_eur, eur_usd, entry_price, sl_price, tp_price, state, macro_high_soon, code=None):
     total_usdt = invest_eur * eur_usd
     cash_buffer_usdt = total_usdt * (CASH_BUFFER_PCT / 100.0)
     usable_usdt = total_usdt - cash_buffer_usdt
-
     sl_dist_pct = ((entry_price - sl_price) / entry_price) * 100.0 if entry_price > 0 else 2.0
     tp_dist_pct = ((tp_price - entry_price) / entry_price) * 100.0 if entry_price > 0 else 2.5
     fee_rt = PIONEX_FEE_ROUNDTRIP_PCT
     rr_ratio = (tp_dist_pct - fee_rt) / (sl_dist_pct + fee_rt) if sl_dist_pct > 0 else 0.0  # NETTO commissioni
-
     # Position sizing a rischio fisso: perdita massima (SL + commissioni) = RISK_PER_TRADE_PCT del capitale
     risk_usdt = total_usdt * (RISK_PER_TRADE_PCT / 100.0)
     position_usdt = risk_usdt / ((sl_dist_pct + fee_rt) / 100.0) if sl_dist_pct > 0 else usable_usdt
@@ -1014,7 +993,6 @@ def skill_budget_and_risk_manager(invest_eur, eur_usd, entry_price, sl_price, tp
         position_usdt = max(position_usdt, MIN_ORDER_USDT)
     max_loss_usdt = position_usdt * ((sl_dist_pct + fee_rt) / 100.0)
     expected_gain_usdt = position_usdt * ((tp_dist_pct - fee_rt) / 100.0)
-
     now = datetime.now(timezone.utc)
     now_ts = int(now.timestamp())
     stats = state["stats"]
@@ -1022,7 +1000,6 @@ def skill_budget_and_risk_manager(invest_eur, eur_usd, entry_price, sl_price, tp
     if stats.get("daily_date") != today_str:
         stats.update({"daily_date": today_str, "daily_pnl_pct": 0.0, "daily_pnl_usdt": 0.0,
                       "daily_trades": 0, "consec_losses": 0})
-
     reasons = []
     if usable_usdt < MIN_ORDER_USDT:
         reasons.append(f"Capitale utilizzabile {usable_usdt:.2f} USDT < minimo ordine")
@@ -1030,14 +1007,17 @@ def skill_budget_and_risk_manager(invest_eur, eur_usd, entry_price, sl_price, tp
         reasons.append(f"R:R netto basso ({rr_ratio:.2f}x < {MIN_REWARD_RISK_R}x)")
     if stats.get("daily_pnl_pct", 0.0) <= -DAILY_MAX_LOSS_PCT:
         reasons.append(f"Circuit Breaker Giornaliero ({stats['daily_pnl_pct']:+.2f}% del capitale)")
+    if stats.get("daily_pnl_pct", 0.0) >= DAILY_PROFIT_LOCK_PCT:
+        reasons.append(f"Obiettivo giornaliero raggiunto ({stats['daily_pnl_pct']:+.2f}%): profitto messo al sicuro")
     if stats.get("daily_trades", 0) >= MAX_TRADES_PER_DAY:
         reasons.append(f"Max {MAX_TRADES_PER_DAY} trade giornalieri raggiunti")
     if stats.get("consec_losses", 0) >= MAX_CONSEC_LOSSES:
         reasons.append(f"{MAX_CONSEC_LOSSES} stop consecutivi: stop per oggi")
     if macro_high_soon:
         reasons.append("News Macro USD High Impact imminente (<2h)")
-    if not (ENTRY_START_UTC <= now.hour < ENTRY_END_UTC):
-        reasons.append(f"Fuori finestra operativa {ENTRY_START_UTC:02d}-{ENTRY_END_UTC:02d} UTC")
+    sess = entry_session(now)
+    if not sess["allowed"]:
+        reasons.append(sess["label"])
     last_close = stats.get("last_close_ts", 0)
     if last_close and now_ts - last_close < MIN_MINUTES_BETWEEN_TRADES * 60:
         reasons.append(f"Cooldown dopo ultima chiusura ({MIN_MINUTES_BETWEEN_TRADES} min)")
@@ -1048,22 +1028,19 @@ def skill_budget_and_risk_manager(invest_eur, eur_usd, entry_price, sl_price, tp
         cl = stats.get("coin_last_close", {}).get(code, 0)
         if cl and now_ts - cl < SAME_COIN_COOLDOWN_H * 3600:
             reasons.append(f"{code} chiusa da meno di {SAME_COIN_COOLDOWN_H:.0f}h")
-
     passed = not reasons
     return {"passed": passed, "status_str": "PASS (Rischio OK)" if passed else "BLOCCATO: " + ", ".join(reasons),
             "total_usdt": total_usdt, "position_usdt": position_usdt, "cash_buffer_usdt": cash_buffer_usdt,
             "rr_ratio": rr_ratio, "sl_dist_pct": sl_dist_pct, "tp_dist_pct": tp_dist_pct,
             "max_loss_usdt": max_loss_usdt, "expected_gain_usdt": expected_gain_usdt}
 
-
 def skill_exit_planner(entry_price, sl_price, tp_price):
     one_r = max(entry_price - sl_price, entry_price * 0.008)
     be_fee_lock = entry_price * (1.0 + (PIONEX_FEE_ROUNDTRIP_PCT + 0.05) / 100.0)
     return {"one_r": one_r, "be_trigger": entry_price + 0.65 * one_r, "be_fee_lock": be_fee_lock,
-            "tp1_trigger": entry_price + 1.0 * one_r, "tp1_lock": be_fee_lock + 0.25 * one_r,
-            "tp2_trigger": entry_price + 1.45 * one_r, "tp2_lock": entry_price + 0.85 * one_r,
+            "tp1_trigger": entry_price + 1.0 * one_r, "tp1_lock": be_fee_lock + 0.30 * one_r,
+            "tp2_trigger": entry_price + 1.25 * one_r, "tp2_lock": entry_price + 0.70 * one_r,
             "tp3_target": tp_price}
-
 
 def skill_nyse_bell_and_session():
     """Sessioni calcolate con fuso America/New_York (gestisce ora legale/solare: apertura 14:30 UTC d'inverno)."""
@@ -1076,40 +1053,35 @@ def skill_nyse_bell_and_session():
             return "🔔 NYSE OPENING BELL (Alta Volatilita' USA)"
         if open_utc < now_utc <= close_utc:
             return "🇺🇸 Sessione Wall Street Attiva (Alta Liquidita')"
-    m = now_utc.hour * 60 + now_utc.minute
-    if 7 * 60 <= m < 13 * 60:
+    lon = now_utc.astimezone(ZoneInfo("Europe/London"))
+    if lon.weekday() < 5 and 8 <= lon.hour < 16:
         return "🇪🇺 Sessione Europea Attiva"
     if now_utc.weekday() >= 5:
         return "📅 Weekend (liquidita' ridotta)"
     return "🌏 Sessione Asiatica / Notturna"
-
 
 # ==============================================================================
 # 8. VALUTAZIONE SINGOLA COIN
 # ==============================================================================
 def evaluate_coin(coin_cfg, futures_map, fng_val, macro_events):
     code, pair = coin_cfg["code"], coin_cfg["kraken"]
-
     candles_1h = drop_unfinished(fetch_kraken_ohlc(pair, interval=60), 3600)
     candles_15m = drop_unfinished(fetch_kraken_ohlc(pair, interval=15), 900)
     candles_4h = build_4h_from_1h(candles_1h)
     ob = fetch_kraken_orderbook(pair, count=50)
-
     if len(candles_1h) < 60 or len(candles_4h) < 30 or len(candles_15m) < 30:
         return None
-
     fut = futures_map.get(coin_cfg["futures"], {"funding_8h_pct": 0.005, "open_interest": 0.0, "available": False})
     closes_4h = [c["close"] for c in candles_4h]
     closes_1h = [c["close"] for c in candles_1h]
     closes_15m = [c["close"] for c in candles_15m]
-
     # Prezzo: ticker live Pionex (venue di esecuzione) con controllo di coerenza vs Kraken
     ref_price = closes_15m[-1]
     px = LIVE_PX.get(coin_cfg["pionex"])
     price = px if (px and abs(px / ref_price - 1.0) < 0.03) else ref_price
-
     ema20_4h, ema50_4h = calc_ema(closes_4h, 20), calc_ema(closes_4h, 50)
     ema20_1h, ema50_1h = calc_ema(closes_1h, 20), calc_ema(closes_1h, 50)
+    ret_4h_pct = (closes_1h[-1] / closes_1h[-5] - 1.0) * 100.0 if closes_1h[-5] > 0 else 0.0
     rsi_4h = calc_rsi(closes_4h, 14)
     rsi_1h_series = calc_rsi_series(closes_1h, 14)
     rsi_1h, rsi_1h_prev = rsi_1h_series[-1], rsi_1h_series[-2]
@@ -1118,7 +1090,6 @@ def evaluate_coin(coin_cfg, futures_map, fng_val, macro_events):
     rsi_15m_prev = rsi_15m_series[-2] if len(rsi_15m_series) >= 2 else rsi_15m
     macd_hist_s = calc_macd_hist_series(closes_1h, 12, 26, 9)
     macd_hist, macd_hist_prev = macd_hist_s[-1], macd_hist_s[-2]
-
     atr_1h = calc_atr(candles_1h, 14)
     atr_pct = (atr_1h / price) * 100.0 if price > 0 else 1.5
     adx_1h, _, _ = calc_adx(candles_1h, 14)
@@ -1127,25 +1098,21 @@ def evaluate_coin(coin_cfg, futures_map, fng_val, macro_events):
     z_linreg, _ = calc_linreg_zscore(closes_1h, 40)
     poc_price = calc_volume_profile_poc(candles_1h, 24, 120)
     vol_z = calc_volume_zscore(candles_1h, 30)
-
     recent_lows = [c["low"] for c in candles_15m[-16:]]
     swing_low = min(recent_lows) if recent_lows else price * 0.985
     recent_highs = [c["high"] for c in candles_1h[-24:]]
     swing_high = max(recent_highs) if recent_highs else price * 1.025
-
     sl_dist = max(price * 0.009, min(price * 0.018, 1.15 * atr_1h))
     sl_price = max(price - sl_dist, swing_low - 0.15 * atr_1h)
     sl_price = clamp(sl_price, price * 0.980, price * 0.991)
     actual_risk = price - sl_price
-    tp_candidate = max(price + actual_risk * 1.35, min(swing_high * 0.998, price + 2.2 * atr_1h))
-    tp_price = clamp(tp_candidate, price * 1.0135, price * 1.025)
-
+    tp_candidate = max(price + actual_risk * 1.5, min(swing_high * 0.998, price + 2.4 * atr_1h))
+    tp_price = clamp(tp_candidate, price * 1.015, price * 1.03)
     features = build_feature_matrix(candles_1h)
     prob_knn = lorentzian_knn_predict(candles_1h, features, horizon=4, k=18)
     prob_mlp, mlp_acc = online_mlp_neural_net(candles_1h, features, horizon=4, epochs=35, lr=0.045)
     prob_mc = monte_carlo_Barrier_sim(candles_1h, price, tp_price, sl_price, paths=300, horizon_bars=10)
     ai_ensemble_prob = 0.40 * prob_mlp + 0.35 * prob_knn + 0.25 * prob_mc
-
     tm_stats = skill_time_machine_backtest(candles_1h, features, horizon_bars=6)
     scanner_timer = skill_chart_scanner_entry_timer(candles_15m, vol_z, ob["imbalance"])
 
@@ -1162,12 +1129,10 @@ def evaluate_coin(coin_cfg, futures_map, fng_val, macro_events):
     if st_dir_1h == 1 or rsi_15m > rsi_15m_prev:
         score_trend += 8
     score_trend = clamp(score_trend, 0, 25)
-
     # B. AI + Time Machine (max 25)
     ai_pts = round(clamp((ai_ensemble_prob - 0.35) / 0.35, 0.0, 1.0) * 18.0)
     tm_pts = 7 if (tm_stats["win_rate"] >= 52.0 and tm_stats["expectancy_r"] > 0.05) else (4 if tm_stats["win_rate"] >= 46.0 else 2)
     score_ai = clamp(ai_pts + tm_pts, 0, 25)
-
     # C. Momentum (max 20)
     score_mom = 0
     if 38.0 <= rsi_1h <= 66.0:
@@ -1183,7 +1148,6 @@ def evaluate_coin(coin_cfg, futures_map, fng_val, macro_events):
     elif scanner_timer["triggers"] >= 1:
         score_mom += 4
     score_mom = clamp(score_mom, 0, 20)
-
     # D. Microstruttura (max 15)
     score_micro = 0
     imb = ob["imbalance"]
@@ -1198,7 +1162,6 @@ def evaluate_coin(coin_cfg, futures_map, fng_val, macro_events):
     if vol_z > -0.15:
         score_micro += 3
     score_micro = clamp(score_micro, 0, 15)
-
     # E. Derivati / sentiment / macro (max 15)
     score_macro = 0
     fr = fut["funding_8h_pct"]
@@ -1213,10 +1176,8 @@ def evaluate_coin(coin_cfg, futures_map, fng_val, macro_events):
     if not high_soon:
         score_macro += 5
     score_macro = clamp(score_macro, 0, 15)
-
     raw_100 = score_trend + score_ai + score_mom + score_micro + score_macro
     final_score = clamp(int(round(raw_100 / 10.0)), 1, 10)
-
     return {
         "coin": coin_cfg, "code": code, "price": price, "sl_price": sl_price, "tp_price": tp_price,
         "atr_1h": atr_1h, "atr_pct": atr_pct, "raw_100": raw_100, "final_score": final_score,
@@ -1226,10 +1187,10 @@ def evaluate_coin(coin_cfg, futures_map, fng_val, macro_events):
         "mlp_holdout_acc": mlp_acc, "rsi_1h": rsi_1h, "rsi_4h": rsi_4h, "rsi_15m": rsi_15m,
         "rsi_15m_prev": rsi_15m_prev, "adx_1h": adx_1h, "hurst": hurst, "z_linreg": z_linreg,
         "poc_price": poc_price, "vol_z": vol_z, "ob": ob, "fut": fut, "st_dir_1h": st_dir_1h,
+        "ema20_1h": ema20_1h, "ema50_1h": ema50_1h, "ret_4h_pct": ret_4h_pct,
         "tm_stats": tm_stats, "scanner_timer": scanner_timer, "high_soon": bool(high_soon),
         "c15_recent": [{"time": c["time"], "high": c["high"], "low": c["low"]} for c in candles_15m[-24:]],
     }
-
 
 def make_fallback_eval(coin_cfg, pos):
     """Valutazione neutra se l'analisi della coin aperta fallisce: gestisce solo SL/TP sul prezzo Pionex.
@@ -1248,7 +1209,6 @@ def make_fallback_eval(coin_cfg, pos):
         "high_soon": False, "c15_recent": [], "stale": not bool(px), "fallback": True,
     }
 
-
 def scan_all_coins(coins, futures_map, fng_val, macro_events):
     results = {}
     with ThreadPoolExecutor(max_workers=2) as executor:
@@ -1263,18 +1223,44 @@ def scan_all_coins(coins, futures_map, fng_val, macro_events):
                 log("WARN", f"Errore analisi {code}: {e}")
     return results
 
-
 # ==============================================================================
 # 9. MOTORE AUTONOMO
 # ==============================================================================
+def entry_blockers(ev):
+    """Elenco leggibile dei motivi per cui un setup non e' ancora valido."""
+    why = []
+    rm = ev.get("risk_manager")
+    raw_min = ev.get("raw_min", Entry_Raw_100_Min)
+    if ev.get("fallback"):
+        why.append("dati non disponibili")
+    if ev["raw_100"] < raw_min or ev["final_score"] < Entry_Score_Min:
+        why.append(f"Score {ev['code']} {ev['raw_100']}/100 < {raw_min}/100")
+    if ev["ai_prob"] < MIN_AI_PROB:
+        why.append(f"AI {ev['ai_prob'] * 100:.0f}% < {MIN_AI_PROB * 100:.0f}%")
+    if not ev["scanner_timer"]["triggered"]:
+        why.append(f"Timer 15m ({ev['scanner_timer']['triggers']}/4 trigger)")
+    if not ev.get("regime_ok", True):
+        why.append(ev.get("regime_note", "regime BTC sfavorevole"))
+    if ev["ob"]["spread_bps"] > MAX_SPREAD_BPS:
+        why.append(f"Spread alto ({ev['ob']['spread_bps']:.1f} bps)")
+    if not ev.get("fallback") and not (ATR_PCT_MIN <= ev["atr_pct"] <= ATR_PCT_MAX):
+        why.append(f"Volatilita' ATR {ev['atr_pct']:.2f}% fuori range {ATR_PCT_MIN}-{ATR_PCT_MAX}%")
+    if ev["rsi_1h"] > 70.0:
+        why.append(f"RSI 1h esteso ({ev['rsi_1h']:.0f})")
+    if rm and not rm["passed"]:
+        why.append(rm["status_str"])
+    return why
+
 def entry_conditions(ev):
     rm = ev.get("risk_manager")
+    if ev.get("fallback") or not rm or not rm["passed"]:
+        return False
     return bool(
-        not ev.get("fallback") and rm and rm["passed"]
-        and ev["final_score"] >= Entry_Score_Min and ev["raw_100"] >= Entry_Raw_100_Min
-        and ev["ai_prob"] >= 0.50 and ev["scanner_timer"]["triggered"]
+        ev["final_score"] >= Entry_Score_Min and ev["raw_100"] >= ev.get("raw_min", Entry_Raw_100_Min)
+        and ev["ai_prob"] >= MIN_AI_PROB and ev["scanner_timer"]["triggered"]
+        and ev.get("regime_ok", True) and ev["ob"]["spread_bps"] <= MAX_SPREAD_BPS
+        and ATR_PCT_MIN <= ev["atr_pct"] <= ATR_PCT_MAX and ev["rsi_1h"] <= 70.0
     )
-
 
 def _finalize_close(state, open_code, coin_cfg, curr_price, close_reason, close, alerts_fired, now_str, now_ts, capital_usdt):
     pos, stats = state["position"], state["stats"]
@@ -1283,7 +1269,6 @@ def _finalize_close(state, open_code, coin_cfg, curr_price, close_reason, close,
     pnl_usdt = close["pnl_usdt"]
     net_pnl_pct = (pnl_usdt / invested) * 100.0 if invested > 0 else 0.0
     exit_price = close.get("exit_price", curr_price)
-
     stats["total_trades"] += 1
     if pnl_usdt >= 0:
         stats["wins"] += 1
@@ -1299,7 +1284,6 @@ def _finalize_close(state, open_code, coin_cfg, curr_price, close_reason, close,
     stats["last_close_ts"] = now_ts
     stats.setdefault("coin_last_close", {})[open_code] = now_ts
     stats["last_action"] = f"CHIUSO {open_code} ({net_pnl_pct:+.2f}%) il {now_str}"
-
     state.setdefault("history", []).insert(0, {
         "coin": open_code, "entry": entry, "exit": exit_price, "pnl_pct": round(net_pnl_pct, 2),
         "pnl_usdt": round(pnl_usdt, 2), "reason": close_reason, "closed_at": now_str, "mode": pos.get("mode", "SIMULATION")})
@@ -1310,7 +1294,6 @@ def _finalize_close(state, open_code, coin_cfg, curr_price, close_reason, close,
     return {"action_state": "CLOSED_NOW", "headline": f"🔔 POSIZIONE {open_code} CHIUSA AUTOMATICAMENTE",
             "detail": f"{close_reason} | PnL Netto: {net_pnl_pct:+.2f}% ({pnl_usdt:+.2f} USDT) | {close['msg']}",
             "pnl_pct": net_pnl_pct, "pnl_usdt": pnl_usdt, "current_r": 0.0, "alerts_fired": alerts_fired}
-
 
 def _manage_open_position(state, all_evals, capital_usdt, now_str, now_ts):
     pos = state["position"]
@@ -1323,7 +1306,6 @@ def _manage_open_position(state, all_evals, capital_usdt, now_str, now_ts):
     opened_ts = pos.get("opened_ts") or now_ts
     hours_open = max(0.0, (now_ts - opened_ts) / 3600.0)
     alerts_fired, trail_msg = [], ""
-
     # Riconciliazione: se in LIVE la coin non e' piu' sull'account (chiusa a mano), allinea lo stato
     if pos.get("mode") == "LIVE_PIONEX" and pionex_live_enabled():
         bal = pionex_get_balances()
@@ -1334,13 +1316,11 @@ def _manage_open_position(state, all_evals, capital_usdt, now_str, now_ts):
                 close = {"ok": True, "exit_price": curr_price, "pnl_usdt": est, "msg": "Rilevata chiusura esterna (PnL stimato)"}
                 return _finalize_close(state, open_code, coin_cfg, curr_price, "🧾 CHIUSA ESTERNAMENTE (saldo coin assente)",
                                        close, alerts_fired, now_str, now_ts, capital_usdt)
-
     if open_eval.get("stale"):
         save_state(state)
         return {"action_state": "HOLDING", "headline": f"⚠️ {open_code}: PREZZO NON DISPONIBILE",
                 "detail": "Analisi e ticker non raggiungibili: gestione SL/TP sospesa fino al prossimo giro.",
                 "pnl_pct": 0.0, "pnl_usdt": 0.0, "current_r": 0.0, "alerts_fired": []}
-
     # Candele 15m chiuse dall'ultimo controllo: intercettano wick tra due esecuzioni (cron ogni 30 min)
     last_chk = pos.get("last_check_ts") or opened_ts
     c15 = open_eval.get("c15_recent", [])
@@ -1351,14 +1331,16 @@ def _manage_open_position(state, all_evals, capital_usdt, now_str, now_ts):
     highest = max(pos.get("highest_price", entry), curr_price, max((c["high"] for c in since_open), default=0.0))
     pos["highest_price"] = highest
     sl_at_start = sl
-
     est_proceeds = pos["amount_coin"] * curr_price * (1 - FEE_PCT_PER_SIDE / 100.0)
     pnl_usdt_live = est_proceeds - pos["invested_usdt"]
     net_pnl_pct = (pnl_usdt_live / pos["invested_usdt"]) * 100.0 if pos["invested_usdt"] > 0 else 0.0
     current_r = (curr_price - entry) / one_r if one_r > 0 else 0.0
-
     be_fee_price = round(entry * (1.0 + (PIONEX_FEE_ROUNDTRIP_PCT + 0.05) / 100.0), 6)
-    if not pos.get("breakeven_locked", False) and (current_r >= 0.65 or (curr_price >= entry * 1.0055 and open_eval["rsi_15m"] >= 66.0)):
+    rsi_15m = open_eval.get("rsi_15m", 50.0)
+    rsi_15m_prev = open_eval.get("rsi_15m_prev", rsi_15m)
+    ob_imb = open_eval["ob"]["imbalance"]
+
+    if not pos.get("breakeven_locked", False) and (current_r >= 0.65 or (curr_price >= entry * 1.0055 and rsi_15m >= 66.0)):
         if sl < be_fee_price:
             pos["sl_price"] = sl = be_fee_price
         pos["breakeven_locked"] = True
@@ -1371,29 +1353,41 @@ def _manage_open_position(state, all_evals, capital_usdt, now_str, now_ts):
         pos["tp1_locked"] = True
         alerts_fired.append(f"🔔 Alert +1.0R: Profitto blindato a {fmt_price(sl)}")
         trail_msg = f"🔒 Profitto +1R Blindato ({fmt_price(sl)})"
-    if not pos.get("tp2_locked", False) and current_r >= 1.45:
-        new_sl = round(entry + 0.85 * one_r, 6)
+    if not pos.get("tp2_locked", False) and current_r >= 1.25:
+        new_sl = round(entry + 0.70 * one_r, 6)
         if new_sl > sl:
             pos["sl_price"] = sl = new_sl
         pos["tp2_locked"] = True
-        alerts_fired.append(f"🔔 Alert +1.45R: Trailing Stop alzato a {fmt_price(sl)}")
-        trail_msg = f"🚀 Trailing +1.45R ({fmt_price(sl)})"
+        alerts_fired.append(f"🔔 Alert +1.25R: Trailing Stop alzato a {fmt_price(sl)}")
+        trail_msg = f"🚀 Trailing +1.25R ({fmt_price(sl)})"
     if current_r >= 1.90 and "R190" not in pos.get("alerts_triggered", []):
-        new_sl = round(entry + 1.35 * one_r, 6)
+        new_sl = round(entry + 1.20 * one_r, 6)
         if new_sl > sl:
             pos["sl_price"] = sl = new_sl
         pos.setdefault("alerts_triggered", []).append("R190")
         alerts_fired.append(f"🔔 Alert +1.9R: Super-Trailing a {fmt_price(sl)}")
+    # Chandelier trailing: dopo +1R lo stop insegue il massimo a 0.9R di distanza
+    if pos.get("tp1_locked", False):
+        chandelier = round(highest - 0.90 * one_r, 6)
+        if chandelier > sl and chandelier < curr_price:
+            pos["sl_price"] = sl = chandelier
+            trail_msg = trail_msg or f"📈 Chandelier Trailing ({fmt_price(sl)})"
+    # Estensione una tantum del TP se il momentum e' ancora forte: lascia correre i vincenti
+    if (curr_price >= tp and "TP_EXT" not in pos.get("alerts_triggered", []) and not open_eval.get("fallback")
+            and open_eval["ai_prob"] >= 0.56 and rsi_15m < 68.0 and ob_imb >= 0.0):
+        new_sl = round(max(sl, entry + 1.15 * one_r), 6)
+        if new_sl < curr_price:
+            pos["sl_price"] = sl = new_sl
+        pos["tp_price"] = tp = round(tp + 0.80 * one_r, 6)
+        pos.setdefault("alerts_triggered", []).append("TP_EXT")
+        alerts_fired.append(f"🔔 TP esteso a {fmt_price(tp)} (momentum forte), stop a {fmt_price(sl)}")
+        trail_msg = f"🎯 TP esteso a {fmt_price(tp)}"
 
-    rsi_15m = open_eval.get("rsi_15m", 50.0)
-    rsi_15m_prev = open_eval.get("rsi_15m_prev", rsi_15m)
-    ob_imb = open_eval["ob"]["imbalance"]
     momentum_fading_15m = (
         (rsi_15m_prev >= 61.0 and rsi_15m < rsi_15m_prev - 4.0)
         or (ob_imb <= -0.10 and open_eval["ai_prob"] < 0.50)
         or (highest >= entry + 1.0 * one_r and curr_price <= highest - 0.40 * one_r)
     )
-
     close_reason = None
     if wick_low <= sl_at_start or curr_price <= sl:
         kind = "PROFIT LOCK / TRAILING STOP" if sl_at_start > entry else "STOP LOSS"
@@ -1409,7 +1403,6 @@ def _manage_open_position(state, all_evals, capital_usdt, now_str, now_ts):
         close_reason = f"⏱️ ROTAZIONE CAPITALE ({hours_open:.1f}h in stallo, AI={open_eval['ai_prob'] * 100:.0f}%)"
     elif open_eval["final_score"] <= 3 and open_eval["ai_prob"] < 0.40:
         close_reason = f"⚠️ USCITA DIFENSIVA AI (Score {open_code} sceso a {open_eval['final_score']}/10)"
-
     if close_reason:
         close = live_sell(pos, coin_cfg, curr_price)
         if not close["ok"]:
@@ -1422,7 +1415,6 @@ def _manage_open_position(state, all_evals, capital_usdt, now_str, now_ts):
                     "detail": f"{close_reason} | {close['msg']} | Tentativo #{pos['close_fail_count']}. Verifica subito su Pionex!",
                     "pnl_pct": net_pnl_pct, "pnl_usdt": pnl_usdt_live, "current_r": current_r, "alerts_fired": alerts_fired}
         return _finalize_close(state, open_code, coin_cfg, curr_price, close_reason, close, alerts_fired, now_str, now_ts, capital_usdt)
-
     pos["last_check_ts"] = now_ts
     save_state(state)
     extra = f" | {trail_msg}" if trail_msg else ""
@@ -1430,28 +1422,16 @@ def _manage_open_position(state, all_evals, capital_usdt, now_str, now_ts):
             "detail": f"Entry {fmt_price(entry)} -> Attuale {fmt_price(curr_price)} ({net_pnl_pct:+.2f}% netto / {current_r:+.2f}R){extra}",
             "pnl_pct": net_pnl_pct, "pnl_usdt": pnl_usdt_live, "current_r": current_r, "alerts_fired": alerts_fired}
 
-
 def _try_open_position(state, ranked_evals, now_str, now_ts):
     pos, stats = state["position"], state["stats"]
     candidates = [ev for ev in ranked_evals if entry_conditions(ev)]
-
     if not candidates:
         save_state(state)
         best = ranked_evals[0]
-        rm = best["risk_manager"]
-        why = []
-        if best["raw_100"] < Entry_Raw_100_Min:
-            why.append(f"Score {best['code']} {best['raw_100']}/100 < {Entry_Raw_100_Min}/100")
-        if best["ai_prob"] < 0.50:
-            why.append(f"AI {best['ai_prob'] * 100:.0f}% < 50%")
-        if not best["scanner_timer"]["triggered"]:
-            why.append(f"Timer 15m ({best['scanner_timer']['triggers']}/4 trigger)")
-        if not rm["passed"]:
-            why.append(rm["status_str"])
+        why = entry_blockers(best)
         return {"action_state": "WAITING", "headline": "🛡️ CAPITALE PROTETTO IN USDT (Nessun acquisto ora)",
                 "detail": f"Migliore: {best['code']} ({best['final_score']}/10 - {best['raw_100']}/100) -> Non apro perche': {' | '.join(why) or 'In attesa di conferma'}.",
                 "pnl_pct": 0.0, "pnl_usdt": 0.0, "current_r": 0.0, "alerts_fired": []}
-
     ev = candidates[0]
     coin_cfg, code, price = ev["coin"], ev["code"], ev["price"]
     buy = live_buy(coin_cfg, round(ev["risk_manager"]["position_usdt"], 2), price)
@@ -1461,7 +1441,6 @@ def _try_open_position(state, ranked_evals, now_str, now_ts):
         return {"action_state": "ENTRY_FAILED", "headline": f"🚨 ACQUISTO {code} NON ESEGUITO",
                 "detail": f"{buy['msg']} (nessuna posizione registrata)", "pnl_pct": 0.0, "pnl_usdt": 0.0,
                 "current_r": 0.0, "alerts_fired": []}
-
     entry = buy["entry_price"]
     k = entry / price if price > 0 else 1.0       # riallinea SL/TP se il fill differisce dal prezzo di segnale
     sl_price, tp_price = ev["sl_price"] * k, ev["tp_price"] * k
@@ -1481,7 +1460,6 @@ def _try_open_position(state, ranked_evals, now_str, now_ts):
             "pnl_pct": 0.0, "pnl_usdt": 0.0, "current_r": 0.0,
             "alerts_fired": [f"🔔 Fast-Scalp Entry: Posizione aperta su {code} a {fmt_price(entry)}"]}
 
-
 def manage_autonomous_trading(state, ranked_evals, all_evals, eur_usd):
     now_dt = datetime.now(timezone.utc)
     now_str, now_ts = now_dt.strftime("%d/%m %H:%M UTC"), int(now_dt.timestamp())
@@ -1489,7 +1467,6 @@ def manage_autonomous_trading(state, ranked_evals, all_evals, eur_usd):
     if state["position"]["is_open"]:
         return _manage_open_position(state, all_evals, capital_usdt, now_str, now_ts)
     return _try_open_position(state, ranked_evals, now_str, now_ts)
-
 
 # ==============================================================================
 # 10. WEB CONSOLE (index.html)
@@ -1505,14 +1482,12 @@ def build_manual_action_advisor(state, best_eval, all_evals, trade_status):
                     "instruction": f"Il punteggio di {code} si sta indebolendo ({ev['final_score']}/10, AI {ev['ai_prob'] * 100:.1f}%). Se operi manualmente su Pionex, valuta di chiudere o stringere lo Stop-Loss."}
         if pnl >= SCALP_MIN_NET_PROFIT_PCT:
             return {"badge": "💰 POSIZIONE IN ZONA SCALP PROFIT", "color": "#10b981", "bg": "rgba(16,185,129,0.14)",
-                    "instruction": f"La posizione su {code} e' in profitto netto ({pnl:+.2f}% / {curr_r:+.2f}R). Il bot incassera' automaticamente al primo segnale di inversione 15m o al raggiungimento del TP ({fmt_price(pos['tp_price'])})."}
+                    "instruction": f"La posizione su {code} e' in profitto netto ({pnl:+.2f}% / {curr_r:+.2f}R). Il bot incassera' automaticamente al primo segnale di inversione 15m, sul trailing stop o al raggiungimento del TP ({fmt_price(pos['tp_price'])})."}
         return {"badge": "✅ MANTIENI POSIZIONE (HOLD)", "color": "#38bdf8", "bg": "rgba(56,189,248,0.14)",
                 "instruction": f"Posizione aperta su {code} (PnL netto {pnl:+.2f}%). Mantieni attiva la protezione con Stop-Loss a {fmt_price(pos['sl_price'])} e Take-Profit a {fmt_price(pos['tp_price'])}."}
-
     if trade_status.get("action_state") in ("ENTRY_FAILED", "CLOSE_FAILED"):
         return {"badge": "🚨 ERRORE ESECUZIONE ORDINE", "color": "#ef4444", "bg": "rgba(239,68,68,0.14)",
                 "instruction": "Controlla subito saldi e ordini su Pionex: " + trade_status["detail"]}
-
     score, raw_100, code = best_eval["final_score"], best_eval["raw_100"], best_eval["code"]
     rm, tm = best_eval["risk_manager"], best_eval["scanner_timer"]
     if entry_conditions(best_eval):
@@ -1524,12 +1499,11 @@ def build_manual_action_advisor(state, best_eval, all_evals, trade_status):
     return {"badge": "🛡️ RESTA FLAT IN USDT (NON APRIRE ORA)", "color": "#94a3b8", "bg": "rgba(148,163,184,0.12)",
             "instruction": f"Nessuna delle 10 coin offre un vantaggio sufficiente in questo momento (Migliore: {code} con {raw_100}/100). Non aprire posizioni manuali."}
 
-
 def generate_webapp_html(ranked_evals, state, trade_status, fng_val, fng_class, session_str, eur_usd=1.08):
     focus = next((e for e in ranked_evals if entry_conditions(e)), ranked_evals[0])
     advisor = build_manual_action_advisor(state, focus, {e["code"]: e for e in ranked_evals}, trade_status)
     now_str = datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M:%S UTC")
-
+    sess = entry_session()
     coins_payload = []
     for e in ranked_evals:
         rm = e.get("risk_manager") or skill_budget_and_risk_manager(INVEST_EUR, eur_usd, e["price"], e["sl_price"], e["tp_price"], state, e["high_soon"], e["code"])
@@ -1546,20 +1520,20 @@ def generate_webapp_html(ranked_evals, state, trade_status, fng_val, fng_class, 
             "vwap_15m": e["scanner_timer"]["vwap_15m"], "risk_ok": rm["passed"], "risk_status": rm["status_str"],
             "rr_ratio": round(rm["rr_ratio"], 2), "pos_usdt": round(rm["position_usdt"], 2),
             "entry_ok": entry_conditions(e), "be_trigger": ep["be_trigger"], "tp1_trigger": ep["tp1_trigger"],
-            "tp2_trigger": ep["tp2_trigger"]})
-
+            "tp2_trigger": ep["tp2_trigger"], "raw_min": e.get("raw_min", Entry_Raw_100_Min),
+            "atr_pct": round(e.get("atr_pct", 0.0), 2)})
     payload = {"updated_at": now_str, "session": session_str, "fng_val": fng_val, "fng_class": fng_class,
                "advisor": advisor, "position": state["position"], "stats": state["stats"],
                "history": state.get("history", []), "coins": coins_payload,
+               "regime": ranked_evals[0].get("regime_note", "n/d"), "entry_window": sess["label"],
                "limits": {"max_trades": MAX_TRADES_PER_DAY, "daily_max_loss": DAILY_MAX_LOSS_PCT, "fee_rt": PIONEX_FEE_ROUNDTRIP_PCT}}
     payload_json = json.dumps(payload, ensure_ascii=False).replace("</", "<\\/")
-
     html = """<!DOCTYPE html>
 <html lang="it">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Pionex AI Live Trading Console v8.0</title>
+<title>Pionex AI Live Trading Console v9.0</title>
 <style>
   :root { --bg: #070b14; --card: #111827; --card-border: #1f2937; --text: #f8fafc; --muted: #94a3b8;
           --accent: #38bdf8; --green: #10b981; --amber: #f59e0b; --red: #ef4444; }
@@ -1602,21 +1576,18 @@ def generate_webapp_html(ranked_evals, state, trade_status, fng_val, fng_class, 
 </style>
 </head>
 <body>
-
 <div class="topbar">
-  <div class="brand"><span class="live-dot" id="ws-dot"></span><span>PIONEX AI FAST-SCALP CONSOLE v8.0</span></div>
+  <div class="brand"><span class="live-dot" id="ws-dot"></span><span>PIONEX AI FAST-SCALP CONSOLE v9.0</span></div>
   <div class="meta-bar">
     <span id="ws-status">Connessione Kraken Live...</span><span>|</span>
     <span id="session-label"></span>
     <button class="btn-refresh" onclick="forcePollKraken()">🔄 Aggiorna Prezzi Live</button>
   </div>
 </div>
-
 <div class="advisor-box" id="advisor-box">
   <div class="advisor-badge"><span id="advisor-badge-text"></span><span style="font-size:11px; font-weight:600; opacity:0.85;" id="snapshot-time"></span></div>
   <div class="advisor-text" id="advisor-instruction"></div>
 </div>
-
 <div class="grid-2">
   <div class="card">
     <div class="card-title"><span>📌 POSIZIONE APERTA IN TEMPO REALE</span><span id="pos-status-pill" class="pill"></span></div>
@@ -1627,7 +1598,6 @@ def generate_webapp_html(ranked_evals, state, trade_status, fng_val, fng_class, 
     <div id="portfolio-stats-content"></div>
   </div>
 </div>
-
 <div class="card" style="margin-bottom:14px;">
   <div class="card-title"><span>📡 SCANNER LIVE 10 CRIPTOVALUTE (CLICCA UNA RIGA PER I DETTAGLI)</span><span style="color:var(--accent);">Prezzi Live via Kraken WebSocket</span></div>
   <div class="table-wrap">
@@ -1637,12 +1607,10 @@ def generate_webapp_html(ranked_evals, state, trade_status, fng_val, fng_class, 
     </table>
   </div>
 </div>
-
 <div class="card" style="margin-bottom:14px;" id="detail-card">
   <div class="card-title"><span id="detail-title">🔍 PIANO OPERATIVO DETTAGLIATO</span><span id="detail-pair" style="color:var(--accent);"></span></div>
   <div id="detail-content"></div>
 </div>
-
 <div class="card">
   <div class="card-title"><span>📜 STORICO POSIZIONI CHIUSE</span><span id="history-count"></span></div>
   <div class="table-wrap">
@@ -1652,16 +1620,13 @@ def generate_webapp_html(ranked_evals, state, trade_status, fng_val, fng_class, 
     </table>
   </div>
 </div>
-
 <script>
 const DATA = __CONSOLE_PAYLOAD__;
 const livePrices = {};
 const wsMap = {};
 DATA.coins.forEach(c => { livePrices[c.code] = c.price; wsMap[c.ws] = c.code; });
 let selectedCoinCode = DATA.position.is_open ? DATA.position.coin_code : DATA.coins[0].code;
-
 function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, m => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m])); }
-
 function fmtPrice(p) {
   p = Number(p || 0);
   if (p <= 0) return "$0.00";
@@ -1670,7 +1635,6 @@ function fmtPrice(p) {
   if (p >= 1) return "$" + p.toFixed(3);
   return "$" + p.toFixed(4);
 }
-
 function renderAdvisor() {
   const box = document.getElementById("advisor-box");
   box.style.background = DATA.advisor.bg;
@@ -1683,7 +1647,6 @@ function renderAdvisor() {
   document.getElementById("session-label").textContent = DATA.session;
   document.getElementById("fng-badge").textContent = "Fear & Greed: " + DATA.fng_val + " (" + DATA.fng_class + ")";
 }
-
 function renderOpenPosition() {
   const pos = DATA.position;
   const pill = document.getElementById("pos-status-pill");
@@ -1691,7 +1654,8 @@ function renderOpenPosition() {
   if (!pos.is_open) {
     pill.className = "pill pill-amber";
     pill.textContent = "FLAT (100% USDT)";
-    container.innerHTML = `<div style="padding:18px 4px; text-align:center; color:var(--muted); font-size:13.5px;">Nessuna posizione aperta al momento.<br><span style="color:#e2e8f0; font-weight:600; display:block; margin-top:6px;">Il capitale e' protetto in USDT in attesa di un segnale Fast-Scalp.</span></div>`;
+    container.innerHTML = `<div style="padding:18px 4px; text-align:center; color:var(--muted); font-size:13.5px;">Nessuna posizione aperta al momento.
+<span style="color:#e2e8f0; font-weight:600; display:block; margin-top:6px;">Il capitale e' protetto in USDT in attesa di un segnale Fast-Scalp.</span></div>`;
     return;
   }
   const code = pos.coin_code;
@@ -1723,10 +1687,9 @@ function renderOpenPosition() {
     </div>
     <div class="stat-row"><span>Prezzo Ingresso (Aperta il ${esc(pos.opened_at)})</span><span class="val-bold">${fmtPrice(entry)}</span></div>
     <div class="stat-row"><span>Capitale Investito / Quantita'</span><span class="val-bold">${pos.invested_usdt.toFixed(2)} USDT (${pos.amount_coin} ${esc(code)})</span></div>
-    <div class="stat-row"><span>Stato Protezione Trailing</span><span class="val-bold">${pos.tp2_locked ? "🚀 +1.45R Locked" : (pos.tp1_locked ? "🔒 +1R Locked" : (pos.breakeven_locked ? "🛡️ Break-Even Netto" : "Iniziale"))}</span></div>
+    <div class="stat-row"><span>Stato Protezione Trailing</span><span class="val-bold">${pos.tp2_locked ? "🚀 +1.25R Locked" : (pos.tp1_locked ? "🔒 +1R Locked" : (pos.breakeven_locked ? "🛡️ Break-Even Netto" : "Iniziale"))}</span></div>
     <div class="stat-row"><span>Indicazione Operativa</span><span class="val-bold" style="color:var(--accent);">${manualPosAdvice}</span></div>`;
 }
-
 function renderPortfolioStats() {
   const s = DATA.stats;
   const wr = s.total_trades > 0 ? ((s.wins / s.total_trades) * 100).toFixed(1) + "%" : "N/A";
@@ -1737,9 +1700,10 @@ function renderPortfolioStats() {
     <div class="stat-row"><span>Win Rate Reale</span><span class="val-bold">${wr}</span></div>
     <div class="stat-row"><span>PnL Netto Cumulato</span><span class="val-bold" style="color:${pnlColor};">${s.total_pnl_pct >= 0 ? "+" : ""}${s.total_pnl_pct.toFixed(2)}% (${s.total_pnl_usdt >= 0 ? "+" : ""}${s.total_pnl_usdt.toFixed(2)} USDT)</span></div>
     <div class="stat-row"><span>PnL Giornaliero (stop a -${DATA.limits.daily_max_loss}% del capitale)</span><span class="val-bold" style="color:${dailyColor};">${(s.daily_pnl_pct || 0) >= 0 ? "+" : ""}${(s.daily_pnl_pct || 0).toFixed(2)}% (${s.daily_trades || 0}/${DATA.limits.max_trades} trade oggi)</span></div>
+    <div class="stat-row"><span>Finestra di ingresso</span><span class="val-bold" style="font-size:12px;">${esc(DATA.entry_window)}</span></div>
+    <div class="stat-row"><span>Regime di mercato (BTC)</span><span class="val-bold" style="font-size:12px;">${esc(DATA.regime)}</span></div>
     <div class="stat-row"><span>Ultima Azione Bot</span><span class="val-bold" style="font-size:12px;">${esc(s.last_action)}</span></div>`;
 }
-
 function renderScannerTable() {
   const tbody = document.getElementById("scanner-tbody");
   tbody.innerHTML = "";
@@ -1760,13 +1724,12 @@ function renderScannerTable() {
     tr.innerHTML = `
       <td><strong>${esc(c.code)}</strong> <span style="color:var(--muted); font-size:11px;">${esc(c.name)}</span></td>
       <td id="price-cell-${c.code}" class="val-bold">${fmtPrice(cur)}</td>
-      <td><span class="pill ${scoreClass}">${c.final_score}/10 (${c.raw_100})</span></td>
+      <td><span class="pill ${scoreClass}">${c.final_score}/10 (${c.raw_100}/${c.raw_min})</span></td>
       <td class="val-bold">${c.ai_prob}%</td><td>${timerBadge}</td><td>${riskBadge}</td>
       <td style="font-weight:700; color:${adviceColor};">${manualAdvice}</td>`;
     tbody.appendChild(tr);
   });
 }
-
 function renderCoinDetail() {
   const c = DATA.coins.find(x => x.code === selectedCoinCode) || DATA.coins[0];
   const cur = livePrices[c.code] || c.price;
@@ -1779,18 +1742,18 @@ function renderCoinDetail() {
         <div class="stat-row"><span>Budget a rischio fisso</span><span class="val-bold">${c.pos_usdt.toFixed(2)} USDT</span></div>
         <div class="stat-row"><span>Stop-Loss Iniziale</span><span class="val-bold" style="color:var(--red);">${fmtPrice(c.sl_price)}</span></div>
         <div class="stat-row"><span>Take-Profit Target</span><span class="val-bold" style="color:var(--green);">${fmtPrice(c.tp_price)}</span></div>
-        <div class="stat-row"><span>Livelli Profit-Lock (BE / +1R / +1.45R)</span><span class="val-bold">${fmtPrice(c.be_trigger)} / ${fmtPrice(c.tp1_trigger)} / ${fmtPrice(c.tp2_trigger)}</span></div>
+        <div class="stat-row"><span>Livelli Profit-Lock (BE / +1R / +1.25R)</span><span class="val-bold">${fmtPrice(c.be_trigger)} / ${fmtPrice(c.tp1_trigger)} / ${fmtPrice(c.tp2_trigger)}</span></div>
       </div>
       <div>
         <div class="stat-row"><span>Reti Neurali (MLP / k-NN / MonteCarlo)</span><span class="val-bold">${c.prob_mlp}% / ${c.prob_knn}% / ${c.prob_mc}%</span></div>
         <div class="stat-row"><span>Time Machine (20 pattern simili)</span><span class="val-bold">WinRate ${c.tm_wr}% (${c.tm_exp >= 0 ? "+" : ""}${c.tm_exp}R)</span></div>
         <div class="stat-row"><span>RSI 1H / RSI 15m / Orderbook L2</span><span class="val-bold">${c.rsi_1h} / ${c.rsi_15m} / ${c.ob_imb >= 0 ? "+" : ""}${c.ob_imb}%</span></div>
+        <div class="stat-row"><span>Volatilita' ATR 1h</span><span class="val-bold">${c.atr_pct}%</span></div>
         <div class="stat-row"><span>Dettaglio Entry Timer 15m</span><span class="val-bold">${esc(c.timer_summary)}</span></div>
         <div class="stat-row"><span>Stato Risk Manager</span><span class="val-bold">${esc(c.risk_status)}</span></div>
       </div>
     </div>`;
 }
-
 function renderHistoryTable() {
   const hist = DATA.history || [];
   document.getElementById("history-count").textContent = hist.length + " operazioni registrate";
@@ -1809,7 +1772,6 @@ function renderHistoryTable() {
       <td>${esc(h.reason)}</td></tr>`;
   }).join("");
 }
-
 function updateLivePrice(code, newPrice) {
   if (!newPrice || newPrice <= 0) return;
   const oldPrice = livePrices[code] || newPrice;
@@ -1823,7 +1785,6 @@ function updateLivePrice(code, newPrice) {
   if (DATA.position.is_open && DATA.position.coin_code === code) renderOpenPosition();
   if (selectedCoinCode === code) renderCoinDetail();
 }
-
 function connectKrakenWebSocket() {
   try {
     const ws = new WebSocket("wss://ws.kraken.com");
@@ -1843,7 +1804,6 @@ function connectKrakenWebSocket() {
     ws.onclose = () => { setTimeout(connectKrakenWebSocket, 5000); };
   } catch (e) { console.warn("WS error:", e); }
 }
-
 async function forcePollKraken() {
   try {
     const pairs = DATA.coins.map(c => c.kraken).join(",");
@@ -1859,14 +1819,12 @@ async function forcePollKraken() {
     }
   } catch (e) { console.warn("Poll error:", e); }
 }
-
 renderAdvisor(); renderOpenPosition(); renderPortfolioStats(); renderScannerTable(); renderCoinDetail(); renderHistoryTable();
 connectKrakenWebSocket();
 setInterval(forcePollKraken, 8000);
-</script>
+<\/script>
 </body>
 </html>"""
-
     html = html.replace("__CONSOLE_PAYLOAD__", payload_json)
     try:
         with open(WEBAPP_FILE, "w", encoding="utf-8") as f:
@@ -1876,7 +1834,6 @@ setInterval(forcePollKraken, 8000);
         log("ERROR", f"Scrittura {WEBAPP_FILE} fallita: {e}")
         return False
 
-
 # ==============================================================================
 # 11. TELEGRAM (solo apertura / chiusura / errori / run manuale)
 # ==============================================================================
@@ -1885,13 +1842,11 @@ def build_telegram_report(ranked_evals, state, trade_status, session_str):
     advisor = build_manual_action_advisor(state, focus, {e["code"]: e for e in ranked_evals}, trade_status)
     pos, stats = state["position"], state["stats"]
     esc = html_lib.escape
-
     medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"]
     rank_lines = []
     for idx, ev in enumerate(ranked_evals[:5]):
         t_icon = "⚡" if ev["scanner_timer"]["triggered"] else "⏳"
         rank_lines.append(f"{medals[idx]} <b>{ev['code']}</b> ({fmt_price(ev['price'])}): <b>{ev['final_score']}/10</b> ({ev['raw_100']}/100) | AI {ev['ai_prob'] * 100:.0f}% | 15m {t_icon}")
-
     if pos["is_open"]:
         pos_block = (f"📌 <b>POSIZIONE APERTA SU {pos['coin_code']} ({pos['mode']}):</b>\n"
                      f"• Entry: <b>{fmt_price(pos['entry_price'])}</b> | Investito: <b>{pos['invested_usdt']:.2f} USDT</b>\n"
@@ -1899,7 +1854,6 @@ def build_telegram_report(ranked_evals, state, trade_status, session_str):
                      f"• PnL Netto Live: <b>{trade_status['pnl_pct']:+.2f}% ({trade_status['pnl_usdt']:+.2f} USDT / {trade_status['current_r']:+.2f}R)</b>")
     else:
         pos_block = "📌 <b>POSIZIONE APERTA:</b> Nessuna (100% Liquidita' in USDT)"
-
     wr = (stats["wins"] / stats["total_trades"] * 100.0) if stats["total_trades"] > 0 else 0.0
     hist = state.get("history", [])
     if hist:
@@ -1907,28 +1861,25 @@ def build_telegram_report(ranked_evals, state, trade_status, session_str):
         closed_block = f"📜 <b>ULTIMA POSIZIONE CHIUSA:</b> {h['coin']} il {h['closed_at']} -> <b>{h['pnl_pct']:+.2f}% ({h.get('pnl_usdt', 0.0):+.2f} USDT)</b> ({esc(h['reason'])})"
     else:
         closed_block = "📜 <b>ULTIMA POSIZIONE CHIUSA:</b> Nessuna operazione chiusa di recente"
-
     alerts_block = ("\n" + "\n".join(esc(a) for a in trade_status["alerts_fired"]) + "\n") if trade_status.get("alerts_fired") else ""
-
-    return f"""🤖 <b>PIONEX FAST-SCALP AI v8.0</b>
-🕒 <i>{session_str}</i>
+    regime = esc(ranked_evals[0].get("regime_note", "n/d"))
+    return f"""🤖 <b>PIONEX FAST-SCALP AI v9.0</b>
+🕒 <i>{esc(session_str)}</i>
 ━━━━━━━━━━━━━━━━━━━━
 <b>{esc(trade_status['headline'])}</b>
 {esc(trade_status['detail'])}{alerts_block}
-
 🧭 <b>COSA FARE MANUALMENTE ADESSO:</b>
 <b>{esc(advisor['badge'])}</b>
 <i>{esc(advisor['instruction'])}</i>
-
 {pos_block}
 {closed_block}
+• Oggi: <b>{stats.get('daily_trades', 0)}/{MAX_TRADES_PER_DAY} trade</b> | PnL giorno: <b>{stats.get('daily_pnl_pct', 0.0):+.2f}%</b>
+• Regime: <i>{regime}</i>
 • Bilancio Storico: <b>{stats['total_trades']} Trade</b> (Win Rate <b>{wr:.0f}%</b> | PnL Netto: <b>{stats['total_pnl_pct']:+.2f}% / {stats['total_pnl_usdt']:+.2f} USDT</b>)
-
 🏆 <b>TOP 5 CLASSIFICA FAST-SCALP (SU 10 COIN):</b>
 {chr(10).join(rank_lines)}
 ━━━━━━━━━━━━━━━━━━━━
 📲 <i>Apri il file <b>Console_Live_AI_Bot.html</b> qui sotto per lo streaming live dei prezzi!</i>"""
-
 
 def send_telegram(msg, attach_console=True):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
@@ -1951,38 +1902,33 @@ def send_telegram(msg, attach_console=True):
         except Exception as e:
             log("ERROR", f"Invio Console HTML fallito: {e}")
 
-
 # ==============================================================================
 # MAIN
 # ==============================================================================
 def main():
     mode = "LIVE (ordini reali)" if pionex_live_enabled() else "SIMULAZIONE (nessun ordine reale)"
-    log("INFO", f"Avvio Pionex Fast-Scalp AI v8.0 | Modalita': {mode}")
+    log("INFO", f"Avvio Pionex Fast-Scalp AI v9.0 | Modalita': {mode}")
     state = load_state()
     pos = state["position"]
-    now_utc = datetime.now(timezone.utc)
-    in_window = ENTRY_START_UTC <= now_utc.hour < ENTRY_END_UTC
+    sess = entry_session()
+    in_window = sess["allowed"]
     is_manual_run = GITHUB_EVENT_NAME == "workflow_dispatch"
-
-    # Fuori finestra e senza posizione: niente da fare (risparmia minuti Actions e chiamate API)
+    # Fuori sessione e senza posizione: niente da fare (risparmia minuti Actions e chiamate API)
     if not pos["is_open"] and not in_window and not is_manual_run:
-        log("INFO", f"Fuori finestra operativa ({ENTRY_START_UTC:02d}-{ENTRY_END_UTC:02d} UTC) e nessuna posizione: skip.")
+        log("INFO", f"Fuori dalle sessioni migliori ({sess['label']}) e nessuna posizione: skip.")
         return
-
     LIVE_PX.update(fetch_pionex_prices())
     eur_usd = fetch_eur_usd_rate()
     fng_val, fng_class = fetch_fear_and_greed()
     macro_events = fetch_macro_calendar()
     futures_map = fetch_all_kraken_futures()
-    session_str = skill_nyse_bell_and_session()
-
-    # Con posizione aperta e fuori finestra analizza solo la coin aperta (guardia notturna leggera)
+    session_str = f"{skill_nyse_bell_and_session()} | Ingressi: {sess['label']}"
+    # Con posizione aperta e fuori finestra analizza solo la coin aperta (guardia leggera)
     if pos["is_open"] and not (in_window or is_manual_run):
         scan_list = [COIN_MAP.get(pos["coin_code"], COINS[0])]
     else:
         scan_list = COINS
     all_evals = scan_all_coins(scan_list, futures_map, fng_val, macro_events)
-
     if pos["is_open"]:
         open_code = pos.get("coin_code", "SOL")
         if open_code not in all_evals:
@@ -1991,15 +1937,15 @@ def main():
     if not all_evals:
         log("ERROR", "Nessuna coin analizzata con successo.")
         return
-
     ranked_evals = sorted(all_evals.values(), key=lambda x: (x["raw_100"], x["scanner_timer"]["triggered"], x["ai_prob"]), reverse=True)
+    regime_ok, regime_note = market_regime(all_evals)
     for ev in ranked_evals:
         ev["risk_manager"] = skill_budget_and_risk_manager(INVEST_EUR, eur_usd, ev["price"], ev["sl_price"], ev["tp_price"], state, ev["high_soon"], ev["code"])
         ev["exit_plan"] = skill_exit_planner(ev["price"], ev["sl_price"], ev["tp_price"])
-
+        ev["regime_ok"], ev["regime_note"] = regime_ok, regime_note
+        ev["raw_min"] = required_raw_min(state["stats"], sess)
     trade_status = manage_autonomous_trading(state, ranked_evals, all_evals, eur_usd)
     generate_webapp_html(ranked_evals, state, trade_status, fng_val, fng_class, session_str, eur_usd)
-
     action_state = trade_status["action_state"]
     notify_states = ("OPENED_NOW", "CLOSED_NOW", "CLOSE_FAILED", "ENTRY_FAILED")
     if action_state in notify_states or is_manual_run:
@@ -2009,10 +1955,8 @@ def main():
         best = ranked_evals[0]
         log("INFO", f"Giro completato ({action_state} | Migliore: {best['code']} {best['raw_100']}/100). Nessun messaggio Telegram.")
     log("INFO", "Esecuzione completata.")
-
     if action_state in ("CLOSE_FAILED", "ENTRY_FAILED"):
         raise SystemExit(1)  # il job risulta rosso su GitHub: errore ben visibile (lo stato viene comunque committato)
-
 
 if __name__ == "__main__":
     main()
