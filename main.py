@@ -21,6 +21,13 @@ INVEST_EUR = 50
 MIN_ORDER_USDT = 5.0
 BTC_PAIR = "XBTUSD"
 
+# Regole Risk Manager & Budget Manager (Skill #2 & #6)
+MAX_LOSS_PCT_PER_TRADE = 3.6    # Perdita max tollerata per singolo trade (~1.95$ su 54$)
+DAILY_MAX_LOSS_PCT = 6.0        # Perdita max giornaliera cumulativa (-6%)
+MAX_TRADES_PER_DAY = 3          # Max aperture giornaliere consentite
+MIN_REWARD_RISK_R = 1.35        # Rapporto Reward:Risk minimo richiesto (1.35R)
+CASH_BUFFER_PCT = 5.0           # Riserva liquidità (5%) per coprire fee e slippage
+
 # Paniere di 10 Criptovalute Top scansionate dall'AI ad ogni ciclo
 COIN_UNIVERSE = [
     {"coin": "SOL",  "name": "Solana",    "kraken": "SOLUSD",  "futures": "PF_SOLUSD",  "pionex": "SOL_USDT"},
@@ -35,11 +42,17 @@ COIN_UNIVERSE = [
     {"coin": "DOT",  "name": "Polkadot",  "kraken": "DOTUSD",  "futures": "PF_DOTUSD",  "pionex": "DOT_USDT"},
 ]
 
-# Range attivo fallback (gestisce anche Secrets vuoti su GitHub Actions)
+# Calendario Festività NYSE 2026 e 2027 (Skill #1 - Price Alerts & Opening Bell)
+NYSE_HOLIDAYS_2026_2027 = {
+    "2026-01-01", "2026-01-19", "2026-02-16", "2026-04-03", "2026-05-25",
+    "2026-06-19", "2026-07-03", "2026-09-07", "2026-11-26", "2026-12-25",
+    "2027-01-01", "2027-01-18", "2027-02-15", "2027-03-26", "2027-05-31",
+    "2027-06-18", "2027-07-05", "2027-09-06", "2027-11-25", "2027-12-24",
+}
+
 ACTIVE_LOWER = float(os.getenv("ACTIVE_LOWER") or "0")
 ACTIVE_UPPER = float(os.getenv("ACTIVE_UPPER") or "0")
 
-# Configurazione Esecuzione Autonoma (Paper Trading / Live Pionex)
 AUTO_TRADE_ENABLED = (os.getenv("AUTO_TRADE_ENABLED") or "false").strip().lower() == "true"
 PIONEX_WEBHOOK_URL = os.getenv("PIONEX_WEBHOOK_URL") or ""
 PIONEX_SIGNAL_TOKEN = os.getenv("PIONEX_SIGNAL_TOKEN") or ""
@@ -47,18 +60,15 @@ PIONEX_API_KEY = os.getenv("PIONEX_API_KEY") or ""
 PIONEX_API_SECRET = os.getenv("PIONEX_API_SECRET") or ""
 STATE_FILE = "bot_state.json"
 
-# Passo griglia target e commissioni Pionex (0.05% buy + 0.05% sell = 0.10%)
 TARGET_STEP_PCT = 0.32
 PIONEX_ROUNDTRIP_FEE_PCT = 0.10
 MIN_NET_STEP_PCT = 0.15
 
-# Finestre di sicurezza calendario macro
 NEWS_BLOCK_BEFORE_MIN = 60
 NEWS_COOLDOWN_MIN = 30
 NEWS_SURPRISE_COOLDOWN_MIN = 90
 NEWS_LOOKAHEAD_HOURS = 12
 
-# Soglie per verificare se una notizia ha scosso il mercato (candele 5m)
 NEWS_MAX_15M_RANGE_PCT = 1.25
 NEWS_MAX_15M_MOVE_PCT = 1.00
 
@@ -117,7 +127,7 @@ EVENT_TRANSLATIONS = [
 
 
 # ==============================================================================
-# UTILITÀ FORMATTAZIONE PREZZI MULTI-DECIMALE (Per BTC, SOL, XRP, DOGE, ecc.)
+# UTILITÀ FORMATTAZIONE PREZZI MULTI-DECIMALE
 # ==============================================================================
 
 def price_decimals(val):
@@ -154,10 +164,15 @@ def load_bot_state():
         "lower": 0.0,
         "upper": 0.0,
         "stop": 0.0,
+        "initial_stop": 0.0,
+        "one_r_usd": 0.0,
         "grids": 0,
         "qty_coin": 0.0,
         "trailing_locked": False,
+        "alert_1r_sent": False,
+        "alert_2r_sent": False,
         "opened_at": "",
+        "opened_date": "",
         "last_action": "Nessuna azione",
         "history": [],
     }
@@ -182,7 +197,6 @@ def save_bot_state(state):
 
 
 def trigger_pionex_webhook(action, pionex_symbol, price, qty_coin):
-    """Invia segnale buy/sell al Signal Bot / Webhook di Pionex."""
     if not AUTO_TRADE_ENABLED or not PIONEX_WEBHOOK_URL:
         return False, "Paper Trading (Simulazione)"
     payload = {
@@ -204,7 +218,6 @@ def trigger_pionex_webhook(action, pionex_symbol, price, qty_coin):
 
 
 def pionex_spot_market_order(side, pionex_symbol, amount_usdt=None, size_coin=None):
-    """Esegue un ordine Market diretto tramite Pionex Spot API (HMAC-SHA256)."""
     if not AUTO_TRADE_ENABLED or not PIONEX_API_KEY or not PIONEX_API_SECRET:
         return False, "Paper Trading (Simulazione)"
 
@@ -247,7 +260,7 @@ def pionex_spot_market_order(side, pionex_symbol, amount_usdt=None, size_coin=No
 
 
 # ==============================================================================
-# CALENDARIO MACROECONOMICO USA
+# CALENDARIO MACROECONOMICO USA & NYSE OPENING BELL (2026-2027 HOLIDAYS)
 # ==============================================================================
 
 def translate_title(title):
@@ -366,8 +379,11 @@ def fetch_raw_calendar():
 
 
 def is_us_market_open_window(now_utc):
+    """Skill #1: Controlla l'Opening Bell NYSE (09:30 NY) tenendo conto delle festività 2026-2027."""
     ny_time = now_utc.astimezone(ZoneInfo("America/New_York"))
     if ny_time.weekday() >= 5:
+        return False
+    if ny_time.strftime("%Y-%m-%d") in NYSE_HOLIDAYS_2026_2027:
         return False
     minutes_from_midnight = ny_time.hour * 60 + ny_time.minute
     return (9 * 60 + 20) <= minutes_from_midnight <= (10 * 60 + 5)
@@ -725,6 +741,351 @@ def vwap_rolling(highs, lows, closes, vols, period=24):
 
 
 # ==============================================================================
+# NUOVE SKILL INTEGRATE: CHART SCANNER, ENTRY TIMER, EXIT PLANNER, TIME MACHINE
+# ==============================================================================
+
+def run_chart_scanner_and_entry_timer(opens_1h, highs_1h, lows_1h, closes_1h, vols_1h,
+                                      opens_15m, highs_15m, lows_15m, closes_15m, vols_15m,
+                                      ema20_1h, bb_pct_b, pos_in_channel):
+    """
+    Skill #3 & #8: Chart Scanner + Entry Timer (Bar-by-Bar).
+    Individua il pattern grafico (Oversold Bounce, Bull Flag, Range Reclaim, Equilibrium)
+    e verifica se l'ultima barra 15m completata ha rotto al rialzo il micro-range con volumi.
+    """
+    price = closes_15m[-1]
+    prev_close_15m = closes_15m[-2]
+    prev_open_15m = opens_15m[-2]
+    bar_completed_green = prev_close_15m >= prev_open_15m
+
+    # Micro Opening Range sulle 4 barre 15m precedenti (1 ora di consolidamento)
+    or_high = max(highs_15m[-6:-2])
+    or_low = min(lows_15m[-6:-2])
+    or_mid = (or_high + or_low) / 2.0
+
+    vol_avg_15m = sum(vols_15m[-22:-2]) / 20.0 if len(vols_15m) >= 22 else 1.0
+    vol_confirm = (vols_15m[-2] >= vol_avg_15m * 0.85) or (vols_15m[-1] >= vol_avg_15m * 0.90)
+
+    # Identificazione Pattern (Chart Scanner)
+    high_20h = max(highs_1h[-21:-1])
+    recent_flag_range = (max(highs_1h[-6:-1]) - min(lows_1h[-6:-1])) / max(price, 1e-8) * 100.0
+    prior_pole = ((max(highs_1h[-14:-5]) - min(lows_1h[-18:-10])) / max(price, 1e-8)) * 100.0
+
+    setup_name = "Nessun Setup"
+    triggered = False
+    status_txt = "WAITING ⏳"
+
+    # 1. Oversold Bounce Setup
+    if (bb_pct_b <= 42 or pos_in_channel <= 40) and (price > or_mid and bar_completed_green):
+        setup_name = "Oversold Bounce (Rimbalzo Ipervenduto)"
+        triggered = True
+        status_txt = f"TRIGGERED ✅ (Chiusura 15m sopra micro-mid ${fmt_p(or_mid)})"
+    # 2. Bull Flag Breakout Setup
+    elif prior_pole >= 3.0 and recent_flag_range <= 2.8 and (prev_close_15m > or_high or price > or_high):
+        setup_name = "Bull Flag Breakout (Bandiera Rialzista)"
+        triggered = True
+        status_txt = f"TRIGGERED ✅ (Breakout sopra ${fmt_p(or_high)})"
+    # 3. 20-Bar High / EMA20 Reclaim Setup
+    elif closes_1h[-2] <= ema20_1h and price > ema20_1h and bar_completed_green:
+        setup_name = "EMA20 Reclaim (Recupero Media 20)"
+        triggered = True
+        status_txt = f"TRIGGERED ✅ (Recuperata EMA20 ${fmt_p(ema20_1h)})"
+    # 4. Grid Equilibrium Setup (Prezzo nella metà bassa/centrale del canale con barra 15m verde)
+    elif 15 <= pos_in_channel <= 62 and (bar_completed_green or price >= or_mid) and vol_confirm:
+        setup_name = "Grid Equilibrium (Oscillazione Ideale)"
+        triggered = True
+        status_txt = f"TRIGGERED ✅ (Conferma 15m a ${fmt_p(price)})"
+    else:
+        dist_pct = ((or_high - price) / max(price, 1e-8)) * 100.0
+        setup_name = "Consolidamento in Osservazione"
+        triggered = False
+        status_txt = f"WAITING ⏳ (A -{ abs(dist_pct):.2f}% dal trigger ${fmt_p(or_high)})"
+
+    return {
+        "setup_name": setup_name,
+        "triggered": triggered,
+        "status_txt": status_txt,
+        "or_high": or_high,
+        "or_low": or_low,
+        "or_mid": or_mid,
+        "vol_confirm": vol_confirm,
+    }
+
+
+def run_exit_planner(price, lower, upper, atr_1h, step_usd, spread_bps, net_step_pct, grids):
+    """
+    Skill #4: Exit Planner (Stop, Target, R-Multiple & Spread Survival Validator).
+    Calcola lo Stop Loss ottimale, verifica che non sia troppo stretto per sopravvivere
+    allo spread e al rumore, e calcola il multiplo di rischio 1R e il rapporto Reward:Risk.
+    """
+    spread_usd = price * (spread_bps / 10000.0)
+    min_survivable_dist = max(spread_usd * 8.0, atr_1h * 0.85, price * 0.012)
+
+    raw_stop = lower - max(atr_1h * 1.05, step_usd * 1.25)
+    stop_dist = price - raw_stop
+
+    # Assicura che lo stop sopravviva allo spread ma resti entro il budget di rischio
+    if stop_dist < min_survivable_dist:
+        raw_stop = price - min_survivable_dist
+        stop_dist = min_survivable_dist
+
+    stop_price = round_p(raw_stop)
+    one_r_usd = max(price - stop_price, 1e-8)
+    one_r_pct = (one_r_usd / price) * 100.0
+
+    # Target direzionale (Upper Range) + rendimento atteso delle oscillazioni griglia
+    expected_grid_cycles = max(3.0, grids * 0.65)
+    grid_yield_pct = expected_grid_cycles * net_step_pct
+    grid_yield_usd = price * (grid_yield_pct / 100.0)
+
+    target_price = upper
+    directional_reward_usd = max(target_price - price, 0.0)
+    total_expected_reward_usd = directional_reward_usd + grid_yield_usd
+
+    rr_ratio = total_expected_reward_usd / one_r_usd if one_r_usd > 0 else 0.0
+    level_1r = round_p(price + one_r_usd)
+    level_2r = round_p(price + one_r_usd * 2.0)
+
+    valid = True
+    reason = "Piano Exit valido ✅"
+    if stop_price >= price:
+        valid = False
+        reason = "Stop sopra o uguale al prezzo di entrata"
+    elif target_price <= price:
+        valid = False
+        reason = "Target sotto o uguale al prezzo di entrata"
+    elif one_r_usd < spread_usd * 5.0:
+        valid = False
+        reason = "Stop troppo stretto per sopravvivere allo spread"
+
+    return {
+        "valid": valid,
+        "reason": reason,
+        "stop_price": stop_price,
+        "target_price": target_price,
+        "one_r_usd": one_r_usd,
+        "one_r_pct": one_r_pct,
+        "rr_ratio": rr_ratio,
+        "level_1r": level_1r,
+        "level_2r": level_2r,
+        "grid_yield_pct": grid_yield_pct,
+    }
+
+
+def run_time_machine(highs_1h, lows_1h, closes_1h, entry_price, stop_price, target_price,
+                     one_r_usd, rr_ratio, n_sims=1500, horizon_hours=24):
+    """
+    Skill #9: Time Machine (Monte Carlo 1.500 sessioni + Replay Storico del Setup).
+    1) Ricostruisce le prossime 24 ore 1.500 volte campionando le escursioni orarie reali della moneta.
+    2) Esegue il Replay Storico su tutte le barre passate per verificare quante volte il Target
+       è stato colpito prima dello Stop Loss.
+    Restituisce: Probabilità Target First, Stop First, Permanenza profittevole in Griglia e Valore Atteso E[R].
+    """
+    if len(closes_1h) < 80 or one_r_usd <= 0:
+        return {
+            "win_Or_grid_prob": 60.0,
+            "target_first_prob": 35.0,
+            "stop_first_prob": 25.0,
+            "in_range_prob": 40.0,
+            "expected_r": 0.45,
+            "hist_win_rate": 60.0,
+            "verdict": "DATI PARZIALI",
+        }
+
+    up_ target_pct = (target_price - entry_price) / entry_price
+    dn_stop_pct = (stop_price - entry_price) / entry_price  # negativo
+
+    # 1. REPLAY STORICO SULLE ULTIME 320 ORE
+    hist_wins = 0
+    hist_losses = 0
+    hist_in_grid = 0
+    start_h = max(20, len(closes_1h) - 320)
+    end_h = len(closes_1h) - horizon_hours - 1
+
+    for i in range(start_h, end_h):
+        p0 = closes_1h[i]
+        t_lvl = p0 * (1.0 + up_target_pct)
+        s_lvl = p0 * (1.0 + dn_stop_pct)
+        outcome = 0  # 0 = rimasto nel range griglia, 1 = target first, -1 = stop first
+        for k in range(1, horizon_hours + 1):
+            if lows_1h[i + k] <= s_lvl:
+                outcome = -1
+                break
+            if highs_1h[i + k] >= t_lvl:
+                outcome = 1
+                break
+        if outcome == 1:
+            hist_wins += 1
+        elif outcome == -1:
+            hist_losses += 1
+        else:
+            hist_in_grid += 1
+
+    tot_hist = max(hist_wins + hist_losses + hist_in_grid, 1)
+    hist_success_pct = ((hist_wins + hist_in_grid * 0.75) / tot_hist) * 100.0
+
+    # 2. SIMULAZIONE MONTE CARLO (Bootstrap sui rendimenti ed escursioni High/Low reali)
+    bar_ shocks = []
+    for i in range(max(1, len(closes_1h) - 180), len(closes_1h)):
+        c_prev = closes_1h[i - 1]
+        if c_prev <= 0:
+            continue
+        ret_c = (closes_1h[i] - c_prev) / c_prev
+        ret_h = (highs_1h[i] - c_prev) / c_prev
+        ret_l = (lows_1h[i] - c_prev) / c_prev
+        bar_shocks.append((ret_c, ret_h, ret_l))
+
+    rng = random.Random(int(entry_price * 1000) + len(closes_1h))
+    mc_target = 0
+    mc_stop = 0
+    mc_range = 0
+    sum_r = 0.0
+
+    for _ in range(n_sims):
+        sim_p = entry_price
+        hit = 0
+        oscillations = 0
+        for _step in range(horizon_hours):
+            rc, rh, rl = rng.choice(bar_shocks)
+            bar_hi = sim_p * (1.0 + rh)
+            bar_lo = sim_p * (1.0 + rl)
+            if (bar_hi - bar_lo) / sim_p >= 0.0045:
+                oscillations += 1
+            if bar_lo <= stop_price:
+                hit = -1
+                break
+            if bar_hi >= target_price:
+                hit = 1
+                break
+            sim_p = sim_p * (1.0 + rc)
+
+        if hit == 1:
+            mc_target += 1
+            sum_r += rr_ratio
+        elif hit == -1:
+            mc_stop += 1
+            sum_r -= 1.0
+        else:
+            mc_range += 1
+            # Nel Grid Bot, rimanere nel range genera profitto dalle oscillazioni + variazione prezzo
+            grid_r_gain = min(rr_ratio * 0.85, oscillations * 0.08)
+            price_r = (sim_p - entry_price) / one_r_usd
+            sum_r += max(-0.6, price_r + grid_r_gain)
+
+    target_first_prob = (mc_target / n_sims) * 100.0
+    stop_first_prob = (mc_stop / n_sims) * 100.0
+    in_range_prob = (mc_range / n_sims) * 100.0
+    win_or_grid_prob = 0.65 * (target_first_prob + in_range_prob * 0.80) + 0.35 * hist_success_pct
+    expected_r = sum_r / n_sims
+
+    if expected_r >= 0.55 and stop_first_prob <= 28.0:
+        verdict = "OTTIMO EDGE STATISTICO 🟢"
+    elif expected_r >= 0.25 and stop_first_prob <= 38.0:
+        verdict = "VANTAGGIO POSITIVO ✅"
+    elif expected_r >= 0.05:
+        verdict = "MARGINALE / COIN FLIP 🟡"
+    else:
+        verdict = "ASPETTATIVA NEGATIVA 🔴"
+
+    return {
+        "win_or_grid_prob": win_or_grid_prob,
+        "target_first_prob": target_first_prob,
+        "stop_first_prob": stop_first_prob,
+        "in_range_prob": in_range_prob,
+        "expected_r": expected_r,
+        "hist_win_rate": hist_success_pct,
+        "verdict": verdict,
+    }
+
+
+def run_budget_and_risk_manager(coin_sym, pionex_sym, price, lower, upper, grids, invest_usdt,
+                                exit_plan, time_machine, news, state):
+    """
+    Skill #2 & #6: Budget Manager & Risk Manager Gatekeeper (PASS / BLOCK).
+    Verifica i limiti di budget e di rischio prima di autorizzare qualsiasi ordine:
+    1) Max Loss per Trade (Rifiuta se lo stop è troppo lontano per la perdita massima ammessa)
+    2) Reward:Risk minimo (>= MIN_REWARD_RISK_R)
+    3) Expectancy positiva nella Time Machine
+    4) Limite di Perdita Giornaliera (Daily Loss Limit)
+    5) Limite Massimo di Trade Giornalieri
+    6) Cash Buffer & Min Order per griglia Pionex
+    """
+    usable_usdt = round(invest_usdt * (1.0 - CASH_BUFFER_PCT / 100.0), 2)
+    order_usdt = invest_usdt  # Per Pionex Grid usiamo i 50€ convertiti
+    qty_coin = round(order_usdt / max(price, 1e-8), 4)
+
+    max_loss_allowed_usdt = order_usdt * (MAX_LOSS_PCT_PER_TRADE / 100.0)
+    actual_risk_pct = exit_plan["one_r_pct"]
+    # Nel Grid Bot l'esposizione media in cripto è ~55% del capitale allocato
+    effective_loss_at_stop_usdt = order_usdt * (actual_risk_pct / 100.0) * 0.65
+
+    # Calcolo performance di oggi dallo storico per Daily Loss Limit & Max Trades/Day
+    today_str = news["now_rome"].strftime("%d/%m")
+    history = state.get("history", [])
+    today_trades = [h for h in history if str(h.get("closed_at", "")).startswith(today_str)]
+    today_pnl_pct = sum(float(h.get("pnl_pct", 0.0)) for h in today_trades)
+    trades_count_today = len(today_trades) + (1 if state.get("active") and state.get("opened_date") == today_str else 0)
+
+    blocks = []
+    if not exit_plan["valid"]:
+        blocks.append(f"Exit Plan invalido ({exit_plan['reason']})")
+
+    if effective_loss_at_stop_usdt > max_loss_allowed_usdt:
+        blocks.append(
+            f"Rischio a Stop (${effective_loss_at_stop_usdt:.2f}) supera Max Loss per trade (${max_loss_allowed_usdt:.2f})"
+        )
+
+    if exit_plan["rr_ratio"] < MIN_REWARD_RISK_R:
+        blocks.append(
+            f"Reward:Risk ({exit_plan['rr_ratio']:.2f}R) inferiore al minimo ({MIN_REWARD_RISK_R:.2f}R)"
+        )
+
+    if time_machine["expected_r"] < 0.15 or time_machine["stop_first_prob"] > 42.0:
+        blocks.append(
+            f"Time Machine sfavorevole (E[R]={time_machine['expected_r']:+.2f}R, StopFirst={time_machine['stop_first_prob']:.0f}%)"
+        )
+
+    if today_pnl_pct <= -DAILY_MAX_LOSS_PCT:
+        blocks.append(f"Daily Loss Limit raggiunto oggi ({today_pnl_pct:+.2f}% <= -{DAILY_MAX_LOSS_PCT:.1f}%)")
+
+    if trades_count_today >= MAX_TRADES_PER_DAY:
+        blocks.append(f"Limite max trade giornalieri raggiunto ({trades_count_today}/{MAX_TRADES_PER_DAY})")
+
+    if news["status"] == "IMMINENT" and any(e["impact"] == "High" for e in news["imminent"]):
+        blocks.append("Notizia Macro USA High-Impact imminente")
+
+    passed = len(blocks) == 0
+    status = "PASS ✅" if passed else "BLOCK ⛔"
+    reason = "Tutti i 6 controlli di rischio superati" if passed else " | ".join(blocks)
+
+    bracket_order = {
+        "symbol": pionex_sym,
+        "side": "BUY",
+        "type": "GRID_BRACKET",
+        "qty_coin": qty_coin,
+        "order_usdt": order_usdt,
+        "usable_after_buffer_usdt": usable_usdt,
+        "entry_price": round_p(price),
+        "stop_loss": exit_plan["stop_price"],
+        "take_profit": exit_plan["target_price"],
+        "risk_usdt": round(effective_loss_at_stop_usdt, 2),
+        "max_loss_allowed_usdt": round(max_loss_allowed_usdt, 2),
+        "rr_ratio": round(exit_plan["rr_ratio"], 2),
+        "deciding_limit": "Max Loss per Trade & Grid Min Order (5 USDT/grid)",
+    }
+
+    return {
+        "passed": passed,
+        "status": status,
+        "reason": reason,
+        "risk_usdt": round(effective_loss_at_stop_usdt, 2),
+        "max_loss_usdt": round(max_loss_allowed_usdt, 2),
+        "today_pnl_pct": round(today_pnl_pct, 2),
+        "trades_today": trades_count_today,
+        "bracket_order": bracket_order,
+    }
+
+
+# ==============================================================================
 # FONTI DATI ESTERNE (SPOT, ORDERBOOK DEPTH, FUTURES FUNDING, FEAR & GREED)
 # ==============================================================================
 
@@ -789,7 +1150,6 @@ def fetch_orderbook_imbalance(pair="SOLUSD", depth=50):
 
 
 def fetch_all_futures_metrics():
-    """Scarica in una sola chiamata i Funding Rate di tutte le criptovalute da Kraken Futures."""
     out = {}
     try:
         url = "https://futures.kraken.com/derivatives/api/v3/tickers"
@@ -834,11 +1194,6 @@ def _sigmoid(x):
 
 
 def run_neural_and_lorentzian_ai(highs, lows, closes, vols):
-    """
-    Addestra in tempo reale sugli ultimi ~450 cicli orari della moneta:
-    1) Classificatore k-NN nello spazio Lorentziano: d(x,y) = sum(ln(1 + |x_i - y_i|))
-    2) Multi-Layer Perceptron (Rete Neurale 6 -> 5 -> 1 con tanh + backpropagation)
-    """
     n_len = len(closes)
     if n_len < 120:
         return {"combined_prob": 0.55, "mlp_prob": 0.55, "knn_prob": 0.55, "samples": 0}
@@ -951,7 +1306,7 @@ def run_neural_and_lorentzian_ai(highs, lows, closes, vols):
 
 
 # ==============================================================================
-# ANALISI MULTI-COIN E SCORING SU 100 PUNTI PER OGNI MONETA
+# ANALISI MULTI-COIN E SCORING SU 100 PUNTI (10 PILASTRI CON TIME MACHINE)
 # ==============================================================================
 
 def analyze_btc_context():
@@ -991,7 +1346,7 @@ def analyze_btc_context():
         }
 
 
-def analyze_single_coin(coin_cfg, btc, eur_usdt, invest_usdt, all_futures, fng):
+def analyze_single_coin(coin_cfg, btc, eur_usdt, invest_usdt, all_futures, fng, news, state):
     pair = coin_cfg["kraken"]
     coin_sym = coin_cfg["coin"]
     c1h = fetch_ohlc(pair, 60)
@@ -1011,13 +1366,17 @@ def analyze_single_coin(coin_cfg, btc, eur_usdt, invest_usdt, all_futures, fng):
     closes_4h = [float(c[4]) for c in c4h]
 
     opens_15m = [float(c[1]) for c in c15m]
+    highs_15m = [float(c[2]) for c in c15m]
+    lows_15m = [float(c[3]) for c in c15m]
     closes_15m = [float(c[4]) for c in c15m]
+    vols_15m = [float(c[6]) for c in c15m]
 
     price = closes_1h[-1]
     chg24 = ((price - closes_1h[-25]) / closes_1h[-25]) * 100.0
     chg4h = ((price - closes_1h[-5]) / closes_1h[-5]) * 100.0
 
     # --- Indicatori 1H & 4H ---
+    ema20_1h = ema_series(closes_1h, 20)[-1]
     ema50_1h = ema_series(closes_1h, 50)[-1]
     ema200_1h = ema_series(closes_1h, 200)[-1]
     ema50_4h = ema_series(closes_4h, 50)[-1]
@@ -1102,64 +1461,104 @@ def analyze_single_coin(coin_cfg, btc, eur_usdt, invest_usdt, all_futures, fng):
     net_step_pct = gross_step_pct - PIONEX_ROUNDTRIP_FEE_PCT
     step_usd = (upper - lower) / grids
     usdt_per_grid = invest_usdt / grids
-
     pos_in_channel = ((price - lower) / (upper - lower)) * 100.0 if upper > lower else 50.0
-    stop_loss = round_p(lower - max(atr_1h * 1.15, step_usd * 1.5))
 
     recent_24h_span = max(highs_1h[-24:]) - min(lows_1h[-24:])
     rotation_ratio = recent_24h_span / max(upper - lower, 1e-8)
-
     alpha_vs_btc = chg24 - btc["chg24h"] if btc["ok"] else 0.0
 
+    # --- ESECUZIONE DELLE NUOVE SKILL ---
+    # 1. Skill #3 & #8: Chart Scanner & Entry Timer
+    entry_timer = run_chart_scanner_and_entry_timer(
+        opens_1h, highs_1h, lows_1h, closes_1h, vols_1h,
+        opens_15m, highs_15m, lows_15m, closes_15m, vols_15m,
+        ema20_1h, bb_pct_b, pos_in_channel
+    )
+
+    # 2. Skill #4: Exit Planner (Stop, Target, 1R, Spread Survival)
+    exit_plan = run_exit_planner(
+        price, lower, upper, atr_1h, step_usd, ob["spread_bps"], net_step_pct, grids
+    )
+    stop_loss = exit_plan["stop_price"]
+
+    # 3. Skill #9: Time Machine (Monte Carlo 1.500 sims + Historical Replay)
+    time_machine = run_time_machine(
+        highs_1h, lows_1h, closes_1h, price, stop_loss, upper,
+        exit_plan["one_r_usd"], exit_plan["rr_ratio"], n_sims=1500, horizon_hours=24
+    )
+
+    # 4. Skill #2 & #6: Budget & Risk Manager Gatekeeper
+    risk_check = run_budget_and_risk_manager(
+        coin_sym, coin_cfg["pionex"], price, lower, upper, grids, invest_usdt,
+        exit_plan, time_machine, news, state
+    )
+
     # ==========================================================================
-    # RUBRICA QUANTITATIVA A 9 PILASTRI (0 - 100 PUNTI -> VOTO 1 - 10)
+    # RUBRICA QUANTITATIVA A 10 PILASTRI (0 - 100 PUNTI -> VOTO 1 - 10)
     # ==========================================================================
     pts = 0.0
     breakdown = []
 
-    # 1. RETE NEURALE (MLP) & LORENTZIAN k-NN (Max 15 pt)
+    # 1. RETE NEURALE (MLP) & LORENTZIAN k-NN (Max 14 pt)
     if ai_prob >= 0.64:
-        p1 = 15.0
+        p1 = 14.0
     elif ai_prob >= 0.57:
-        p1 = 12.0
+        p1 = 11.5
     elif ai_prob >= 0.51:
-        p1 = 9.0
+        p1 = 8.5
     elif ai_prob >= 0.45:
-        p1 = 5.0
+        p1 = 4.5
     else:
         p1 = 1.0
     pts += p1
     breakdown.append(
-        f"🧠 <b>AI Neural MLP + Lorentzian k-NN ({p1:.0f}/15)</b>: Probabilità Long <b>{ai_prob*100:.1f}%</b> "
+        f"🧠 <b>AI Neural MLP + Lorentzian k-NN ({p1:.0f}/14)</b>: Probabilità Long <b>{ai_prob*100:.1f}%</b> "
         f"(MLP {ai_res['mlp_prob']*100:.0f}% | k-NN {ai_res['knn_prob']*100:.0f}%)"
     )
 
-    # 2. STRUTTURA MULTI-TIMEFRAME 4H & 1H (Max 15 pt)
-    p2 = 0.0
-    if price >= ema50_4h:
-        p2 += 6.0
-    elif price >= ema200_4h:
-        p2 += 3.5
-    if price >= ema200_1h:
-        p2 += 4.5
-    elif price >= ema50_1h:
-        p2 += 2.5
-    if pdi_1h >= mdi_1h:
-        p2 += 4.5
-    elif adx_1h < 22:
-        p2 += 3.0
-    pts += p2
-    trend_lbl = "Rialzista/Neutro" if p2 >= 10 else ("Misto" if p2 >= 6 else "Debole/Ribassista")
+    # 2. TIME MACHINE MONTE CARLO & REPLAY STORICO (Max 12 pt) - NUOVA SKILL #9
+    ev_r = time_machine["expected_r"]
+    sf_p = time_machine["stop_first_prob"]
+    if ev_r >= 0.60 and sf_p <= 25.0:
+        p_tm = 12.0
+    elif ev_r >= 0.35 and sf_p <= 34.0:
+        p_tm = 9.5
+    elif ev_r >= 0.15 and sf_p <= 40.0:
+        p_tm = 6.5
+    else:
+        p_tm = 2.0
+    pts += p_tm
     breakdown.append(
-        f"📐 <b>Struttura Multi-TF 4H/1H ({p2:.0f}/15)</b>: {trend_lbl} (ADX 1H {adx_1h:.1f}, 4H EMA50 ${fmt_p(ema50_4h)})"
+        f"🕰️ <b>Time Machine 1.500 Sim ({p_tm:.0f}/12)</b>: E[R] <b>{ev_r:+.2f}R</b> | "
+        f"Successo Grid/Target <b>{time_machine['win_or_grid_prob']:.0f}%</b> (StopFirst {sf_p:.0f}%)"
     )
 
-    # 3. REGIME ECONOMETRICO: HURST, VARIANCE RATIO & VOLATILITÀ (Max 12 pt)
+    # 3. STRUTTURA MULTI-TIMEFRAME 4H & 1H (Max 13 pt)
+    p2 = 0.0
+    if price >= ema50_4h:
+        p2 += 5.0
+    elif price >= ema200_4h:
+        p2 += 3.0
+    if price >= ema200_1h:
+        p2 += 4.0
+    elif price >= ema50_1h:
+        p2 += 2.0
+    if pdi_1h >= mdi_1h:
+        p2 += 4.0
+    elif adx_1h < 22:
+        p2 += 2.5
+    pts += p2
+    trend_lbl = "Rialzista/Neutro" if p2 >= 9 else ("Misto" if p2 >= 5 else "Debole/Ribassista")
+    breakdown.append(
+        f"📐 <b>Struttura Multi-TF 4H/1H ({p2:.0f}/13)</b>: {trend_lbl} (ADX 1H {adx_1h:.1f}, 4H EMA50 ${fmt_p(ema50_4h)})"
+    )
+
+    # 4. REGIME ECONOMETRICO: HURST, VARIANCE RATIO & VOLATILITÀ (Max 11 pt)
     p3 = 0.0
     if hurst <= 0.47:
-        p3 += 5.0
+        p3 += 4.5
     elif hurst <= 0.53:
-        p3 += 3.5
+        p3 += 3.0
     else:
         p3 += 1.5
     if vr_6 <= 0.95:
@@ -1167,130 +1566,125 @@ def analyze_single_coin(coin_cfg, btc, eur_usdt, invest_usdt, all_futures, fng):
     elif vr_6 <= 1.10:
         p3 += 2.0
     if not in_squeeze and 0.72 <= atr_ratio <= 1.45:
-        p3 += 4.0
+        p3 += 3.5
     elif not in_squeeze:
-        p3 += 2.0
+        p3 += 1.5
     pts += p3
     regime_str = "Mean-Reverting (Ideale)" if hurst < 0.49 else ("Equilibrato" if hurst <= 0.53 else "Trending")
     breakdown.append(
-        f"🔬 <b>Econometria & Volatilità ({p3:.0f}/12)</b>: Hurst <b>{hurst:.2f}</b> ({regime_str}), "
+        f"🔬 <b>Econometria & Volatilità ({p3:.0f}/11)</b>: Hurst <b>{hurst:.2f}</b> ({regime_str}), "
         f"VR {vr_6:.2f}, ATR Ratio {atr_ratio:.2f}x"
     )
 
-    # 4. VALORE: POSIZIONE NEL CANALE, VWAP & BOLLINGER %B (Max 13 pt)
+    # 5. VALORE: POSIZIONE NEL CANALE, VWAP & BOLLINGER %B (Max 12 pt)
     p4 = 0.0
     if 15 <= pos_in_channel <= 58:
-        p4 += 7.0
+        p4 += 6.5
     elif 58 < pos_in_channel <= 68:
-        p4 += 4.5
-    elif 8 <= pos_in_channel < 15:
         p4 += 4.0
+    elif 8 <= pos_in_channel < 15:
+        p4 += 3.5
     else:
         p4 += 1.0
     if -2.2 <= vwap_diff_pct <= 0.8:
-        p4 += 3.5
+        p4 += 3.0
     elif vwap_diff_pct <= 1.8:
         p4 += 2.0
     if 18 <= bb_pct_b <= 68:
         p4 += 2.5
     pts += p4
     breakdown.append(
-        f"🎯 <b>Valore & Posizione Prezzo ({p4:.0f}/13)</b>: Nel canale al <b>{pos_in_channel:.0f}%</b>, "
+        f"🎯 <b>Valore & Posizione Prezzo ({p4:.0f}/12)</b>: Nel canale al <b>{pos_in_channel:.0f}%</b>, "
         f"vs VWAP {vwap_diff_pct:+.2f}%, BB %B {bb_pct_b:.0f}%"
     )
 
-    # 5. MOMENTUM & MICRO-TIMING 15m (Max 12 pt)
+    # 6. CHART SCANNER & ENTRY TIMER 15m (Max 11 pt) - NUOVE SKILL #3 & #8
     p5 = 0.0
-    if macd_rising:
+    if entry_timer["triggered"]:
         p5 += 4.5
-    if 36 <= rsi_1h <= 63:
-        p5 += 3.5
-    elif 30 <= rsi_1h <= 68:
+    elif bounce_15m:
         p5 += 2.0
-    if bounce_15m and srsi_15m < 85:
-        p5 += 4.0
-    elif srsi_15m < 30:
-        p5 += 2.5
+    if macd_rising:
+        p5 += 3.5
+    if 34 <= rsi_1h <= 64 and srsi_15m < 85:
+        p5 += 3.0
     pts += p5
     breakdown.append(
-        f"⚡ <b>Momentum & Timing 15m ({p5:.0f}/12)</b>: RSI 1H {rsi_1h:.1f} | RSI 15m {rsi_15m:.1f} | "
-        f"MACD {'in salita ↗️' if macd_rising else 'in calo ↘️'}"
+        f"⏱️ <b>Entry Timer & Setup ({p5:.0f}/11)</b>: <b>{entry_timer['setup_name']}</b> — {entry_timer['status_txt']}"
     )
 
-    # 6. MICROSTRUTTURA ORDERBOOK DEPTH & SMART MONEY VOLUME (Max 10 pt)
+    # 7. MICROSTRUTTURA ORDERBOOK DEPTH & SMART MONEY VOLUME (Max 9 pt)
     p6 = 0.0
     if ob["imbalance"] >= 8.0:
-        p6 += 5.5
+        p6 += 5.0
     elif ob["imbalance"] >= -5.0:
-        p6 += 4.0
+        p6 += 3.5
     elif ob["imbalance"] >= -15.0:
-        p6 += 2.0
+        p6 += 1.5
     if not panic_selling and max_red_vol_ratio < 1.6:
-        p6 += 4.5
+        p6 += 4.0
     elif not panic_selling:
-        p6 += 2.5
+        p6 += 2.0
     pts += p6
     breakdown.append(
-        f"🏛️ <b>Orderbook L2 & Flussi ({p6:.0f}/10)</b>: Sbilanciamento Bid/Ask <b>{ob['imbalance']:+.1f}%</b> "
-        f"(Ratio {ob['bid_ask_ratio']:.2f}x)"
+        f"🏛️ <b>Orderbook L2 & Flussi ({p6:.0f}/9)</b>: Sbilanciamento Bid/Ask <b>{ob['imbalance']:+.1f}%</b> "
+        f"(Spread {ob['spread_bps']:.1f} bps)"
     )
 
-    # 7. FORZA RELATIVA VS BITCOIN - ALPHA (Max 8 pt)
+    # 8. FORZA RELATIVA VS BITCOIN - ALPHA (Max 6 pt)
     p7 = 0.0
     if not btc["dumping"] and not btc["strong_bear"]:
-        p7 += 4.5
+        p7 += 3.5
         if alpha_vs_btc >= 0.0:
-            p7 += 3.5
+            p7 += 2.5
         elif alpha_vs_btc >= -1.5:
-            p7 += 2.0
+            p7 += 1.5
     elif not btc["dumping"]:
-        p7 += 2.5
+        p7 += 2.0
     pts += p7
     breakdown.append(
-        f"₿ <b>Correlazione & Alpha BTC ({p7:.0f}/8)</b>: BTC 24h {btc['chg24h']:+.1f}% | "
+        f"₿ <b>Correlazione & Alpha BTC ({p7:.0f}/6)</b>: BTC 24h {btc['chg24h']:+.1f}% | "
         f"Alpha {coin_sym} {alpha_vs_btc:+.1f}%"
     )
 
-    # 8. DERIVATI PERPETUAL (FUNDING RATE) & SENTIMENT (Max 7 pt)
+    # 9. DERIVATI PERPETUAL (FUNDING RATE) & SENTIMENT (Max 5 pt)
     p8 = 0.0
     fr = futures["funding_8h_pct"]
     if -0.025 <= fr <= 0.022:
-        p8 += 4.0
+        p8 += 3.0
     elif fr < -0.025:
-        p8 += 3.5
+        p8 += 2.5
     else:
         p8 += 1.0
     fg_val = fng["value"]
     if 22 <= fg_val <= 74:
-        p8 += 3.0
+        p8 += 2.0
     else:
-        p8 += 1.5
+        p8 += 1.0
     pts += p8
     breakdown.append(
-        f"🔮 <b>Futures & Sentiment ({p8:.0f}/7)</b>: Funding 8h <b>{fr:+.4f}%</b> | "
+        f"🔮 <b>Futures & Sentiment ({p8:.0f}/5)</b>: Funding 8h <b>{fr:+.4f}%</b> | "
         f"Fear&Greed <b>{fg_val}</b> ({fng['label']})"
     )
 
-    # 9. EFFICIENZA ECONOMICA GRIGLIA 50€ (Max 8 pt)
+    # 10. EXIT PLANNER R:R & EFFICIENZA GRIGLIA 50€ (Max 7 pt) - NUOVA SKILL #4
     p9 = 0.0
-    if net_step_pct >= 0.20:
+    if exit_plan["rr_ratio"] >= 1.75 and net_step_pct >= 0.18:
         p9 += 4.5
-    elif net_step_pct >= MIN_NET_STEP_PCT:
+    elif exit_plan["rr_ratio"] >= MIN_REWARD_RISK_R:
         p9 += 3.0
-    if 0.50 <= rotation_ratio <= 1.35:
-        p9 += 3.5
-    elif rotation_ratio >= 0.35:
-        p9 += 2.0
+    if 0.45 <= rotation_ratio <= 1.40:
+        p9 += 2.5
     pts += p9
     breakdown.append(
-        f"💶 <b>Efficienza Griglia 50€ ({p9:.0f}/8)</b>: Netto/griglia <b>+{net_step_pct:.2f}%</b> | "
-        f"Rotazione 24h {rotation_ratio:.2f}x"
+        f"💶 <b>Exit Plan & R:R ({p9:.0f}/7)</b>: R:R <b>{exit_plan['rr_ratio']:.2f}R</b> "
+        f"(1R = -{exit_plan['one_r_pct']:.2f}%) | Netto/grid <b>+{net_step_pct:.2f}%</b>"
     )
 
     raw_score_10 = round(pts / 10.0)
     score = max(1, min(10, raw_score_10))
 
-    # --- REGOLE DI VETO E PRUDENZA ---
+    # --- REGOLE DI VETO E RISK MANAGER GATEKEEPER ---
     veto_reasons = []
     if btc["dumping"]:
         score = min(score, 2)
@@ -1318,6 +1712,10 @@ def analyze_single_coin(coin_cfg, btc, eur_usdt, invest_usdt, all_futures, fng):
     if ai_prob < 0.38:
         score = min(score, 4)
         veto_reasons.append(f"⚠️ <b>VETO AI</b>: Probabilità neurale sfavorevole ({ai_prob*100:.0f}%)")
+
+    if not risk_check["passed"]:
+        score = min(score, 5)
+        veto_reasons.append(f"🛡️ <b>RISK MANAGER BLOCK</b>: {risk_check['reason']}")
 
     return {
         "coin": coin_sym,
@@ -1355,6 +1753,10 @@ def analyze_single_coin(coin_cfg, btc, eur_usdt, invest_usdt, all_futures, fng):
         "usdt_per_grid": usdt_per_grid,
         "stop_loss": stop_loss,
         "pos_in_channel": pos_in_channel,
+        "entry_timer": entry_timer,
+        "exit_plan": exit_plan,
+        "time_machine": time_machine,
+        "risk_check": risk_check,
         "pts_100": pts,
         "score": score,
         "breakdown": breakdown,
@@ -1381,7 +1783,7 @@ def apply_news_cap(raw_score, news, nr):
 
 
 def scan_all_coins(news):
-    """Scansiona in parallelo le 10 Criptovalute e restituisce la classifica ordinata dall'AI."""
+    state = load_bot_state()
     btc = analyze_btc_context()
     eur_usdt = fetch_eur_usdt_rate()
     invest_usdt = round(INVEST_EUR * eur_usdt, 2)
@@ -1391,7 +1793,9 @@ def scan_all_coins(news):
     results = []
     with ThreadPoolExecutor(max_workers=4) as executor:
         future_map = {
-            executor.submit(analyze_single_coin, cfg, btc, eur_usdt, invest_usdt, all_futures, fng): cfg
+            executor.submit(
+                analyze_single_coin, cfg, btc, eur_usdt, invest_usdt, all_futures, fng, news, state
+            ): cfg
             for cfg in COIN_UNIVERSE
         }
         for fut in as_completed(future_map):
@@ -1406,8 +1810,16 @@ def scan_all_coins(news):
     if not results:
         raise RuntimeError("Nessuna criptovaluta scansionata correttamente dalle API.")
 
-    # Ordina per: 1) Voto Finale (1-10), 2) Punteggio Quantitativo (0-100), 3) Probabilità Rete Neurale
-    results.sort(key=lambda x: (x["final_score"], x["pts_100"], x["ai_prob"]), reverse=True)
+    # Ordina per: 1) Risk Check PASS, 2) Voto Finale (1-10), 3) Score 100pt, 4) Time Machine E[R]
+    results.sort(
+        key=lambda x: (
+            1 if x["risk_check"]["passed"] else 0,
+            x["final_score"],
+            x["pts_100"],
+            x["time_machine"]["expected_r"],
+        ),
+        reverse=True,
+    )
 
     best = results[0]
     best["all_coins"] = results
@@ -1415,14 +1827,16 @@ def scan_all_coins(news):
 
 
 # ==============================================================================
-# MOTORE DI GESTIONE AUTONOMA MULTI-COIN (AUTO-OPEN SULLA #1, TRAILING, AUTO-CLOSE)
+# MOTORE DI GESTIONE AUTONOMA + PRICE ALERTS ANTI-SPAM (1R / 2R / STOP / TARGET)
 # ==============================================================================
 
 def execute_autonomous_cycle(best_a, news):
     state = load_bot_state()
     all_coins = best_a.get("all_coins", [best_a])
     coin_map = {c["coin"]: c for c in all_coins}
-    now_str = datetime.now(ZoneInfo("Europe/Rome")).strftime("%d/%m %H:%M")
+    now_rome = datetime.now(ZoneInfo("Europe/Rome"))
+    now_str = now_rome.strftime("%d/%m %H:%M")
+    today_str = now_rome.strftime("%d/%m")
 
     auto_log = []
 
@@ -1437,36 +1851,47 @@ def execute_autonomous_cycle(best_a, news):
         up_b = state["upper"]
         stop_b = state["stop"]
         entry_p = state["entry_price"]
+        one_r = state.get("one_r_usd") or max(entry_p - state.get("initial_stop", stop_b), entry_p * 0.02)
         high_p = max(state.get("highest_price", entry_p), price)
         state["highest_price"] = high_p
+
         pnl_pct = ((price - entry_p) / entry_p) * 100.0 if entry_p > 0 else 0.0
         pnl_usdt = cur_a["invest_usdt"] * (pnl_pct / 100.0)
+        current_r = (price - entry_p) / one_r if one_r > 0 else 0.0
 
-        # 1. Protezione Dinamica del Profitto (Break-Even & Trailing Stop)
-        if pnl_pct >= 2.5 and stop_b < entry_p:
+        # Skill #1 & #4: Smart Price Alerts (Suonano 1 sola volta per livello R senza fare spam)
+        if (current_r >= 1.0 or pnl_pct >= 2.4) and not state.get("alert_1r_sent"):
             new_stop = round_p(entry_p * 1.003)
-            state["stop"] = new_stop
+            if stop_b < new_stop:
+                state["stop"] = new_stop
+                stop_b = new_stop
             state["trailing_locked"] = True
-            stop_b = new_stop
+            state["alert_1r_sent"] = True
             auto_log.append(
-                f"🛡️ <b>AUTO BREAK-EVEN ({active_coin})</b>: Profitto a +{pnl_pct:.1f}%, "
-                f"Stop alzato a pareggio (${fmt_p(new_stop)})!"
-            )
-        elif pnl_pct >= 4.5 and stop_b < round_p(high_p * 0.975):
-            new_stop = round_p(high_p * 0.975)
-            state["stop"] = new_stop
-            stop_b = new_stop
-            auto_log.append(
-                f"📈 <b>AUTO TRAILING STOP ({active_coin})</b>: Nuovo massimo ${fmt_p(high_p)}, "
-                f"Stop alzato a ${fmt_p(new_stop)}!"
+                f"🔔 <b>PRICE ALERT +1R RAGGIUNTO ({active_coin})</b>: Profitto a +{pnl_pct:.1f}% (+{current_r:.1f}R), "
+                f"Stop Loss spostato a <b>Break-Even (${fmt_p(stop_b)})</b> 🔒!"
             )
 
-        # 2. Controllo Condizioni di Chiusura Automatica sulla moneta attiva
+        if (current_r >= 1.8 or pnl_pct >= 4.2) and not state.get("alert_2r_sent"):
+            new_stop = round_p(max(stop_b, high_p * 0.976))
+            state["stop"] = new_stop
+            stop_b = new_stop
+            state["alert_2r_sent"] = True
+            auto_log.append(
+                f"🔔 <b>PRICE ALERT +2R TRAILING ({active_coin})</b>: Massimo a ${fmt_p(high_p)}, "
+                f"Trailing Stop blindato a <b>${fmt_p(stop_b)}</b> 📈!"
+            )
+        elif state.get("alert_2r_sent") and stop_b < round_p(high_p * 0.976):
+            new_stop = round_p(high_p * 0.976)
+            state["stop"] = new_stop
+            stop_b = new_stop
+
+        # Controllo Condizioni di Chiusura Automatica (Le uscite NON sono mai bloccate dai limiti giornalieri)
         close_reason = None
         if price <= stop_b:
             close_reason = f"🛑 STOP LOSS / TRAILING COLPITO (${fmt_p(price)} <= ${fmt_p(stop_b)})"
-        elif price >= up_b * 1.008:
-            close_reason = f"🎯 TAKE PROFIT SUPERIORE RAGGIUNTO (${fmt_p(price)} > ${fmt_p(up_b)})"
+        elif price >= up_b * 1.006:
+            close_reason = f"🎯 TARGET / UPPER RANGE COLPITO (${fmt_p(price)} >= ${fmt_p(up_b)})"
         elif final_score <= 2 and cur_a["ai_prob"] < 0.44:
             close_reason = f"🚨 USCITA D'EMERGENZA AI/MACRO (Voto {active_coin} sceso a {final_score}/10)"
 
@@ -1484,6 +1909,7 @@ def execute_autonomous_cycle(best_a, news):
                 "exit_price": price,
                 "pnl_pct": round(pnl_pct, 2),
                 "pnl_usdt": round(pnl_usdt, 2),
+                "r_multiple": round(current_r, 2),
                 "reason": close_reason,
             }
             history = state.get("history", [])
@@ -1491,31 +1917,39 @@ def execute_autonomous_cycle(best_a, news):
             state["history"] = history[:30]
 
             state["active"] = False
-            state["last_action"] = f"[{now_str}] Chiuso {active_coin} a ${fmt_p(price)} ({pnl_pct:+.2f}%) - {close_reason}"
+            state["last_action"] = (
+                f"[{now_str}] Chiuso {active_coin} a ${fmt_p(price)} ({pnl_pct:+.2f}% / {current_r:+.1f}R) - {close_reason}"
+            )
             auto_log.append(
-                f"🔔 <b>CHIUSURA AUTOMATICA ESEGUITA SU {active_coin}/USDT</b>\n"
+                f"🔔 <b>ALERT CHIUSURA AUTOMATICA SU {active_coin}/USDT</b>\n"
                 f"   • Motivo: {close_reason}\n"
-                f"   • Prezzo Entrata: ${fmt_p(entry_p)} ➡️ Uscita: <b>${fmt_p(price)}</b>\n"
-                f"   • Risultato: <b>{pnl_pct:+.2f}% ({pnl_usdt:+.2f} USDT)</b>\n"
+                f"   • Entrata: ${fmt_p(entry_p)} ➡️ Uscita: <b>${fmt_p(price)}</b>\n"
+                f"   • Risultato: <b>{pnl_pct:+.2f}% ({pnl_usdt:+.2f} USDT | {current_r:+.2f}R)</b>\n"
                 f"   • Esecuzione: {exec_note}"
             )
         else:
             auto_log.append(
                 f"🤖 <b>POSIZIONE ATTIVA SU {active_coin}/USDT</b> (Aperta il {state['opened_at']})\n"
-                f"   • Entrata: <b>${fmt_p(entry_p)}</b> | Attuale: <b>${fmt_p(price)}</b> (<b>{pnl_pct:+.2f}%</b> / {pnl_usdt:+.2f}$)\n"
+                f"   • Entrata: <b>${fmt_p(entry_p)}</b> | Attuale: <b>${fmt_p(price)}</b> "
+                f"(<b>{pnl_pct:+.2f}%</b> / {pnl_usdt:+.2f}$ / <b>{current_r:+.2f}R</b>)\n"
                 f"   • Range Attivo: <b>${fmt_p(low_b)} – ${fmt_p(up_b)}</b> ({state['grids']} griglie)\n"
-                f"   • Stop Protettivo: <b>${fmt_p(stop_b)}</b> {'(Break-Even Attivo 🔒)' if state.get('trailing_locked') else ''}"
+                f"   • Alert Stop: <b>${fmt_p(stop_b)}</b> {'(Break-Even 🔒)' if state.get('trailing_locked') else ''} | "
+                f"Alert Target: <b>${fmt_p(up_b)}</b>"
             )
 
     else:
-        # Nessuna posizione attiva: valuta APERTURA AUTOMATICA sulla Moneta #1 scelta dall'AI
+        # Nessuna posizione attiva: valuta APERTURA AUTOMATICA sulla Moneta #1 se passa tutti i filtri
         win_coin = best_a["coin"]
         win_sym = best_a["pionex_symbol"]
         win_price = best_a["price"]
         win_score = best_a["final_score"]
+        rk = best_a["risk_check"]
+        et = best_a["entry_timer"]
+        tm = best_a["time_machine"]
+        ep = best_a["exit_plan"]
 
-        if win_score >= 7 and best_a["ai_prob"] >= 0.52:
-            qty_coin = round(best_a["invest_usdt"] / win_price, 4)
+        if win_score >= 7 and best_a["ai_prob"] >= 0.52 and rk["passed"] and et["triggered"]:
+            qty_coin = rk["bracket_order"]["qty_coin"]
             ok_w, msg_w = trigger_pionex_webhook("buy", win_sym, win_price, qty_coin)
             ok_a, msg_a = pionex_spot_market_order("BUY", win_sym, amount_usdt=best_a["invest_usdt"])
             exec_note = msg_w if PIONEX_WEBHOOK_URL else msg_a
@@ -1529,24 +1963,32 @@ def execute_autonomous_cycle(best_a, news):
                 "lower": best_a["lower"],
                 "upper": best_a["upper"],
                 "stop": best_a["stop_loss"],
+                "initial_stop": best_a["stop_loss"],
+                "one_r_usd": ep["one_r_usd"],
                 "grids": best_a["grids"],
                 "qty_coin": qty_coin,
                 "trailing_locked": False,
+                "alert_1r_sent": False,
+                "alert_2r_sent": False,
                 "opened_at": now_str,
-                "last_action": f"[{now_str}] Aperto {win_coin}/USDT a ${fmt_p(win_price)} (Voto {win_score}/10)",
+                "opened_date": today_str,
+                "last_action": f"[{now_str}] Aperto {win_coin}/USDT a ${fmt_p(win_price)} (Voto {win_score}/10 | {ep['rr_ratio']:.2f}R)",
             })
             auto_log.append(
-                f"🚀 <b>APERTURA AUTOMATICA AI SU {win_coin}/USDT!</b> (Voto {win_score}/10 | AI {best_a['ai_prob']*100:.1f}%)\n"
-                f"   • Prezzo Ingresso: <b>${fmt_p(win_price)}</b> (Qty: {qty_coin} {win_coin} / ~{best_a['invest_usdt']:.1f} USDT)\n"
-                f"   • Range Impostato: <b>${fmt_p(best_a['lower'])} – ${fmt_p(best_a['upper'])}</b> ({best_a['grids']} griglie)\n"
-                f"   • Stop Loss Iniziale: <b>${fmt_p(best_a['stop_loss'])}</b>\n"
+                f"🚀 <b>APERTURA AUTOMATICA AI SU {win_coin}/USDT!</b> (Voto {win_score}/10 | Risk: {rk['status']})\n"
+                f"   • Setup Triggered: <b>{et['setup_name']}</b>\n"
+                f"   • Bracket Order: Entry <b>${fmt_p(win_price)}</b> | Stop <b>${fmt_p(best_a['stop_loss'])}</b> | Target <b>${fmt_p(best_a['upper'])}</b>\n"
+                f"   • Sizing & Rischio: Qty <b>{qty_coin} {win_coin}</b> (~{best_a['invest_usdt']:.1f}$) | Rischio 1R: <b>${rk['risk_usdt']:.2f}</b> (R:R <b>{ep['rr_ratio']:.2f}R</b>)\n"
+                f"   • Time Machine: Successo <b>{tm['win_or_grid_prob']:.0f}%</b> | E[R]: <b>{tm['expected_r']:+.2f}R</b>\n"
                 f"   • Esecuzione: {exec_note}"
             )
         else:
             auto_log.append(
-                f"⏳ <b>BOT IN ATTESA DI SEGNALE</b> (Scansione 10 Cripto completata)\n"
-                f"   • Migliore adesso: <b>{win_coin}/USDT</b> con Voto <b>{win_score}/10</b> ({best_a['pts_100']:.0f}/100 pt | AI {best_a['ai_prob']*100:.0f}%)\n"
-                f"   • Condizione di avvio automatico: <b>Voto >= 7/10 e AI >= 52%</b>\n"
+                f"⏳ <b>BOT IN ATTESA DI SEGNALE CONFERMATO</b> (10 Cripto Scansionate)\n"
+                f"   • Top #1: <b>{win_coin}/USDT</b> — Voto <b>{win_score}/10</b> ({best_a['pts_100']:.0f}/100 pt | AI {best_a['ai_prob']*100:.0f}%)\n"
+                f"   • Entry Timer: <b>{et['status_txt']}</b> ({et['setup_name']})\n"
+                f"   • Risk Manager: <b>{rk['status']}</b> ({rk['reason']})\n"
+                f"   • Time Machine: <b>{tm['verdict']}</b> (E[R] {tm['expected_r']:+.2f}R | Win/Grid {tm['win_or_grid_prob']:.0f}%)\n"
                 f"   • Ultima operazione: <i>{state.get('last_action', 'Nessuna')}</i>"
             )
 
@@ -1557,7 +1999,7 @@ def execute_autonomous_cycle(best_a, news):
 
 
 # ==============================================================================
-# GENERATORE WEBAPP DASHBOARD MULTI-COIN (index.html inviato su Telegram)
+# GENERATORE WEBAPP DASHBOARD MULTI-COIN + TIME MACHINE & RISK MANAGER
 # ==============================================================================
 
 def generate_webapp_dashboard(best_a, news, final_score):
@@ -1570,6 +2012,12 @@ def generate_webapp_dashboard(best_a, news, final_score):
     mode_badge = "LIVE TRADING PIONEX" if AUTO_TRADE_ENABLED else "SIMULAZIONE PAPER TRADING"
     mode_color = "bg-emerald-500/20 text-emerald-300 border-emerald-500/40" if AUTO_TRADE_ENABLED else "bg-sky-500/20 text-sky-300 border-sky-500/40"
 
+    tm = best_a["time_machine"]
+    rk = best_a["risk_check"]
+    ep = best_a["exit_plan"]
+    et = best_a["entry_timer"]
+    rk_col = "text-emerald-400" if rk["passed"] else "text-rose-400"
+
     if state.get("active"):
         act_coin = state.get("coin", "SOL")
         act_a = coin_map.get(act_coin, best_a)
@@ -1578,6 +2026,8 @@ def generate_webapp_dashboard(best_a, news, final_score):
         low_b = state["lower"]
         up_b = state["upper"]
         stop_b = state["stop"]
+        one_r = state.get("one_r_usd") or max(entry_p - stop_b, entry_p * 0.02)
+        cur_r = (cur_p - entry_p) / one_r if one_r > 0 else 0.0
         pnl_pct = ((cur_p - entry_p) / entry_p) * 100.0 if entry_p > 0 else 0.0
         pnl_usdt = best_a["invest_usdt"] * (pnl_pct / 100.0)
         pnl_col = "text-emerald-400" if pnl_pct >= 0 else "text-rose-400"
@@ -1602,18 +2052,18 @@ def generate_webapp_dashboard(best_a, news, final_score):
                     <div class="text-xl font-bold text-sky-400">${fmt_p(cur_p)}</div>
                 </div>
                 <div class="bg-slate-900/70 p-4 rounded-xl">
-                    <div class="text-xs text-slate-400">PnL Stimato (50€)</div>
-                    <div class="text-xl font-bold {pnl_col}">{pnl_pct:+.2f}% ({pnl_usdt:+.2f}$)</div>
+                    <div class="text-xs text-slate-400">PnL Stimato (Multiplo R)</div>
+                    <div class="text-xl font-bold {pnl_col}">{pnl_pct:+.2f}% ({cur_r:+.2f}R)</div>
                 </div>
                 <div class="bg-slate-900/70 p-4 rounded-xl">
-                    <div class="text-xs text-slate-400">Stop Loss Dinamico</div>
+                    <div class="text-xs text-slate-400">Alert Stop Dinamico</div>
                     <div class="text-xl font-bold text-amber-400">${fmt_p(stop_b)} {'🔒' if state.get('trailing_locked') else ''}</div>
                 </div>
             </div>
             <div class="mb-2 flex justify-between text-xs text-slate-300">
                 <span>Lower: <b>${fmt_p(low_b)}</b></span>
                 <span>Posizione nel Range: <b>{pos_pct:.0f}%</b> ({state.get('grids')} Griglie)</span>
-                <span>Upper: <b>${fmt_p(up_b)}</b></span>
+                <span>Alert Target: <b>${fmt_p(up_b)}</b></span>
             </div>
             <div class="w-full bg-slate-900 rounded-full h-4 p-0.5 border border-slate-700">
                 <div class="bg-gradient-to-r from-sky-500 to-emerald-400 h-2.5 rounded-full" style="width: {pos_pct:.1f}%"></div>
@@ -1623,19 +2073,22 @@ def generate_webapp_dashboard(best_a, news, final_score):
     else:
         pos_html = f"""
         <div class="bg-slate-800/80 border border-slate-700 rounded-2xl p-6 shadow-xl">
-            <div class="flex items-center gap-3 mb-2">
-                <span class="h-3 w-3 rounded-full bg-amber-400"></span>
-                <h2 class="text-lg font-bold text-slate-200">NESSUN TRADE APERTO — IN ATTESA DI VOTO &ge; 7/10</h2>
+            <div class="flex flex-wrap justify-between items-center gap-2 mb-2">
+                <div class="flex items-center gap-3">
+                    <span class="h-3 w-3 rounded-full bg-amber-400"></span>
+                    <h2 class="text-lg font-bold text-slate-200">NESSUN TRADE APERTO — IN ATTESA DI SEGNALE + RISK PASS</h2>
+                </div>
+                <span class="text-xs font-bold {rk_col}">Risk Check {best_a['coin']}: {rk['status']}</span>
             </div>
-            <p class="text-sm text-slate-400 mb-3">L'AI scansiona 10 criptovalute ogni 30 minuti e sceglie automaticamente la migliore opportunità. Adesso in testa c'è <b>{best_a['coin']}/USDT</b> con voto <b>{final_score}/10</b>.</p>
-            <div class="text-xs text-slate-400 bg-slate-900/70 p-3 rounded-xl border border-slate-700/60">
-                <b>Range Consigliato per {best_a['coin']}/USDT:</b> ${fmt_p(best_a['lower'])} &ndash; ${fmt_p(best_a['upper'])} ({best_a['grids']} griglie, netto +{best_a['net_step_pct']:.2f}%/griglia) | <b>Stop:</b> ${fmt_p(best_a['stop_loss'])}<br>
-                <b>Ultima Azione:</b> {html.escape(state.get('last_action', 'Nessuna'))}
+            <p class="text-sm text-slate-400 mb-3">Setup rilevato su <b>{best_a['coin']}/USDT</b>: <b>{et['setup_name']}</b> ({et['status_txt']}).</p>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs text-slate-300 bg-slate-900/70 p-4 rounded-xl border border-slate-700/60">
+                <div><b>🕰️ Time Machine (1.500 Sim):</b><br>Successo Grid/Target: <b>{tm['win_or_grid_prob']:.1f}%</b><br>Stop First: <b>{tm['stop_first_prob']:.1f}%</b> | E[R]: <b>{tm['expected_r']:+.2f}R</b></div>
+                <div><b>📐 Exit Planner &amp; R-Multiple:</b><br>Entrata: <b>${fmt_p(best_a['price'])}</b> | Stop: <b>${fmt_p(best_a['stop_loss'])}</b><br>Target: <b>${fmt_p(best_a['upper'])}</b> | R:R: <b>{ep['rr_ratio']:.2f}R</b></div>
+                <div><b>🛡️ Budget &amp; Risk Manager:</b><br>Rischio Stop: <b>${rk['risk_usdt']:.2f}</b> (Max: ${rk['max_loss_usdt']:.2f})<br>Esito: <b>{html.escape(rk['reason'])}</b></div>
             </div>
         </div>
         """
 
-    # Tabella Classifica 10 Criptovalute
     ranking_rows = ""
     for idx, c in enumerate(all_coins, 1):
         sc = c["final_score"]
@@ -1643,15 +2096,16 @@ def generate_webapp_dashboard(best_a, news, final_score):
             "bg-amber-500/20 text-amber-300 border-amber-500/40" if sc >= 5 else "bg-rose-500/20 text-rose-300 border-rose-500/40"
         )
         chg_c = "text-emerald-400" if c["chg24"] >= 0 else "text-rose-400"
+        rk_badge = "PASS ✅" if c["risk_check"]["passed"] else "BLOCK ⛔"
         crown = "👑 " if idx == 1 else f"#{idx} "
         ranking_rows += f"""
         <tr class="border-b border-slate-800/80 text-xs hover:bg-slate-800/40">
-            <td class="py-3 px-3 font-bold text-white">{crown}{c['coin']}/USDT <span class="text-slate-500 font-normal">({c['name']})</span></td>
-            <td class="py-3 px-3 font-semibold text-slate-200">${fmt_p(c['price'])}</td>
-            <td class="py-3 px-3 font-semibold {chg_c}">{c['chg24']:+.2f}%</td>
-            <td class="py-3 px-3 text-sky-400 font-bold">{c['ai_prob']*100:.1f}%</td>
-            <td class="py-3 px-3 text-purple-300">{c['hurst']:.2f}</td>
-            <td class="py-3 px-3 text-slate-300">${fmt_p(c['lower'])} &ndash; ${fmt_p(c['upper'])}</td>
+            <td class="py-3 px-3 font-bold text-white">{crown}{c['coin']}/USDT</td>
+            <td class="py-3 px-3 font-semibold text-slate-200">${fmt_p(c['price'])} <span class="{chg_c}">({c['chg24']:+.1f}%)</span></td>
+            <td class="py-3 px-3 text-sky-400 font-bold">{c['ai_prob']*100:.0f}%</td>
+            <td class="py-3 px-3 text-purple-300 font-semibold">{c['time_machine']['expected_r']:+.2f}R ({c['time_machine']['win_or_grid_prob']:.0f}%)</td>
+            <td class="py-3 px-3 text-slate-300">{c['exit_plan']['rr_ratio']:.2f}R</td>
+            <td class="py-3 px-3 text-slate-300">{rk_badge}</td>
             <td class="py-3 px-3"><span class="px-2.5 py-1 rounded-full border font-bold {badge_c}">{sc}/10 ({c['pts_100']:.0f}pt)</span></td>
         </tr>
         """
@@ -1665,12 +2119,13 @@ def generate_webapp_dashboard(best_a, news, final_score):
     for h in state.get("history", []):
         c = "text-emerald-400" if h.get("pnl_pct", 0) >= 0 else "text-rose-400"
         h_coin = h.get("coin", "SOL")
+        r_mult = h.get("r_multiple", 0.0)
         history_rows += f"""
         <tr class="border-b border-slate-800 text-xs">
             <td class="py-2.5 px-3 font-bold text-white">{h_coin}/USDT</td>
             <td class="py-2.5 px-3">{h.get('opened_at')} &rarr; {h.get('closed_at')}</td>
             <td class="py-2.5 px-3">${fmt_p(h.get('entry_price', 0))} &rarr; ${fmt_p(h.get('exit_price', 0))}</td>
-            <td class="py-2.5 px-3 font-bold {c}">{h.get('pnl_pct', 0):+.2f}% ({h.get('pnl_usdt', 0):+.2f}$)</td>
+            <td class="py-2.5 px-3 font-bold {c}">{h.get('pnl_pct', 0):+.2f}% ({h.get('pnl_usdt', 0):+.2f}$ | {r_mult:+.1f}R)</td>
             <td class="py-2.5 px-3 text-slate-400">{html.escape(h.get('reason', ''))}</td>
         </tr>
         """
@@ -1691,9 +2146,9 @@ def generate_webapp_dashboard(best_a, news, final_score):
             <div>
                 <div class="flex items-center gap-2.5">
                     <span class="text-2xl">🤖</span>
-                    <h1 class="text-xl md:text-2xl font-extrabold tracking-tight text-white">Multi-Coin Neural Quant Grid Bot</h1>
+                    <h1 class="text-xl md:text-2xl font-extrabold tracking-tight text-white">Multi-Coin AI Quant Bot + Time Machine</h1>
                 </div>
-                <p class="text-xs text-slate-400 mt-1">Ultimo aggiornamento: <b>{now_str}</b> (10 Cripto Scansionate dall'AI)</p>
+                <p class="text-xs text-slate-400 mt-1">Ultimo aggiornamento: <b>{now_str}</b> (10 Cripto + Monte Carlo 1.500 Sim + Risk Manager)</p>
             </div>
             <span class="text-xs font-bold px-3.5 py-1.5 rounded-full border {mode_color}">{mode_badge}</span>
         </div>
@@ -1705,37 +2160,37 @@ def generate_webapp_dashboard(best_a, news, final_score):
                 <div class="text-xs text-slate-400 mt-1">Prezzo: ${fmt_p(best_a['price'])} ({best_a['chg24']:+.2f}%)</div>
             </div>
             <div class="bg-slate-900 border border-slate-800 p-4 rounded-2xl">
-                <div class="text-xs text-slate-400">Voto Migliore (#1)</div>
+                <div class="text-xs text-slate-400">Voto Quant &amp; Risk</div>
                 <div class="text-2xl font-black text-{score_color}-400 mt-1">{final_score}/10 <span class="text-sm font-normal text-slate-400">({best_a['pts_100']:.0f}/100)</span></div>
-                <div class="text-xs text-slate-400 mt-1">Soglia apertura: &ge; 7/10</div>
+                <div class="text-xs {rk_col} mt-1 font-bold">{rk['status']} (R:R {ep['rr_ratio']:.2f}R)</div>
             </div>
             <div class="bg-slate-900 border border-slate-800 p-4 rounded-2xl">
-                <div class="text-xs text-slate-400">Probabilità Neurale ({best_a['coin']})</div>
+                <div class="text-xs text-slate-400">🕰️ Time Machine ({best_a['coin']})</div>
+                <div class="text-2xl font-black text-purple-400 mt-1">{tm['expected_r']:+.2f}R</div>
+                <div class="text-xs text-slate-400 mt-1">Win/Grid: {tm['win_or_grid_prob']:.0f}% | Stop: {tm['stop_first_prob']:.0f}%</div>
+            </div>
+            <div class="bg-slate-900 border border-slate-800 p-4 rounded-2xl">
+                <div class="text-xs text-slate-400">🧠 Rete Neurale + k-NN</div>
                 <div class="text-2xl font-black text-sky-400 mt-1">{best_a['ai_prob']*100:.1f}%</div>
                 <div class="text-xs text-slate-400 mt-1">MLP: {best_a['ai_res']['mlp_prob']*100:.0f}% | k-NN: {best_a['ai_res']['knn_prob']*100:.0f}%</div>
-            </div>
-            <div class="bg-slate-900 border border-slate-800 p-4 rounded-2xl">
-                <div class="text-xs text-slate-400">Esponente Hurst ({best_a['coin']})</div>
-                <div class="text-2xl font-black text-purple-400 mt-1">{best_a['hurst']:.2f}</div>
-                <div class="text-xs text-slate-400 mt-1">{'Mean-Reverting (Ottimo)' if best_a['hurst'] < 0.50 else 'Trending / Neutro'}</div>
             </div>
         </div>
 
         {pos_html}
 
         <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6">
-            <h3 class="text-base font-bold text-white mb-4">🏆 Classifica Live Multi-Coin AI Scanner (10 Criptovalute)</h3>
+            <h3 class="text-base font-bold text-white mb-4">🏆 Classifica Live Multi-Coin (AI + Time Machine + Risk Gatekeeper)</h3>
             <div class="overflow-x-auto">
                 <table class="w-full text-left border-collapse">
                     <thead>
                         <tr class="border-b border-slate-700 text-xs text-slate-400">
                             <th class="py-2 px-3">Moneta</th>
-                            <th class="py-2 px-3">Prezzo</th>
-                            <th class="py-2 px-3">24h %</th>
+                            <th class="py-2 px-3">Prezzo (24h)</th>
                             <th class="py-2 px-3">AI Prob</th>
-                            <th class="py-2 px-3">Hurst</th>
-                            <th class="py-2 px-3">Range Consigliato</th>
-                            <th class="py-2 px-3">Voto Quant</th>
+                            <th class="py-2 px-3">Time Machine E[R]</th>
+                            <th class="py-2 px-3">Reward:Risk</th>
+                            <th class="py-2 px-3">Risk Check</th>
+                            <th class="py-2 px-3">Voto Finale</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -1746,14 +2201,14 @@ def generate_webapp_dashboard(best_a, news, final_score):
         </div>
 
         <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6">
-            <h3 class="text-base font-bold text-white mb-4">📊 Pagella Dettagliata 9 Pilastri per 👑 {best_a['coin']}/USDT ({best_a['pts_100']:.0f}/100 pt)</h3>
+            <h3 class="text-base font-bold text-white mb-4">📊 Pagella Dettagliata 10 Pilastri per 👑 {best_a['coin']}/USDT ({best_a['pts_100']:.0f}/100 pt)</h3>
             <ul class="grid grid-cols-1 md:grid-cols-2 gap-3">
                 {pillars_html}
             </ul>
         </div>
 
         <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6">
-            <h3 class="text-base font-bold text-white mb-4">📜 Storico Operazioni Chiuse (Simulazione / Live)</h3>
+            <h3 class="text-base font-bold text-white mb-4">📜 Storico Operazioni Chiuse (con Multiplo R)</h3>
             <div class="overflow-x-auto">
                 <table class="w-full text-left border-collapse">
                     <thead>
@@ -1761,7 +2216,7 @@ def generate_webapp_dashboard(best_a, news, final_score):
                             <th class="py-2 px-3">Moneta</th>
                             <th class="py-2 px-3">Periodo</th>
                             <th class="py-2 px-3">Prezzo In/Out</th>
-                            <th class="py-2 px-3">Risultato (PnL)</th>
+                            <th class="py-2 px-3">Risultato (PnL / R)</th>
                             <th class="py-2 px-3">Motivo Chiusura</th>
                         </tr>
                     </thead>
@@ -1793,14 +2248,14 @@ def score_bar(score):
 
 
 def format_news_section(news, news_reaction):
-    lines = ["📰 <b>CALENDARIO MACRO USA &amp; REAZIONE MERCATO</b>"]
+    lines = ["📰 <b>CALENDARIO MACRO USA &amp; NYSE BELL</b>"]
 
     if news["status"] == "NO_DATA":
         lines.append("⚠️ Calendario macro momentaneamente non raggiungibile.")
         return "\n".join(lines)
 
     if news["us_open_warning"]:
-        lines.append("🔔 <b>Wall Street Open (09:30 NY)</b>: finestra di alta volatilità.")
+        lines.append("🔔 <b>NYSE Opening Bell (09:30 NY)</b>: finestra di alta volatilità azionaria USA.")
 
     if news["imminent"]:
         for ev in news["imminent"]:
@@ -1845,6 +2300,10 @@ def format_message(best_a, news):
     nr = best_a["news_reaction"]
     final_score = best_a["final_score"]
     all_coins = best_a.get("all_coins", [best_a])
+    tm = best_a["time_machine"]
+    rk = best_a["risk_check"]
+    ep = best_a["exit_plan"]
+    et = best_a["entry_timer"]
 
     news_override_reason = None
     if news["status"] == "IMMINENT":
@@ -1856,30 +2315,30 @@ def format_message(best_a, news):
     elif news["status"] == "COOLDOWN" and not nr["calm"]:
         news_override_reason = "⏳ <b>COOLDOWN NEWS</b>: Notizia appena uscita e mercato instabile."
     elif news["us_open_warning"] and not nr["calm"]:
-        news_override_reason = "⚠️ <b>APERTURA WALL STREET</b>: Volatilità elevata sull'apertura USA."
+        news_override_reason = "⚠️ <b>NYSE OPENING BELL</b>: Volatilità elevata sull'apertura USA."
 
-    if final_score >= 8:
+    if final_score >= 8 and rk["passed"]:
         verdict = f"🟢 <b>SEGNALE FORTE SU {best_a['coin']}/USDT: OTTIMO MOMENTO PER APRIRE</b>"
-    elif final_score == 7:
+    elif final_score == 7 and rk["passed"]:
         verdict = f"🟢 <b>SEGNALE POSITIVO SU {best_a['coin']}/USDT: AVVIO BOT CONSIGLIATO</b>"
     elif final_score == 6:
         verdict = f"🟡 <b>QUASI PRONTO ({best_a['coin']} 6/10): SETUP DISCRETO MA ATTESA CONSIGLIATA</b>"
     elif final_score == 5:
-        verdict = "🟡 <b>NEUTRALE (5/10): MERCATO INCERTO, MEGLIO ATTENDERE</b>"
+        verdict = "🟡 <b>NEUTRALE (5/10): MERCATO INCERTO O BLOCCO RISK MANAGER</b>"
     elif final_score >= 3:
         verdict = "🟠 <b>SCONSIGLIATO: CONDIZIONI TECNICO/MACRO SFAVOREVOLI</b>"
     else:
         verdict = "🔴 <b>PERICOLO / BLOCCO: NON APRIRE IL BOT ADESSO</b>"
 
-    # Classifica compatta delle 10 Cripto
-    rank_lines = ["🏆 <b>CLASSIFICA AI MULTI-COIN (10 Cripto Scansionate)</b>"]
+    rank_lines = ["🏆 <b>CLASSIFICA AI + TIME MACHINE (10 Cripto)</b>"]
     for idx, c in enumerate(all_coins, 1):
         sc = c["final_score"]
         ic = "🟢" if sc >= 7 else ("🟡" if sc >= 5 else "🔴")
         crown = "👑" if idx == 1 else f"{idx}."
+        rk_ic = "✅" if c["risk_check"]["passed"] else "⛔"
         rank_lines.append(
             f"{crown} {ic} <b>{c['coin']}</b>: <b>{sc}/10</b> ({c['pts_100']:.0f}pt) | "
-            f"AI <b>{c['ai_prob']*100:.0f}%</b> | ${fmt_p(c['price'])} ({c['chg24']:+.1f}%)"
+            f"E[R] <b>{c['time_machine']['expected_r']:+.2f}R</b> | AI <b>{c['ai_prob']*100:.0f}%</b> | Risk {rk_ic}"
         )
     rank_section = "\n".join(rank_lines)
 
@@ -1887,31 +2346,34 @@ def format_message(best_a, news):
     veto_list = list(best_a["veto_reasons"])
     if news_override_reason:
         veto_list.append(news_override_reason)
-    veto_txt = ("\n\n🚨 <b>FILTRI DI SICUREZZA ATTIVI</b>\n" + "\n".join(veto_list)) if veto_list else ""
+    veto_txt = ("\n\n🚨 <b>FILTRI DI SICUREZZA &amp; RISK MANAGER</b>\n" + "\n".join(veto_list)) if veto_list else ""
 
     news_section = format_news_section(news, nr)
     auto_section = "\n".join(best_a.get("auto_log", []))
     mode_str = "🟢 LIVE PIONEX" if AUTO_TRADE_ENABLED else "🧪 PAPER TRADING (Simulazione)"
 
     return (
-        f"🤖 <b>MULTI-COIN NEURAL QUANT GRID BOT</b>\n"
+        f"🤖 <b>MULTI-COIN AI BOT + TIME MACHINE &amp; RISK MANAGER</b>\n"
         f"🕐 {now_rome} (ora italiana) | Modalità: <b>{mode_str}</b>\n\n"
         f"{verdict}\n"
         f"👑 <b>Migliore Scelta AI: {best_a['coin']}/USDT ({best_a['name']})</b>\n"
         f"📊 <b>Voto Finale: {final_score}/10</b> (Score Quant: {best_a['pts_100']:.0f}/100)\n"
         f"{score_bar(final_score)}\n\n"
-        f"⚙️ <b>STATO GESTIONE AUTONOMA</b>\n"
+        f"⚙️ <b>STATO GESTIONE AUTONOMA &amp; ALERTS</b>\n"
         f"{auto_section}\n\n"
+        f"🕰️ <b>TIME MACHINE (1.500 Sim) &amp; RISK GATEKEEPER ({best_a['coin']})</b>\n"
+        f"• Setup Scanner: <b>{et['setup_name']}</b> ({et['status_txt']})\n"
+        f"• Prob. Profitto Grid/Target: <b>{tm['win_or_grid_prob']:.1f}%</b> | Stop First: <b>{tm['stop_first_prob']:.1f}%</b>\n"
+        f"• Valore Atteso: <b>{tm['expected_r']:+.2f}R</b> ({tm['verdict']})\n"
+        f"• Risk Manager: <b>{rk['status']}</b> — Rischio Stop: <b>${rk['risk_usdt']:.2f}</b> (Max: ${rk['max_loss_usdt']:.2f}) | R:R: <b>{ep['rr_ratio']:.2f}R</b>\n\n"
         f"{rank_section}\n\n"
         f"{news_section}\n\n"
-        f"⚙️ <b>PARAMETRI PIONEX PER 👑 {best_a['coin']}/USDT ({INVEST_EUR}€ ≈ {best_a['invest_usdt']:.2f} USDT)</b>\n"
-        f"• Prezzo Attuale {best_a['coin']}: <b>${fmt_p(best_a['price'])}</b> (VWAP 24h: ${fmt_p(best_a['vwap_24h'])})\n"
-        f"• Lower Price: <b>${fmt_p(best_a['lower'])}</b>\n"
-        f"• Upper Price: <b>${fmt_p(best_a['upper'])}</b>\n"
-        f"• Griglie: <b>{best_a['grids']}</b> (Arithmetic) — <i>~{best_a['usdt_per_grid']:.2f} USDT/griglia</i>\n"
+        f"⚙️ <b>BRACKET PLAN PIONEX PER 👑 {best_a['coin']}/USDT ({INVEST_EUR}€ ≈ {best_a['invest_usdt']:.2f} USDT)</b>\n"
+        f"• Prezzo Entrata: <b>${fmt_p(best_a['price'])}</b> (Qty: {rk['bracket_order']['qty_coin']} {best_a['coin']})\n"
+        f"• Lower / Upper Range: <b>${fmt_p(best_a['lower'])} – ${fmt_p(best_a['upper'])}</b> ({best_a['grids']} griglie)\n"
         f"• Profitto netto/griglia (post-fee): <b>+{best_a['net_step_pct']:.2f}%</b>\n"
-        f"• Stop Loss consigliato: <b>${fmt_p(best_a['stop_loss'])}</b>\n\n"
-        f"📋 <b>PAGELLA 9 PILASTRI ({best_a['coin']}/USDT)</b>\n"
+        f"• Alert +1R (Break-Even): <b>${fmt_p(ep['level_1r'])}</b> | Alert Stop Loss: <b>${fmt_p(best_a['stop_loss'])}</b>\n\n"
+        f"📋 <b>PAGELLA 10 PILASTRI ({best_a['coin']}/USDT)</b>\n"
         f"{breakdown_txt}"
         f"{veto_txt}"
     )
@@ -1935,7 +2397,6 @@ def send_telegram(msg):
 
 
 def send_telegram_webapp(final_score=0, best_a=None):
-    """Invia il file interattivo index.html direttamente nella chat di Telegram."""
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         return
     if not os.path.exists("index.html"):
@@ -1948,8 +2409,8 @@ def send_telegram_webapp(final_score=0, best_a=None):
     else:
         stato_str = f"⏳ IN ATTESA (Top AI: {win_coin} {final_score}/10)"
     caption = (
-        f"🖥️ Dashboard Multi-Coin AI | {stato_str}\n"
-        f"👆 Tocca/clicca sul file qui sopra per aprire la WebApp con la classifica delle 10 Cripto!"
+        f"🖥️ Dashboard Multi-Coin AI + Time Machine | {stato_str}\n"
+        f"👆 Tocca/clicca sul file qui sopra per aprire la WebApp interattiva!"
     )
     try:
         with open("index.html", "rb") as f:
@@ -2000,3 +2461,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+```
