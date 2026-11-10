@@ -1,233 +1,102 @@
 <!DOCTYPE html>
-<html lang="it">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Multi-Coin Neural Quant AI Bot</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-</head>
-<body class="bg-slate-950 text-slate-100 min-h-screen font-sans p-4 md:p-8">
-    <div class="max-w-6xl mx-auto space-y-6">
-        <div class="flex flex-wrap justify-between items-center gap-4 bg-slate-900/90 border border-slate-800 p-5 rounded-2xl shadow-lg">
-            <div>
-                <div class="flex items-center gap-2.5">
-                    <span class="text-2xl">🤖</span>
-                    <h1 class="text-xl md:text-2xl font-extrabold tracking-tight text-white">Multi-Coin Neural Quant Grid Bot</h1>
-                </div>
-                <p class="text-xs text-slate-400 mt-1">Ultimo aggiornamento: <b>10/11/2026 06:37:52</b> (10 Cripto Scansionate dall'AI)</p>
-            </div>
-            <span class="text-xs font-bold px-3.5 py-1.5 rounded-full border bg-sky-500/20 text-sky-300 border-sky-500/40">SIMULAZIONE PAPER TRADING</span>
-        </div>
-
-        <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <div class="bg-slate-900 border border-slate-800 p-4 rounded-2xl">
-                <div class="text-xs text-slate-400">👑 Vincitrice AI Attuale</div>
-                <div class="text-2xl font-black text-white mt-1">SOL/USDT</div>
-                <div class="text-xs text-slate-400 mt-1">Prezzo: $86.19 (-0.37%)</div>
-            </div>
-            <div class="bg-slate-900 border border-slate-800 p-4 rounded-2xl">
-                <div class="text-xs text-slate-400">Voto Migliore (#1)</div>
-                <div class="text-2xl font-black text-emerald-400 mt-1">7/10 <span class="text-sm font-normal text-slate-400">(68/100)</span></div>
-                <div class="text-xs text-slate-400 mt-1">Soglia apertura: &ge; 7/10</div>
-            </div>
-            <div class="bg-slate-900 border border-slate-800 p-4 rounded-2xl">
-                <div class="text-xs text-slate-400">Probabilità Neurale (SOL)</div>
-                <div class="text-2xl font-black text-sky-400 mt-1">45.1%</div>
-                <div class="text-xs text-slate-400 mt-1">MLP: 44% | k-NN: 47%</div>
-            </div>
-            <div class="bg-slate-900 border border-slate-800 p-4 rounded-2xl">
-                <div class="text-xs text-slate-400">Esponente Hurst (SOL)</div>
-                <div class="text-2xl font-black text-purple-400 mt-1">0.38</div>
-                <div class="text-xs text-slate-400 mt-1">Mean-Reverting (Ottimo)</div>
-            </div>
-        </div>
-
-        
+<html lang="it"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Multi-Coin Quant AI Bot v2</title><script src="https://cdn.tailwindcss.com"></script></head>
+<body class="bg-slate-950 text-slate-100 min-h-screen font-sans p-4 md:p-8"><div class="max-w-6xl mx-auto space-y-6">
+  <div class="flex flex-wrap justify-between items-center gap-4 bg-slate-900/90 border border-slate-800 p-5 rounded-2xl">
+    <div><h1 class="text-xl md:text-2xl font-extrabold text-white">🤖 Multi-Coin AI Quant Bot v2</h1>
+    <p class="text-xs text-slate-400 mt-1">Aggiornato: <b>10/11/2026 09:37:31</b> · 10 cripto · Monte Carlo 1.500 sim · Risk Manager</p></div>
+    <span class="text-xs font-bold px-3.5 py-1.5 rounded-full border bg-sky-500/20 text-sky-300 border-sky-500/40">SIMULAZIONE PAPER TRADING</span></div>
+  <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+    <div class="bg-slate-900 border border-slate-800 p-4 rounded-2xl"><div class="text-xs text-slate-400">👑 Vincitrice</div><div class="text-2xl font-black text-white mt-1">AVAX/USDT</div><div class="text-xs text-slate-400 mt-1">$8.472 (+5.85%)</div></div>
+    <div class="bg-slate-900 border border-slate-800 p-4 rounded-2xl"><div class="text-xs text-slate-400">Voto Quant &amp; Risk</div><div class="text-2xl font-black text-rose-400 mt-1">4/10 <span class="text-sm font-normal text-slate-400">(82/100)</span></div><div class="text-xs text-emerald-400 mt-1 font-bold">PASS ✅</div></div>
+    <div class="bg-slate-900 border border-slate-800 p-4 rounded-2xl"><div class="text-xs text-slate-400">🕰️ Time Machine</div><div class="text-2xl font-black text-purple-400 mt-1">+0.75R</div><div class="text-xs text-slate-400 mt-1">Win 62% · Stop 27%</div></div>
+    <div class="bg-slate-900 border border-slate-800 p-4 rounded-2xl"><div class="text-xs text-slate-400">🧠 AI (validata OOS)</div><div class="text-2xl font-black text-sky-400 mt-1">54.1%</div><div class="text-xs text-slate-400 mt-1">skill -0.082 · peso 0.25</div></div></div>
+  
         <div class="bg-slate-800/90 border border-emerald-500/40 rounded-2xl p-6 shadow-xl">
-            <div class="flex flex-wrap justify-between items-center gap-2 mb-4">
-                <div class="flex items-center gap-3">
-                    <span class="h-3.5 w-3.5 rounded-full bg-emerald-400 animate-ping"></span>
-                    <h2 class="text-xl font-bold text-white">POSIZIONE ATTIVA SU LINK/USDT</h2>
-                </div>
-                <span class="text-xs bg-slate-700 text-slate-300 px-3 py-1 rounded-full">Aperta il 09/11 18:53</span>
-            </div>
-            <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-                <div class="bg-slate-900/70 p-4 rounded-xl">
-                    <div class="text-xs text-slate-400">Entrata (LINK)</div>
-                    <div class="text-xl font-bold text-white">$10.62</div>
-                </div>
-                <div class="bg-slate-900/70 p-4 rounded-xl">
-                    <div class="text-xs text-slate-400">Prezzo Attuale</div>
-                    <div class="text-xl font-bold text-sky-400">$10.63</div>
-                </div>
-                <div class="bg-slate-900/70 p-4 rounded-xl">
-                    <div class="text-xs text-slate-400">PnL Stimato (50€)</div>
-                    <div class="text-xl font-bold text-emerald-400">+0.10% (+0.05$)</div>
-                </div>
-                <div class="bg-slate-900/70 p-4 rounded-xl">
-                    <div class="text-xs text-slate-400">Stop Loss Dinamico</div>
-                    <div class="text-xl font-bold text-amber-400">$10.18 </div>
-                </div>
-            </div>
-            <div class="mb-2 flex justify-between text-xs text-slate-300">
-                <span>Lower: <b>$10.33</b></span>
-                <span>Posizione nel Range: <b>54%</b> (10 Griglie)</span>
-                <span>Upper: <b>$10.88</b></span>
-            </div>
-            <div class="w-full bg-slate-900 rounded-full h-4 p-0.5 border border-slate-700">
-                <div class="bg-gradient-to-r from-sky-500 to-emerald-400 h-2.5 rounded-full" style="width: 54.0%"></div>
-            </div>
+          <div class="flex flex-wrap justify-between items-center gap-2 mb-4">
+            <h2 class="text-xl font-bold text-white">🟢 POSIZIONE ATTIVA SU LINK/USDT</h2>
+            <span class="text-xs bg-slate-700 text-slate-300 px-3 py-1 rounded-full">Aperta il 09/11 18:53 · size 0.0$</span>
+          </div>
+          <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+            <div class="bg-slate-900/70 p-4 rounded-xl"><div class="text-xs text-slate-400">Entrata (LINK)</div><div class="text-xl font-bold text-white">$10.62</div></div><div class="bg-slate-900/70 p-4 rounded-xl"><div class="text-xs text-slate-400">Prezzo Attuale</div><div class="text-xl font-bold text-sky-400">$10.60</div></div>
+            <div class="bg-slate-900/70 p-4 rounded-xl"><div class="text-xs text-slate-400">PnL (R)</div><div class="text-xl font-bold text-rose-400">-0.16% (-0.04R)</div></div><div class="bg-slate-900/70 p-4 rounded-xl"><div class="text-xs text-slate-400">Stop dinamico</div><div class="text-xl font-bold text-amber-400">$10.18</div></div>
+          </div>
+          <div class="mb-2 flex justify-between text-xs text-slate-300"><span>Lower $10.33</span><span>Range 49%</span><span>Target $10.88</span></div>
+          <div class="w-full bg-slate-900 rounded-full h-4 p-0.5 border border-slate-700"><div class="bg-gradient-to-r from-sky-500 to-emerald-400 h-2.5 rounded-full" style="width:49.0%"></div></div>
         </div>
-        
-
-        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6">
-            <h3 class="text-base font-bold text-white mb-4">🏆 Classifica Live Multi-Coin AI Scanner (10 Criptovalute)</h3>
-            <div class="overflow-x-auto">
-                <table class="w-full text-left border-collapse">
-                    <thead>
-                        <tr class="border-b border-slate-700 text-xs text-slate-400">
-                            <th class="py-2 px-3">Moneta</th>
-                            <th class="py-2 px-3">Prezzo</th>
-                            <th class="py-2 px-3">24h %</th>
-                            <th class="py-2 px-3">AI Prob</th>
-                            <th class="py-2 px-3">Hurst</th>
-                            <th class="py-2 px-3">Range Consigliato</th>
-                            <th class="py-2 px-3">Voto Quant</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        
-        <tr class="border-b border-slate-800/80 text-xs hover:bg-slate-800/40">
-            <td class="py-3 px-3 font-bold text-white">👑 SOL/USDT <span class="text-slate-500 font-normal">(Solana)</span></td>
-            <td class="py-3 px-3 font-semibold text-slate-200">$86.19</td>
-            <td class="py-3 px-3 font-semibold text-rose-400">-0.37%</td>
-            <td class="py-3 px-3 text-sky-400 font-bold">45.1%</td>
-            <td class="py-3 px-3 text-purple-300">0.38</td>
-            <td class="py-3 px-3 text-slate-300">$84.89 &ndash; $87.98</td>
-            <td class="py-3 px-3"><span class="px-2.5 py-1 rounded-full border font-bold bg-emerald-500/20 text-emerald-300 border-emerald-500/40">7/10 (68pt)</span></td>
-        </tr>
-        
-        <tr class="border-b border-slate-800/80 text-xs hover:bg-slate-800/40">
-            <td class="py-3 px-3 font-bold text-white">#2 SUI/USDT <span class="text-slate-500 font-normal">(Sui)</span></td>
-            <td class="py-3 px-3 font-semibold text-slate-200">$0.8469</td>
-            <td class="py-3 px-3 font-semibold text-emerald-400">+2.83%</td>
-            <td class="py-3 px-3 text-sky-400 font-bold">37.9%</td>
-            <td class="py-3 px-3 text-purple-300">0.41</td>
-            <td class="py-3 px-3 text-slate-300">$0.8283 &ndash; $0.8640</td>
-            <td class="py-3 px-3"><span class="px-2.5 py-1 rounded-full border font-bold bg-rose-500/20 text-rose-300 border-rose-500/40">4/10 (76pt)</span></td>
-        </tr>
-        
-        <tr class="border-b border-slate-800/80 text-xs hover:bg-slate-800/40">
-            <td class="py-3 px-3 font-bold text-white">#3 AVAX/USDT <span class="text-slate-500 font-normal">(Avalanche)</span></td>
-            <td class="py-3 px-3 font-semibold text-slate-200">$8.600</td>
-            <td class="py-3 px-3 font-semibold text-emerald-400">+8.56%</td>
-            <td class="py-3 px-3 text-sky-400 font-bold">16.0%</td>
-            <td class="py-3 px-3 text-purple-300">0.40</td>
-            <td class="py-3 px-3 text-slate-300">$8.327 &ndash; $8.852</td>
-            <td class="py-3 px-3"><span class="px-2.5 py-1 rounded-full border font-bold bg-rose-500/20 text-rose-300 border-rose-500/40">4/10 (74pt)</span></td>
-        </tr>
-        
-        <tr class="border-b border-slate-800/80 text-xs hover:bg-slate-800/40">
-            <td class="py-3 px-3 font-bold text-white">#4 DOGE/USDT <span class="text-slate-500 font-normal">(Dogecoin)</span></td>
-            <td class="py-3 px-3 font-semibold text-slate-200">$0.0701</td>
-            <td class="py-3 px-3 font-semibold text-emerald-400">+1.57%</td>
-            <td class="py-3 px-3 text-sky-400 font-bold">31.3%</td>
-            <td class="py-3 px-3 text-purple-300">0.41</td>
-            <td class="py-3 px-3 text-slate-300">$0.0689 &ndash; $0.0711</td>
-            <td class="py-3 px-3"><span class="px-2.5 py-1 rounded-full border font-bold bg-rose-500/20 text-rose-300 border-rose-500/40">4/10 (70pt)</span></td>
-        </tr>
-        
-        <tr class="border-b border-slate-800/80 text-xs hover:bg-slate-800/40">
-            <td class="py-3 px-3 font-bold text-white">#5 ADA/USDT <span class="text-slate-500 font-normal">(Cardano)</span></td>
-            <td class="py-3 px-3 font-semibold text-slate-200">$0.1786</td>
-            <td class="py-3 px-3 font-semibold text-emerald-400">+2.13%</td>
-            <td class="py-3 px-3 text-sky-400 font-bold">27.4%</td>
-            <td class="py-3 px-3 text-purple-300">0.37</td>
-            <td class="py-3 px-3 text-slate-300">$0.1750 &ndash; $0.1820</td>
-            <td class="py-3 px-3"><span class="px-2.5 py-1 rounded-full border font-bold bg-rose-500/20 text-rose-300 border-rose-500/40">4/10 (70pt)</span></td>
-        </tr>
-        
-        <tr class="border-b border-slate-800/80 text-xs hover:bg-slate-800/40">
-            <td class="py-3 px-3 font-bold text-white">#6 XRP/USDT <span class="text-slate-500 font-normal">(Ripple)</span></td>
-            <td class="py-3 px-3 font-semibold text-slate-200">$1.099</td>
-            <td class="py-3 px-3 font-semibold text-emerald-400">+0.52%</td>
-            <td class="py-3 px-3 text-sky-400 font-bold">37.9%</td>
-            <td class="py-3 px-3 text-purple-300">0.46</td>
-            <td class="py-3 px-3 text-slate-300">$1.073 &ndash; $1.123</td>
-            <td class="py-3 px-3"><span class="px-2.5 py-1 rounded-full border font-bold bg-rose-500/20 text-rose-300 border-rose-500/40">4/10 (66pt)</span></td>
-        </tr>
-        
-        <tr class="border-b border-slate-800/80 text-xs hover:bg-slate-800/40">
-            <td class="py-3 px-3 font-bold text-white">#7 DOT/USDT <span class="text-slate-500 font-normal">(Polkadot)</span></td>
-            <td class="py-3 px-3 font-semibold text-slate-200">$0.8562</td>
-            <td class="py-3 px-3 font-semibold text-rose-400">-0.70%</td>
-            <td class="py-3 px-3 text-sky-400 font-bold">34.6%</td>
-            <td class="py-3 px-3 text-purple-300">0.20</td>
-            <td class="py-3 px-3 text-slate-300">$0.8405 &ndash; $0.8779</td>
-            <td class="py-3 px-3"><span class="px-2.5 py-1 rounded-full border font-bold bg-rose-500/20 text-rose-300 border-rose-500/40">4/10 (66pt)</span></td>
-        </tr>
-        
-        <tr class="border-b border-slate-800/80 text-xs hover:bg-slate-800/40">
-            <td class="py-3 px-3 font-bold text-white">#8 LINK/USDT <span class="text-slate-500 font-normal">(Chainlink)</span></td>
-            <td class="py-3 px-3 font-semibold text-slate-200">$10.63</td>
-            <td class="py-3 px-3 font-semibold text-emerald-400">+1.90%</td>
-            <td class="py-3 px-3 text-sky-400 font-bold">35.9%</td>
-            <td class="py-3 px-3 text-purple-300">0.36</td>
-            <td class="py-3 px-3 text-slate-300">$10.42 &ndash; $10.82</td>
-            <td class="py-3 px-3"><span class="px-2.5 py-1 rounded-full border font-bold bg-rose-500/20 text-rose-300 border-rose-500/40">4/10 (65pt)</span></td>
-        </tr>
-        
-        <tr class="border-b border-slate-800/80 text-xs hover:bg-slate-800/40">
-            <td class="py-3 px-3 font-bold text-white">#9 BTC/USDT <span class="text-slate-500 font-normal">(Bitcoin)</span></td>
-            <td class="py-3 px-3 font-semibold text-slate-200">$74768.20</td>
-            <td class="py-3 px-3 font-semibold text-emerald-400">+0.52%</td>
-            <td class="py-3 px-3 text-sky-400 font-bold">28.9%</td>
-            <td class="py-3 px-3 text-purple-300">0.48</td>
-            <td class="py-3 px-3 text-slate-300">$73763.32 &ndash; $76155.90</td>
-            <td class="py-3 px-3"><span class="px-2.5 py-1 rounded-full border font-bold bg-rose-500/20 text-rose-300 border-rose-500/40">4/10 (62pt)</span></td>
-        </tr>
-        
-        <tr class="border-b border-slate-800/80 text-xs hover:bg-slate-800/40">
-            <td class="py-3 px-3 font-bold text-white">#10 ETH/USDT <span class="text-slate-500 font-normal">(Ethereum)</span></td>
-            <td class="py-3 px-3 font-semibold text-slate-200">$2123.72</td>
-            <td class="py-3 px-3 font-semibold text-rose-400">-0.13%</td>
-            <td class="py-3 px-3 text-sky-400 font-bold">20.6%</td>
-            <td class="py-3 px-3 text-purple-300">0.48</td>
-            <td class="py-3 px-3 text-slate-300">$2095.18 &ndash; $2163.14</td>
-            <td class="py-3 px-3"><span class="px-2.5 py-1 rounded-full border font-bold bg-rose-500/20 text-rose-300 border-rose-500/40">4/10 (61pt)</span></td>
-        </tr>
-        
-                    </tbody>
-                </table>
-            </div>
-        </div>
-
-        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6">
-            <h3 class="text-base font-bold text-white mb-4">📊 Pagella Dettagliata 9 Pilastri per 👑 SOL/USDT (68/100 pt)</h3>
-            <ul class="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <li class="bg-slate-900/60 border border-slate-700/60 rounded-xl p-3 text-sm text-slate-200">🧠 <b>AI Neural MLP + Lorentzian k-NN (5/15)</b>: Probabilità Long <b>45.1%</b> (MLP 44% | k-NN 47%)</li><li class="bg-slate-900/60 border border-slate-700/60 rounded-xl p-3 text-sm text-slate-200">📐 <b>Struttura Multi-TF 4H/1H (3/15)</b>: Debole/Ribassista (ADX 1H 14.3, 4H EMA50 $90.68)</li><li class="bg-slate-900/60 border border-slate-700/60 rounded-xl p-3 text-sm text-slate-200">🔬 <b>Econometria & Volatilità (11/12)</b>: Hurst <b>0.38</b> (Mean-Reverting (Ideale)), VR 0.99, ATR Ratio 0.89x</li><li class="bg-slate-900/60 border border-slate-700/60 rounded-xl p-3 text-sm text-slate-200">🎯 <b>Valore & Posizione Prezzo (13/13)</b>: Nel canale al <b>42%</b>, vs VWAP -0.32%, BB %B 36%</li><li class="bg-slate-900/60 border border-slate-700/60 rounded-xl p-3 text-sm text-slate-200">⚡ <b>Momentum & Timing 15m (8/12)</b>: RSI 1H 44.5 | RSI 15m 51.6 | MACD in salita ↗️</li><li class="bg-slate-900/60 border border-slate-700/60 rounded-xl p-3 text-sm text-slate-200">🏛️ <b>Orderbook L2 & Flussi (10/10)</b>: Sbilanciamento Bid/Ask <b>+9.5%</b> (Ratio 1.21x)</li><li class="bg-slate-900/60 border border-slate-700/60 rounded-xl p-3 text-sm text-slate-200">₿ <b>Correlazione & Alpha BTC (6/8)</b>: BTC 24h +0.5% | Alpha SOL -0.9%</li><li class="bg-slate-900/60 border border-slate-700/60 rounded-xl p-3 text-sm text-slate-200">🔮 <b>Futures & Sentiment (4/7)</b>: Funding 8h <b>+1.0675%</b> | Fear&Greed <b>32</b> (Fear)</li><li class="bg-slate-900/60 border border-slate-700/60 rounded-xl p-3 text-sm text-slate-200">💶 <b>Efficienza Griglia 50€ (8/8)</b>: Netto/griglia <b>+0.26%</b> | Rotazione 24h 0.94x</li>
-            </ul>
-        </div>
-
-        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6">
-            <h3 class="text-base font-bold text-white mb-4">📜 Storico Operazioni Chiuse (Simulazione / Live)</h3>
-            <div class="overflow-x-auto">
-                <table class="w-full text-left border-collapse">
-                    <thead>
-                        <tr class="border-b border-slate-700 text-xs text-slate-400">
-                            <th class="py-2 px-3">Moneta</th>
-                            <th class="py-2 px-3">Periodo</th>
-                            <th class="py-2 px-3">Prezzo In/Out</th>
-                            <th class="py-2 px-3">Risultato (PnL)</th>
-                            <th class="py-2 px-3">Motivo Chiusura</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <tr><td colspan="5" class="py-4 text-center text-slate-500 text-sm">Nessun trade chiuso nello storico recente.</td></tr>
-                    </tbody>
-                </table>
-            </div>
-        </div>
-    </div>
-</body>
-</html>
+  <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6"><h3 class="text-base font-bold text-white mb-4">🏆 Classifica Live</h3><div class="overflow-x-auto"><table class="w-full text-left border-collapse">
+    <thead><tr class="border-b border-slate-700 text-xs text-slate-400"><th class="py-2 px-3">Moneta</th><th class="py-2 px-3">Prezzo</th><th class="py-2 px-3">AI</th><th class="py-2 px-3">E[R]</th><th class="py-2 px-3">R:R</th><th class="py-2 px-3">Risk</th><th class="py-2 px-3">Voto</th></tr></thead><tbody><tr class="border-b border-slate-800/80 text-xs hover:bg-slate-800/40">
+          <td class="py-3 px-3 font-bold text-white">👑 AVAX/USDT</td>
+          <td class="py-3 px-3 text-slate-200">$8.472 <span class="text-emerald-400">(+5.8%)</span></td>
+          <td class="py-3 px-3 text-sky-400 font-bold">54%</td>
+          <td class="py-3 px-3 text-purple-300">+0.75R (62%)</td>
+          <td class="py-3 px-3 text-slate-300">1.67R</td>
+          <td class="py-3 px-3 text-slate-300">PASS ✅</td>
+          <td class="py-3 px-3"><span class="px-2.5 py-1 rounded-full border font-bold bg-rose-500/20 text-rose-300 border-rose-500/40">4/10 (82pt)</span></td></tr><tr class="border-b border-slate-800/80 text-xs hover:bg-slate-800/40">
+          <td class="py-3 px-3 font-bold text-white">#2 BTC/USDT</td>
+          <td class="py-3 px-3 text-slate-200">$74433.90 <span class="text-rose-400">(-0.0%)</span></td>
+          <td class="py-3 px-3 text-sky-400 font-bold">44%</td>
+          <td class="py-3 px-3 text-purple-300">+0.34R (58%)</td>
+          <td class="py-3 px-3 text-slate-300">1.68R</td>
+          <td class="py-3 px-3 text-slate-300">PASS ✅</td>
+          <td class="py-3 px-3"><span class="px-2.5 py-1 rounded-full border font-bold bg-rose-500/20 text-rose-300 border-rose-500/40">4/10 (56pt)</span></td></tr><tr class="border-b border-slate-800/80 text-xs hover:bg-slate-800/40">
+          <td class="py-3 px-3 font-bold text-white">#3 ETH/USDT</td>
+          <td class="py-3 px-3 text-slate-200">$2109.56 <span class="text-rose-400">(-0.5%)</span></td>
+          <td class="py-3 px-3 text-sky-400 font-bold">49%</td>
+          <td class="py-3 px-3 text-purple-300">+0.36R (56%)</td>
+          <td class="py-3 px-3 text-slate-300">1.57R</td>
+          <td class="py-3 px-3 text-slate-300">PASS ✅</td>
+          <td class="py-3 px-3"><span class="px-2.5 py-1 rounded-full border font-bold bg-rose-500/20 text-rose-300 border-rose-500/40">4/10 (52pt)</span></td></tr><tr class="border-b border-slate-800/80 text-xs hover:bg-slate-800/40">
+          <td class="py-3 px-3 font-bold text-white">#4 ADA/USDT</td>
+          <td class="py-3 px-3 text-slate-200">$0.1786 <span class="text-emerald-400">(+1.9%)</span></td>
+          <td class="py-3 px-3 text-sky-400 font-bold">52%</td>
+          <td class="py-3 px-3 text-purple-300">+0.36R (60%)</td>
+          <td class="py-3 px-3 text-slate-300">1.25R</td>
+          <td class="py-3 px-3 text-slate-300">BLOCK ⛔</td>
+          <td class="py-3 px-3"><span class="px-2.5 py-1 rounded-full border font-bold bg-rose-500/20 text-rose-300 border-rose-500/40">4/10 (72pt)</span></td></tr><tr class="border-b border-slate-800/80 text-xs hover:bg-slate-800/40">
+          <td class="py-3 px-3 font-bold text-white">#5 DOT/USDT</td>
+          <td class="py-3 px-3 text-slate-200">$0.8539 <span class="text-rose-400">(-1.5%)</span></td>
+          <td class="py-3 px-3 text-sky-400 font-bold">56%</td>
+          <td class="py-3 px-3 text-purple-300">+0.25R (52%)</td>
+          <td class="py-3 px-3 text-slate-300">1.60R</td>
+          <td class="py-3 px-3 text-slate-300">BLOCK ⛔</td>
+          <td class="py-3 px-3"><span class="px-2.5 py-1 rounded-full border font-bold bg-rose-500/20 text-rose-300 border-rose-500/40">4/10 (64pt)</span></td></tr><tr class="border-b border-slate-800/80 text-xs hover:bg-slate-800/40">
+          <td class="py-3 px-3 font-bold text-white">#6 LINK/USDT</td>
+          <td class="py-3 px-3 text-slate-200">$10.60 <span class="text-emerald-400">(+1.4%)</span></td>
+          <td class="py-3 px-3 text-sky-400 font-bold">55%</td>
+          <td class="py-3 px-3 text-purple-300">+0.17R (47%)</td>
+          <td class="py-3 px-3 text-slate-300">1.60R</td>
+          <td class="py-3 px-3 text-slate-300">BLOCK ⛔</td>
+          <td class="py-3 px-3"><span class="px-2.5 py-1 rounded-full border font-bold bg-rose-500/20 text-rose-300 border-rose-500/40">4/10 (64pt)</span></td></tr><tr class="border-b border-slate-800/80 text-xs hover:bg-slate-800/40">
+          <td class="py-3 px-3 font-bold text-white">#7 SUI/USDT</td>
+          <td class="py-3 px-3 text-slate-200">$0.8435 <span class="text-emerald-400">(+2.1%)</span></td>
+          <td class="py-3 px-3 text-sky-400 font-bold">53%</td>
+          <td class="py-3 px-3 text-purple-300">+0.35R (54%)</td>
+          <td class="py-3 px-3 text-slate-300">1.60R</td>
+          <td class="py-3 px-3 text-slate-300">BLOCK ⛔</td>
+          <td class="py-3 px-3"><span class="px-2.5 py-1 rounded-full border font-bold bg-rose-500/20 text-rose-300 border-rose-500/40">4/10 (64pt)</span></td></tr><tr class="border-b border-slate-800/80 text-xs hover:bg-slate-800/40">
+          <td class="py-3 px-3 font-bold text-white">#8 DOGE/USDT</td>
+          <td class="py-3 px-3 text-slate-200">$0.0698 <span class="text-emerald-400">(+0.8%)</span></td>
+          <td class="py-3 px-3 text-sky-400 font-bold">50%</td>
+          <td class="py-3 px-3 text-purple-300">+0.24R (50%)</td>
+          <td class="py-3 px-3 text-slate-300">1.59R</td>
+          <td class="py-3 px-3 text-slate-300">BLOCK ⛔</td>
+          <td class="py-3 px-3"><span class="px-2.5 py-1 rounded-full border font-bold bg-rose-500/20 text-rose-300 border-rose-500/40">4/10 (62pt)</span></td></tr><tr class="border-b border-slate-800/80 text-xs hover:bg-slate-800/40">
+          <td class="py-3 px-3 font-bold text-white">#9 XRP/USDT</td>
+          <td class="py-3 px-3 text-slate-200">$1.087 <span class="text-rose-400">(-0.9%)</span></td>
+          <td class="py-3 px-3 text-sky-400 font-bold">46%</td>
+          <td class="py-3 px-3 text-purple-300">+0.31R (46%)</td>
+          <td class="py-3 px-3 text-slate-300">1.99R</td>
+          <td class="py-3 px-3 text-slate-300">BLOCK ⛔</td>
+          <td class="py-3 px-3"><span class="px-2.5 py-1 rounded-full border font-bold bg-rose-500/20 text-rose-300 border-rose-500/40">4/10 (60pt)</span></td></tr><tr class="border-b border-slate-800/80 text-xs hover:bg-slate-800/40">
+          <td class="py-3 px-3 font-bold text-white">#10 SOL/USDT</td>
+          <td class="py-3 px-3 text-slate-200">$85.51 <span class="text-rose-400">(-1.5%)</span></td>
+          <td class="py-3 px-3 text-sky-400 font-bold">53%</td>
+          <td class="py-3 px-3 text-purple-300">+0.25R (42%)</td>
+          <td class="py-3 px-3 text-slate-300">2.04R</td>
+          <td class="py-3 px-3 text-slate-300">BLOCK ⛔</td>
+          <td class="py-3 px-3"><span class="px-2.5 py-1 rounded-full border font-bold bg-rose-500/20 text-rose-300 border-rose-500/40">4/10 (60pt)</span></td></tr></tbody></table></div></div>
+  <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6"><h3 class="text-base font-bold text-white mb-4">📊 Pagella 10 Pilastri — 👑 AVAX/USDT</h3><ul class="grid grid-cols-1 md:grid-cols-2 gap-3"><li class="bg-slate-900/60 border border-slate-700/60 rounded-xl p-3 text-sm text-slate-200">🧠 <b>AI MLP + Lorentzian k-NN (8/14)</b>: Prob. Long <b>54.1%</b> (grezza 55%, skill OOS -0.082, peso 0.25)</li><li class="bg-slate-900/60 border border-slate-700/60 rounded-xl p-3 text-sm text-slate-200">🕰️ <b>Time Machine (10/12)</b>: E[R] netto costi <b>+0.75R</b> | Successo <b>62%</b> (StopFirst 27%)</li><li class="bg-slate-900/60 border border-slate-700/60 rounded-xl p-3 text-sm text-slate-200">📐 <b>Struttura Multi-TF (13/13)</b>: Rialzista/Neutro (ADX 1H 27.0, EMA50 4H $8.424)</li><li class="bg-slate-900/60 border border-slate-700/60 rounded-xl p-3 text-sm text-slate-200">🔬 <b>Econometria (11/11)</b>: Hurst <b>0.42</b> (Mean-Reverting (Ideale)), VR 1.08, ER 0.02, ATR ratio 1.29x</li><li class="bg-slate-900/60 border border-slate-700/60 rounded-xl p-3 text-sm text-slate-200">🎯 <b>Valore & Posizione (12/12)</b>: canale <b>42%</b>, VWAP -2.06%, BB %B 19%</li><li class="bg-slate-900/60 border border-slate-700/60 rounded-xl p-3 text-sm text-slate-200">⏱️ <b>Entry Timer (5/11)</b>: <b>Consolidamento in Osservazione</b> — WAITING ⏳ (a +0.39% dal trigger $8.505)</li><li class="bg-slate-900/60 border border-slate-700/60 rounded-xl p-3 text-sm text-slate-200">🏛️ <b>Orderbook L2 & Flussi (9/9)</b>: Imbalance <b>+21.3%</b> (Spread 2.4 bps)</li><li class="bg-slate-900/60 border border-slate-700/60 rounded-xl p-3 text-sm text-slate-200">₿ <b>Alpha vs BTC (6/6)</b>: BTC 24h -0.0% | Alpha AVAX +5.9%</li><li class="bg-slate-900/60 border border-slate-700/60 rounded-xl p-3 text-sm text-slate-200">🔮 <b>Futures & Sentiment (5/5)</b>: Funding 8h <b>-0.0069%</b> | F&G <b>32</b> (Fear)</li><li class="bg-slate-900/60 border border-slate-700/60 rounded-xl p-3 text-sm text-slate-200">💶 <b>Exit Plan & R:R (3/7)</b>: R:R <b>1.67R</b> (direzionale 0.87R, 1R = -3.86%) | Netto/grid <b>+0.48%</b></li></ul></div>
+  <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6"><h3 class="text-base font-bold text-white mb-4">📜 Storico (netto costi)</h3><div class="overflow-x-auto"><table class="w-full text-left border-collapse">
+    <thead><tr class="border-b border-slate-700 text-xs text-slate-400"><th class="py-2 px-3">Moneta</th><th class="py-2 px-3">Periodo</th><th class="py-2 px-3">In/Out</th><th class="py-2 px-3">Risultato</th><th class="py-2 px-3">Motivo</th></tr></thead><tbody><tr><td colspan="5" class="py-4 text-center text-slate-500 text-sm">Nessun trade chiuso.</td></tr></tbody></table></div></div>
+</div></body></html>
