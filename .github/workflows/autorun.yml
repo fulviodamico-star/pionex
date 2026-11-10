@@ -1,8 +1,8 @@
-name: Pionex Neural Quant Grid Bot
+name: Pionex Neural Quant Bot
 
 on:
   schedule:
-    - cron: '*/30 * * * *'
+    - cron: '0 * * * *'
   workflow_dispatch:
 
 permissions:
@@ -23,22 +23,19 @@ jobs:
       - name: Install dependencies
         run: pip install requests
 
-      - name: Run Neural Bot & Build WebApp
+      - name: Run python main.py
         env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          ACTIVE_LOWER: ${{ secrets.ACTIVE_LOWER }}
-          ACTIVE_UPPER: ${{ secrets.ACTIVE_UPPER }}
-          AUTO_TRADE_ENABLED: "false"
-          PIONEX_WEBHOOK_URL: ${{ secrets.PIONEX_WEBHOOK_URL }}
-          PIONEX_SIGNAL_TOKEN: ${{ secrets.PIONEX_SIGNAL_TOKEN }}
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN || secrets.TELEGRAM_BOT_TOKEN || secrets.BOT_TOKEN || secrets.TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || secrets.CHAT_ID || secrets.TELEGRAM_CHAT }}
           PIONEX_API_KEY: ${{ secrets.PIONEX_API_KEY }}
           PIONEX_API_SECRET: ${{ secrets.PIONEX_API_SECRET }}
+          LIVE_TRADING: ${{ secrets.LIVE_TRADING }}
         run: python main.py
 
-      - name: Save Bot State & WebApp Dashboard
+      - name: Salva Stato Bot e Dashboard nel Repository
         run: |
           git config --global user.name "NeuralGridBot"
-          git config --global user.email "bot@users.noreply.github.com"
+          git config --global user.email "bot@noreply.github.com"
           git add bot_state.json index.html || true
-          git diff --staged --quiet || (git commit -m "Aggiornamento Dashboard e Stato Bot [skip ci]" && git pull --rebase && git push)
+          git diff --staged --quiet || git commit -m "Aggiornamento Dashboard e Stato Bot [skip ci]"
+          git push
