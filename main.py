@@ -13,10 +13,22 @@ from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 # ==============================================================================
-# CONFIGURAZIONE BASE E SECRETS
+# CONFIGURAZIONE BASE E SECRETS (Multi-Nome Compatibile)
 # ==============================================================================
-TELEGRAM_TOKEN = (os.getenv("TELEGRAM_TOKEN") or "").strip()
-TELEGRAM_CHAT_ID = (os.getenv("TELEGRAM_CHAT_ID") or "").strip()
+TELEGRAM_TOKEN = (
+    os.getenv("TELEGRAM_TOKEN")
+    or os.getenv("TELEGRAM_BOT_TOKEN")
+    or os.getenv("BOT_TOKEN")
+    or os.getenv("TOKEN")
+    or ""
+).strip()
+
+TELEGRAM_CHAT_ID = (
+    os.getenv("TELEGRAM_CHAT_ID")
+    or os.getenv("CHAT_ID")
+    or os.getenv("TELEGRAM_CHAT")
+    or ""
+).strip()
 
 PIONEX_API_KEY = (os.getenv("PIONEX_API_KEY") or "").strip()
 PIONEX_API_SECRET = (os.getenv("PIONEX_API_SECRET") or "").strip()
@@ -24,17 +36,18 @@ LIVE_TRADING = (os.getenv("LIVE_TRADING") or "false").strip().lower() == "true"
 
 INVEST_EUR = 50.0
 GRIDS = 20
-PIONEX_FEE = 0.0005  # 0.05% per transazione su Pionex
+PIONEX_FEE = 0.0005  # 0.05% per eseguito su Pionex (0.10% round-trip)
 STATE_FILE = "bot_state.json"
 
 # ==============================================================================
-# PARAMETRI RISK & BUDGET MANAGER (SKILL #2 & #6)
+# PARAMETRI RISK, BUDGET & FAST-SCALP (SKILL #2, #4 & #6)
 # ==============================================================================
-MAX_LOSS_PCT_PER_TRADE = 3.6   # Perdita max tollerata su singola operazione (%)
+MAX_LOSS_PCT_PER_TRADE = 3.2   # Perdita max tollerata su singolo trade (%)
 DAILY_MAX_LOSS_PCT = 6.0       # Circuit breaker giornaliero (%)
-MAX_TRADES_PER_DAY = 3         # Limite anti-overtrading giornaliero
-MIN_REWARD_RISK_R = 1.35       # Rapporto R/R minimo per autorizzare l'ingresso
+MAX_TRADES_PER_DAY = 5         # Limite giornaliero per operatività Scalp/Grid
+MIN_REWARD_RISK_R = 1.30       # Rapporto R/R minimo per autorizzare l'ingresso
 CASH_BUFFER_PCT = 5.0          # Riserva liquidità per commissioni/slippage (%)
+SCALP_MIN_NET_PROFIT_PCT = 0.85  # Soglia minima (%) per presa di profitto rapida su inversione 15m
 
 # ==============================================================================
 # PANIERE MULTI-COIN (Top 10 Crypto liquide su Pionex & Kraken)
@@ -68,10 +81,13 @@ def load_state():
         "stop_loss": 0.0,
         "initial_stop_loss": 0.0,
         "one_r_usd": 0.0,
+        "peak_price": 0.0,
         "qty": 0.0,
         "invest_usdt": 0.0,
         "opened_at": "",
+        "alert_07r_sent": False,
         "alert_1r_sent": False,
+        "alert_15r_sent": False,
         "alert_2r_sent": False,
         "daily_date": "",
         "daily_pnl_usdt": 0.0,
@@ -112,7 +128,7 @@ def save_state(state):
 # ==============================================================================
 # PIONEX REST API (ESECUZIONE REALE OPZIONALE CON HMAC-SHA256)
 # ==============================================================================
-def pionex_Place_market_order(symbol, side, amount_or_size):
+def pionex_place_market_order(symbol, side, amount_or_size):
     if not LIVE_TRADING or not PIONEX_API_KEY or not PIONEX_API_SECRET:
         return {"ok": False, "reason": "PAPER_MODE"}
 
@@ -438,7 +454,7 @@ def run_hybrid_neural_engine(features, highs, lows, closes, atr_arr, horizon=12)
         distances.append((d, y_train[idx]))
     distances.sort(key=lambda t: t[0])
     k = min(25, len(distances))
-    knn_votes = [ y for _, y in distances[:k] ]
+    knn_votes = [y for _, y in distances[:k]]
     lorentzian_prob = sum(knn_votes) / k if k > 0 else 0.5
 
     # 2. Multi-Layer Perceptron (Rete Neurale 6 -> 8 -> 1 con Backpropagation live)
@@ -597,7 +613,7 @@ def run_time_machine(closes, highs, lows, lower_bound, upper_bound, stop_loss, h
 
 
 # ==============================================================================
-# SKILL #4: EXIT PLANNER (1R, +1R Break-Even, +2R Lock-In, Spread Check)
+# SKILL #4: EXIT PLANNER (1R, +0.7R BE, +1R Lock, +2R Lock, Spread Check)
 # ==============================================================================
 def run_exit_planner(price, lower_bound, upper_bound, stop_loss, spread_bps):
     one_r_usd = max(price * 0.005, price - stop_loss)
@@ -605,8 +621,9 @@ def run_exit_planner(price, lower_bound, upper_bound, stop_loss, spread_bps):
     reward_usd = max(0.0, upper_bound - price)
     rr_ratio = reward_usd / one_r_usd if one_r_usd > 0 else 0.0
 
-    level_1r = price + one_r_usd          # A +1R -> Stop spostato a Break-Even
-    level_2r = price + 2.0 * one_r_usd    # A +2R -> Trailing Stop spostato a +1R
+    level_07r = price + 0.7 * one_r_usd   # A +0.7R -> Stop a Break-Even netto (+0.15%)
+    level_1r = price + one_r_usd          # A +1.0R -> Stop blinda +0.25R
+    level_2r = price + 2.0 * one_r_usd    # A +2.0R -> Trailing Stop blinda +1.35R
     level_3r = upper_bound                # Target superiore della griglia
 
     spread_usd = price * (spread_bps / 10000.0)
@@ -617,6 +634,7 @@ def run_exit_planner(price, lower_bound, upper_bound, stop_loss, spread_bps):
         "one_r_pct": one_r_pct,
         "reward_usd": reward_usd,
         "rr_ratio": rr_ratio,
+        "level_07r": level_07r,
         "level_1r": level_1r,
         "level_2r": level_2r,
         "level_3r": level_3r,
@@ -636,7 +654,6 @@ def run_chart_scanner_and_entry_timer(h15, l15, c15, rsi_1h, rsi_15m, ema20_1h, 
             "bonus_pts": 2
         }
 
-    # Usiamo la penultima candela 15m (-2) perché è 100% chiusa e confermata
     prev_c = c15[-3]
     closed_c = c15[-2]
     closed_l = l15[-2]
@@ -662,8 +679,8 @@ def run_chart_scanner_and_entry_timer(h15, l15, c15, rsi_1h, rsi_15m, ema20_1h, 
         pattern = "EMA20 Bullish Reclaim (Breakout + RVOL)"
         triggered = True
         bonus_pts = 3
-    elif 35 <= rsi_1h <= 60 and close_pos_in_bar >= 0.45 and curr_c >= closed_l:
-        pattern = "Mean-Reverting Grid Equilibrium"
+    elif 35 <= rsi_1h <= 62 and close_pos_in_bar >= 0.45 and curr_c >= closed_l:
+        pattern = "Mean-Reverting Grid / Scalp Equilibrium"
         triggered = True
         bonus_pts = 2
     else:
@@ -740,10 +757,10 @@ def check_nyse_market_bell():
     if not is_weekday:
         return "Weekend (Wall Street Chiusa - Liquidità Crypto Pura)"
     if abs(minutes_now - open_min) <= 35:
-        return "🔔 NYSE OPENING BELL ATTIVA (09:30 NY - Picco Volatilità USA)"
+        return "🔔 NYSE OPENING BELL ATTIVA (09:30 NY - Picco Volatilità Scalping USA)"
     if open_min < minutes_now < close_min:
-        return "🟢 Sessione USA Aperta (Alta Liquidità Istituzionale)"
-    return "🌙 Sessione Asiatica / Europea (Pre/After-Hours USA)"
+        return "🟢 Sessione USA Aperta (Alta Liquidità Istituzionale - Check 15m)"
+    return "🌙 Sessione Asiatica / Europea (Check 30m/60m)"
 
 
 # ==============================================================================
@@ -1091,7 +1108,9 @@ def analyze_single_coin(coin_cfg, futures_map, fng_val, macro_events, invest_usd
     ema50_4h = ema_series(c4, 50)[-1]
     ema200_4h = ema_series(c4, min(200, len(c4)))[-1]
     rsi_4h = rsi_series(c4, 14)[-1]
-    rsi_15m = rsi_series(c15, 14)[-1]
+    rsi_15m_arr = rsi_series(c15, 14)
+    rsi_15m = rsi_15m_arr[-1]
+    rsi_15m_prev = rsi_15m_arr[-2] if len(rsi_15m_arr) >= 2 else rsi_15m
     adx_1h = calc_adx(h1, l1, c1, 14)
     _, _, _, bb_width_pct, bb_pct_b = calc_bollinger(c1, 20, 2.0)
 
@@ -1107,14 +1126,14 @@ def analyze_single_coin(coin_cfg, futures_map, fng_val, macro_events, invest_usd
 
     ai_prob, lor_prob, mlp_prob, ai_conf = run_hybrid_neural_engine(features, h1, l1, c1, atr_1h_arr, horizon=12)
 
-    # Calcolo Range Dinamico Ottimale per Griglia Pionex
-    half_span_pct = max(0.032, min(0.072, (atr_pct / 100.0) * 3.1))
-    skew = 1.05 if ai_prob >= 0.55 else (0.95 if ai_prob < 0.45 else 1.0)
+    # Calcolo Range Dinamico Ottimale per Griglia / Fast-Scalp Pionex
+    half_span_pct = max(0.028, min(0.068, (atr_pct / 100.0) * 2.9))
+    skew = 1.06 if ai_prob >= 0.55 else (0.95 if ai_prob < 0.45 else 1.0)
     lower_bound = price * (1.0 - half_span_pct / skew)
     upper_bound = price * (1.0 + half_span_pct * skew)
 
-    # Stop Loss calibrato tra il pavimento della griglia e il tetto Risk Manager (3.6%)
-    raw_stop = lower_bound * (1.0 - max(0.008, (atr_pct / 100.0) * 0.55))
+    # Stop Loss calibrato tra il pavimento della griglia e il tetto Risk Manager (3.2%)
+    raw_stop = lower_bound * (1.0 - max(0.007, (atr_pct / 100.0) * 0.50))
     min_allowed_stop = price * (1.0 - (MAX_LOSS_PCT_PER_TRADE - 0.15) / 100.0)
     stop_loss = max(raw_stop, min_allowed_stop)
 
@@ -1148,6 +1167,7 @@ def analyze_single_coin(coin_cfg, futures_map, fng_val, macro_events, invest_usd
         "rsi_4h": rsi_4h,
         "rsi_1h": rsi_1h,
         "rsi_15m": rsi_15m,
+        "rsi_15m_prev": rsi_15m_prev,
         "adx_1h": adx_1h,
         "bb_width_pct": bb_width_pct,
         "bb_pct_b": bb_pct_b,
@@ -1181,14 +1201,14 @@ def analyze_single_coin(coin_cfg, futures_map, fng_val, macro_events, invest_usd
 
 
 # ==============================================================================
-# MACCHINA A STATI AUTONOMA (Apertura, +1R Break-Even, +2R Lock-In, Chiusura)
+# MACCHINA A STATI AUTONOMA (Fast-Scalp 15m + Grid Profit Lock + Auto-Exit)
 # ==============================================================================
 def manage_autonomous_position(state, best_coin_data, all_coins_map, macro_events):
     now_rome = datetime.now(ZoneInfo("Europe/Rome")).strftime("%d/%m/%Y %H:%M")
     high_macro_imminent = any(imp == "High" and -0.5 <= dh <= 2.0 for dh, imp, _ in macro_events)
     alerts_fired = []
 
-    # CASO 1: POSIZIONE ATTIVA -> MONITORAGGIO + SKILL #1 & #4 (Dynamic Exit Planner)
+    # CASO 1: POSIZIONE ATTIVA -> MONITORAGGIO + FAST-SCALP TRAILING STOP
     if state["active"]:
         active_coin = state.get("coin", "SOL")
         coin_data = all_coins_map.get(active_coin, best_coin_data)
@@ -1196,56 +1216,100 @@ def manage_autonomous_position(state, best_coin_data, all_coins_map, macro_event
         price = coin_data["price"]
         final_score = coin_data["final_score"]
         ai_prob = coin_data["ai_prob"]
+        rsi_15m = coin_data["rsi_15m"]
+        rsi_15m_prev = coin_data["rsi_15m_prev"]
+        ob_imb = coin_data["ob_imbalance"]
 
         entry = state["entry_price"]
         lower = state["lower_bound"]
         upper = state["upper_bound"]
         stop = state["stop_loss"]
-        one_r = state.get("one_r_usd", max(entry * 0.015, entry - stop))
+        one_r = state.get("one_r_usd", max(entry * 0.012, entry - stop))
         qty = state["qty"]
         invest = state["invest_usdt"]
 
-        # SKILL #1 & #4: Controllo traguardi +1R (Break-Even) e +2R (Trailing Lock)
-        if not state.get("alert_1r_sent", False) and price >= entry + one_r:
-            new_stop = round(entry * 1.001, 6)
+        peak_price = max(state.get("peak_price", entry), price)
+        state["peak_price"] = round(peak_price, 6)
+
+        # SCALINO 1 (+0.7R o RSI 15m > 68 in profitto): Break-Even Netto (+0.15% sopra commissioni)
+        if not state.get("alert_07r_sent", False) and (
+            price >= entry + 0.70 * one_r or (price >= entry * 1.006 and rsi_15m >= 68.0)
+        ):
+            new_stop = round(entry * 1.0015, 6)
+            if new_stop > state["stop_loss"]:
+                state["stop_loss"] = new_stop
+                stop = new_stop
+            state["alert_07r_sent"] = True
+            msg_07r = f"🛡️ [FAST-SCALP +0.7R] {active_coin} a {fmt_price(price)}$ -> Stop spostato a PAREGGIO NETTO ({fmt_price(stop)}$, commissioni coperte)!"
+            alerts_fired.append(msg_07r)
+            state["last_action"] = f"{msg_07r} ({now_rome})"
+
+        # SCALINO 2 (+1.0R): Profit Lock a +0.25R
+        if not state.get("alert_1r_sent", False) and price >= entry + 1.0 * one_r:
+            new_stop = round(entry * 1.0015 + 0.25 * one_r, 6)
             if new_stop > state["stop_loss"]:
                 state["stop_loss"] = new_stop
                 stop = new_stop
             state["alert_1r_sent"] = True
-            msg_1r = f"🔔 [ALERT +1R] {active_coin} ha toccato +1R ({fmt_price(entry + one_r)}$) -> Stop Loss spostato a PAREGGIO ({fmt_price(stop)}$)!"
+            msg_1r = f"🔔 [ALERT +1R] {active_coin} ha toccato +1R ({fmt_price(entry + one_r)}$) -> Profitto blindato a +0.25R ({fmt_price(stop)}$)!"
             alerts_fired.append(msg_1r)
             state["last_action"] = f"{msg_1r} ({now_rome})"
 
+        # SCALINO 3 (+1.5R): Profit Lock a +0.85R
+        if not state.get("alert_15r_sent", False) and price >= entry + 1.5 * one_r:
+            new_stop = round(entry + 0.85 * one_r, 6)
+            if new_stop > state["stop_loss"]:
+                state["stop_loss"] = new_stop
+                stop = new_stop
+            state["alert_15r_sent"] = True
+            msg_15r = f"🔔 [SCALP LOCK +1.5R] {active_coin} a {fmt_price(price)}$ -> Trailing Stop blindato a +0.85R ({fmt_price(stop)}$)!"
+            alerts_fired.append(msg_15r)
+            state["last_action"] = f"{msg_15r} ({now_rome})"
+
+        # SCALINO 4 (+2.0R): Profit Lock a +1.35R
         if not state.get("alert_2r_sent", False) and price >= entry + 2.0 * one_r:
-            new_stop = round(entry + one_r, 6)
+            new_stop = round(entry + 1.35 * one_r, 6)
             if new_stop > state["stop_loss"]:
                 state["stop_loss"] = new_stop
                 stop = new_stop
             state["alert_2r_sent"] = True
-            msg_2r = f"🔔 [ALERT +2R] {active_coin} ha toccato +2R ({fmt_price(entry + 2.0 * one_r)}$) -> Trailing Stop blindato a +1R ({fmt_price(stop)}$)!"
+            msg_2r = f"🔔 [ALERT +2R] {active_coin} ha toccato +2R ({fmt_price(entry + 2.0 * one_r)}$) -> Trailing Stop blindato a +1.35R ({fmt_price(stop)}$)!"
             alerts_fired.append(msg_2r)
             state["last_action"] = f"{msg_2r} ({now_rome})"
 
-        # Stima profitto scalping griglia accumulato + variazione direzionale
+        # Calcolo PnL Netto (variazione + scalping griglia - commissioni)
         directional_pnl_pct = ((price - entry) / entry) * 100.0 if entry > 0 else 0.0
         est_grid_harvest_pct = 0.42 if (lower <= price <= upper) else 0.15
         net_pnl_pct = (directional_pnl_pct * 0.55) + est_grid_harvest_pct - (PIONEX_FEE * 200.0)
         net_pnl_usdt = invest * (net_pnl_pct / 100.0)
+
+        # Rilevamento inversione momentum 15m per presa di profitto Scalp
+        momentum_fading_15m = (
+            net_pnl_pct >= SCALP_MIN_NET_PROFIT_PCT
+            and (
+                (rsi_15m_prev >= 63.0 and rsi_15m < rsi_15m_prev - 5.0)
+                or (ob_imb <= -0.14 and ai_prob < 0.50)
+                or (peak_price >= entry + 1.1 * one_r and price <= peak_price - 0.45 * one_r)
+            )
+        )
 
         should_close = False
         close_reason = ""
 
         if price <= stop:
             should_close = True
-            if state.get("alert_2r_sent"):
-                close_reason = f"🎯 TRAILING STOP (+1R LOCK) ESEGUITO su {active_coin} ({fmt_price(price)}$ <= {fmt_price(stop)}$)"
-            elif state.get("alert_1r_sent"):
-                close_reason = f"🛡️ BREAK-EVEN STOP ESEGUITO su {active_coin} ({fmt_price(price)}$ <= {fmt_price(stop)}$)"
+            if state.get("alert_1r_sent") or state.get("alert_15r_sent") or state.get("alert_2r_sent"):
+                close_reason = f"🎯 TRAILING PROFIT LOCK ESEGUITO su {active_coin} ({fmt_price(price)}$ <= {fmt_price(stop)}$)"
+            elif state.get("alert_07r_sent"):
+                close_reason = f"🛡️ BREAK-EVEN NETTO ESEGUITO su {active_coin} ({fmt_price(price)}$ <= {fmt_price(stop)}$)"
             else:
                 close_reason = f"🛑 STOP LOSS COLPITO su {active_coin} ({fmt_price(price)}$ <= {fmt_price(stop)}$)"
         elif price >= upper:
             should_close = True
             close_reason = f"🎯 TAKE PROFIT GRIGLIA RAGGIUNTO su {active_coin} ({fmt_price(price)}$ >= {fmt_price(upper)}$)"
+        elif momentum_fading_15m:
+            should_close = True
+            close_reason = f"💰 SCALP PROFIT TAKE (Inversione Momentum 15m / Orderbook) su {active_coin} a {fmt_price(price)}$"
         elif final_score <= 4 and ai_prob < 0.44:
             should_close = True
             close_reason = f"⚠️ CHIUSURA DIFENSIVA AI su {active_coin} (Score sceso a {final_score}/10, AI {ai_prob*100:.0f}%)"
@@ -1254,7 +1318,7 @@ def manage_autonomous_position(state, best_coin_data, all_coins_map, macro_event
             close_reason = f"🏛️ CHIUSURA PRE-NEWS MACRO USD HIGH IMPACT su {active_coin}"
 
         if should_close:
-            live_res = pionex_Place_market_order(state["symbol"], "SELL", qty)
+            live_res = pionex_place_market_order(state["symbol"], "SELL", qty)
             exec_tag = "LIVE PIONEX" if live_res.get("ok") else "PAPER AUTONOMO"
 
             state["active"] = False
@@ -1310,7 +1374,7 @@ def manage_autonomous_position(state, best_coin_data, all_coins_map, macro_event
     ):
         deploy_usdt = b_rm["deployable_usdt"]
         qty = deploy_usdt / b_price if b_price > 0 else 0.0
-        live_res = pionex_Place_market_order(b_sym, "BUY", deploy_usdt)
+        live_res = pionex_place_market_order(b_sym, "BUY", deploy_usdt)
         mode_str = "LIVE PIONEX" if live_res.get("ok") else "PAPER AUTONOMO"
 
         state["active"] = True
@@ -1323,10 +1387,13 @@ def manage_autonomous_position(state, best_coin_data, all_coins_map, macro_event
         state["stop_loss"] = round(b_stop, 6)
         state["initial_stop_loss"] = round(b_stop, 6)
         state["one_r_usd"] = round(b_ep["one_r_usd"], 6)
+        state["peak_price"] = round(b_price, 6)
         state["qty"] = round(qty, 6)
         state["invest_usdt"] = round(deploy_usdt, 2)
         state["opened_at"] = now_rome
+        state["alert_07r_sent"] = False
         state["alert_1r_sent"] = False
+        state["alert_15r_sent"] = False
         state["alert_2r_sent"] = False
         state["daily_trades_count"] = state.get("daily_trades_count", 0) + 1
         state["last_action"] = (
@@ -1397,6 +1464,7 @@ def generate_webapp_html(state, ranked_coins, target_data, action_state, status_
                 "one_r_usd": c["exit_plan"]["one_r_usd"],
                 "one_r_pct": round(c["exit_plan"]["one_r_pct"], 2),
                 "rr_ratio": round(c["exit_plan"]["rr_ratio"], 2),
+                "level_07r": c["exit_plan"]["level_07r"],
                 "level_1r": c["exit_plan"]["level_1r"],
                 "level_2r": c["exit_plan"]["level_2r"],
                 "level_3r": c["exit_plan"]["level_3r"]
@@ -1586,7 +1654,7 @@ def generate_webapp_html(state, ranked_coins, target_data, action_state, status_
   <!-- TOPBAR -->
   <div class="topbar">
     <div class="title-wrap">
-      <h1>⚡ PIONEX QUANTUM AI — CONSOLE WEB REAL-TIME</h1>
+      <h1>⚡ PIONEX QUANTUM AI v7.2 — CONSOLE FAST-SCALP & GRID LIVE</h1>
       <p id="sub-header">Ultimo sync bot: -- | Streaming prezzi Kraken WebSocket attivo</p>
     </div>
     <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
@@ -1724,7 +1792,7 @@ def generate_webapp_html(state, ranked_coins, target_data, action_state, status_
     <div class="card">
       <h2><span>🛠️ Registra o Modifica Manualmente una Posizione Aperta su Pionex</span></h2>
       <p style="font-size:0.83rem; color:var(--muted); margin-bottom:10px;">
-        Hai aperto o chiuso manualmente un Grid Bot su Pionex? Registralo qui sotto per monitorare in tempo reale PnL, distanza dallo Stop Loss, traguardi +1R/+2R e ricevere avvisi immediati di chiusura.
+        Hai aperto o chiuso manualmente un Grid Bot o uno Scalp su Pionex? Registralo qui sotto per monitorare in tempo reale PnL, distanza dallo Stop Loss, traguardi +0.7R/+1R/+2R e ricevere avvisi immediati di chiusura.
       </p>
       <div class="form-grid">
         <div class="input-group">
@@ -1923,7 +1991,7 @@ function computeLivePositionMetrics() {
   const upper = Number(appState.upper_bound);
   const stop = Number(appState.stop_loss);
   const invest = Number(appState.invest_usdt || 47.5);
-  const oneR = Number(appState.one_r_usd || Math.max(entry * 0.015, entry - stop));
+  const oneR = Number(appState.one_r_usd || Math.max(entry * 0.012, entry - stop));
 
   const dirPct = entry > 0 ? ((liveP - entry) / entry) * 100.0 : 0.0;
   const gridHarvest = (liveP >= lower && liveP <= upper) ? 0.42 : 0.15;
@@ -1959,9 +2027,9 @@ function renderAdvisorBanner() {
       banner.style.borderColor = "#ef4444";
       tag.style.background = "#7f1d1d"; tag.style.color = "#fecaca";
       tag.textContent = "🚨 AZIONE MANUALE RICHIESTA: CHIUDI SUBITO";
-      headline.textContent = `🛑 CHIUDI ORA LA POSIZIONE SU ${m.coin}/USDT! (Stop Loss toccato a ${fmtPrice(m.liveP)}$)`;
-      sub.textContent = `Il prezzo live (${fmtPrice(m.liveP)}$) è sceso sotto lo Stop Loss (${fmtPrice(m.stop)}$). Chiudi il Grid Bot su Pionex per proteggere il capitale.`;
-      actions.innerHTML = `<button class="btn btn-red" onclick="closeActivePosition('Stop Loss Colpito Live')">🛑 Registra Chiusura Stop Loss Ora</button>`;
+      headline.textContent = `🛑 CHIUDI ORA LA POSIZIONE SU ${m.coin}/USDT! (Stop toccato a ${fmtPrice(m.liveP)}$)`;
+      sub.textContent = `Il prezzo live (${fmtPrice(m.liveP)}$) è sceso sotto lo Stop (${fmtPrice(m.stop)}$). Chiudi il Grid Bot su Pionex per proteggere il capitale.`;
+      actions.innerHTML = `<button class="btn btn-red" onclick="closeActivePosition('Stop Colpito Live')">🛑 Registra Chiusura Stop Ora</button>`;
     } else if (m.liveP >= m.upper) {
       banner.style.borderColor = "#10b981";
       tag.style.background = "#064e3b"; tag.style.color = "#6ee7b7";
@@ -1969,15 +2037,15 @@ function renderAdvisorBanner() {
       headline.textContent = `🎯 CHIUDI IN PROFITTO ${m.coin}/USDT! Target Superiore (${fmtPrice(m.upper)}$) Raggiunto`;
       sub.textContent = `Prezzo Live: ${fmtPrice(m.liveP)}$ | PnL Netto Stimato: ${m.netPnlUsdt >= 0 ? '+' : ''}${m.netPnlUsdt.toFixed(2)}$ (${m.netPnlPct.toFixed(2)}%). Chiudi la griglia su Pionex e incassa.`;
       actions.innerHTML = `<button class="btn btn-green" onclick="closeActivePosition('Take Profit Tetto Griglia Raggiunto')">🎯 Incassa e Chiudi Posizione Ora</button>`;
-    } else if (m.rMultiple >= 1.0 && !appState.alert_1r_sent) {
+    } else if (m.rMultiple >= 0.7 && !appState.alert_07r_sent) {
       banner.style.borderColor = "#f59e0b";
       tag.style.background = "#78350f"; tag.style.color = "#fde68a";
-      tag.textContent = "🛡️ TRAGUARDO +1R RAGGIUNTO: SPOSTA LO STOP A PAREGGIO";
-      headline.textContent = `🔔 ${m.coin}/USDT è a +${m.rMultiple.toFixed(2)}R (${fmtPrice(m.liveP)}$): Sposta lo Stop Loss a Break-Even (${fmtPrice(m.entry)}$)!`;
-      sub.textContent = `Operazione ora a rischio zero. Premi il pulsante per aggiornare lo Stop Loss al prezzo di ingresso (${fmtPrice(m.entry)}$).`;
+      tag.textContent = "🛡️ TRAGUARDO FAST-SCALP +0.7R RAGGIUNTO: AZZERA IL RISCHIO";
+      headline.textContent = `🔔 ${m.coin}/USDT è a +${m.rMultiple.toFixed(2)}R (${fmtPrice(m.liveP)}$): Sposta lo Stop a Pareggio Netto!`;
+      sub.textContent = `Premi il pulsante per alzare lo Stop Loss a ${fmtPrice(m.entry * 1.0015)}$ (coprendo anche le commissioni Pionex) oppure incassa subito lo scalp.`;
       actions.innerHTML = `
-        <button class="btn btn-amber" onclick="moveStopToBreakEven()">🛡️ Sposta Stop a Pareggio (Break-Even)</button>
-        <button class="btn btn-red" onclick="closeActivePosition('Take Profit Manuale a +1R')">💰 Chiudi e Incassa Ora</button>
+        <button class="btn btn-amber" onclick="moveStopToBreakEven()">🛡️ Sposta Stop a Pareggio Netto</button>
+        <button class="btn btn-green" onclick="closeActivePosition('Incasso Fast-Scalp Manuale')">💰 Incassa Scalp Ora</button>
       `;
     } else if (coinObj && coinObj.final_score <= 4) {
       banner.style.borderColor = "#ef4444";
@@ -1990,10 +2058,10 @@ function renderAdvisorBanner() {
       banner.style.borderColor = "#10b981";
       tag.style.background = "#064e3b"; tag.style.color = "#6ee7b7";
       tag.textContent = "🟢 POSIZIONE ATTIVA E NEL RANGE: NESSUNA AZIONE RICHIESTA";
-      headline.textContent = `✅ MANTIENI APERTA ${m.coin}/USDT — Griglia in Lavoro (${fmtPrice(m.liveP)}$ | ${m.rMultiple >= 0 ? '+' : ''}${m.rMultiple.toFixed(2)}R)`;
+      headline.textContent = `✅ MANTIENI APERTA ${m.coin}/USDT — Griglia/Scalp in Lavoro (${fmtPrice(m.liveP)}$ | ${m.rMultiple >= 0 ? '+' : ''}${m.rMultiple.toFixed(2)}R)`;
       sub.textContent = `Range: ${fmtPrice(m.lower)}$ – ${fmtPrice(m.upper)}$ | Distanza da Stop: ${m.distToStopPct.toFixed(2)}% | Distanza da Target: ${m.distToTargetPct.toFixed(2)}%`;
       actions.innerHTML = `
-        <button class="btn btn-amber" onclick="moveStopToBreakEven()">🛡️ Porta Stop a Pareggio</button>
+        <button class="btn btn-amber" onclick="moveStopToBreakEven()">🛡️ Porta Stop a Pareggio Netto</button>
         <button class="btn btn-red" onclick="closeActivePosition('Chiusura Manuale Utente')">🛑 Chiudi Posizione Manualmente</button>
       `;
     }
@@ -2060,8 +2128,8 @@ function renderActivePositionCard() {
       <div class="progress-bar" style="width:${m.rangePct.toFixed(1)}%;"></div>
     </div>
     <div class="metric-row"><span>Stop Loss Attuale</span><span class="metric-val" style="color:#f87171;">${fmtPrice(m.stop)}$ (dist. ${m.distToStopPct.toFixed(2)}%)</span></div>
-    <div class="metric-row"><span>Target +1R (Break-Even)</span><span class="metric-val">${fmtPrice(m.entry + m.oneR)}$ ${appState.alert_1r_sent ? '✅' : '⏳'}</span></div>
-    <div class="metric-row"><span>Target +2R (Lock +1R)</span><span class="metric-val">${fmtPrice(m.entry + 2*m.oneR)}$ ${appState.alert_2r_sent ? '✅' : '⏳'}</span></div>
+    <div class="metric-row"><span>Fast-Scalp +0.7R (BE Netto)</span><span class="metric-val">${fmtPrice(m.entry + 0.7*m.oneR)}$ ${appState.alert_07r_sent ? '✅' : '⏳'}</span></div>
+    <div class="metric-row"><span>Target +1R / +2R Lock</span><span class="metric-val">${fmtPrice(m.entry + m.oneR)}$ ${appState.alert_1r_sent ? '✅' : '⏳'} | ${fmtPrice(m.entry + 2*m.oneR)}$ ${appState.alert_2r_sent ? '✅' : '⏳'}</span></div>
     <div style="display:flex; gap:8px; margin-top:12px; flex-wrap:wrap;">
       <button class="btn btn-amber" style="flex:1; justify-content:center;" onclick="moveStopToBreakEven()">🛡️ Stop a Pareggio</button>
       <button class="btn btn-red" style="flex:1; justify-content:center;" onclick="closeActivePosition('Chiusura Manuale Utente')">🛑 Chiudi Ora</button>
@@ -2095,7 +2163,7 @@ function renderInspectCards() {
     <div style="font-size:0.77rem; color:var(--muted); padding:3px 0 6px 0;">${c.risk_manager.reason_str}</div>
     <div class="metric-row"><span>Skill #3/#8 Pattern 15m</span><span class="metric-val">${c.scanner_timer.pattern}</span></div>
     <div class="metric-row"><span>Entry Timer 15m</span><span class="metric-val">${c.scanner_timer.status_str}</span></div>
-    <div class="metric-row"><span>Skill #4 Exit Planner (R/R)</span><span class="metric-val">${c.exit_plan.rr_ratio}R (+1R: ${fmtPrice(c.exit_plan.level_1r)}$ | +2R: ${fmtPrice(c.exit_plan.level_2r)}$)</span></div>
+    <div class="metric-row"><span>Skill #4 Exit Planner (R/R)</span><span class="metric-val">${c.exit_plan.rr_ratio}R (+0.7R BE: ${fmtPrice(c.exit_plan.level_07r)}$ | +1R: ${fmtPrice(c.exit_plan.level_1r)}$)</span></div>
     <div class="metric-row"><span>Orderbook L2 & Spread</span><span class="metric-val">Imb: ${c.ob_imbalance >= 0 ? '+' : ''}${c.ob_imbalance}% | Spread: ${c.spread_bps} bps</span></div>
   `;
 
@@ -2114,7 +2182,7 @@ function renderInspectCards() {
   document.getElementById("macro-portfolio-body").innerHTML = `
     <div class="metric-row"><span>Skill #1 Market Bell</span><span class="metric-val">${INITIAL_DATA.nyse_bell}</span></div>
     <div class="metric-row"><span>Fear & Greed Index</span><span class="metric-val">${INITIAL_DATA.fng_val}/100 (${INITIAL_DATA.fng_label})</span></div>
-    <div class="metric-row"><span>PnL Oggi / Trade Oggi</span><span class="metric-val">${(appState.daily_pnl_usdt || 0) >= 0 ? '+' : ''}${(appState.daily_pnl_usdt || 0).toFixed(2)}$ (${appState.daily_trades_count || 0}/3 trade)</span></div>
+    <div class="metric-row"><span>PnL Oggi / Trade Oggi</span><span class="metric-val">${(appState.daily_pnl_usdt || 0) >= 0 ? '+' : ''}${(appState.daily_pnl_usdt || 0).toFixed(2)}$ (${appState.daily_trades_count || 0}/5 trade)</span></div>
     <div class="metric-row"><span>Bilancio Storico Totale</span><span class="metric-val" style="color:${(appState.cumulative_pnl_usdt || 0) >= 0 ? '#10b981' : '#ef4444'};">${(appState.cumulative_pnl_usdt || 0) >= 0 ? '+' : ''}${(appState.cumulative_pnl_usdt || 0).toFixed(2)}$ (${appState.wins || 0}W / ${appState.losses || 0}L)</span></div>
     <div style="font-size:0.78rem; color:var(--muted); margin-top:6px;">${macroHtml}</div>
   `;
@@ -2224,7 +2292,9 @@ function openQuickPosition(coinSym) {
   appState.invest_usdt = c.risk_manager.deployable_usdt;
   appState.qty = appState.invest_usdt / liveP;
   appState.opened_at = nowStr;
+  appState.alert_07r_sent = false;
   appState.alert_1r_sent = false;
+  appState.alert_15r_sent = false;
   appState.alert_2r_sent = false;
   appState.last_action = `Aperta posizione manuale su ${coinSym}/USDT a ${fmtPrice(liveP)}$ il ${nowStr}`;
 
@@ -2259,7 +2329,9 @@ function saveManualOpenPosition() {
   appState.invest_usdt = invest;
   appState.qty = invest / entry;
   appState.opened_at = nowStr;
+  appState.alert_07r_sent = false;
   appState.alert_1r_sent = false;
+  appState.alert_15r_sent = false;
   appState.alert_2r_sent = false;
   appState.last_action = `Registrata posizione manuale su ${coinSym}/USDT a ${fmtPrice(entry)}$ (${nowStr})`;
 
@@ -2272,13 +2344,13 @@ function saveManualOpenPosition() {
 
 function moveStopToBreakEven() {
   if (!appState.active) return;
-  const bePrice = Number((appState.entry_price * 1.001).toFixed(6));
+  const bePrice = Number((appState.entry_price * 1.0015).toFixed(6));
   appState.stop_loss = bePrice;
-  appState.alert_1r_sent = true;
-  appState.last_action = `Stop Loss spostato a Pareggio (${fmtPrice(bePrice)}$) su ${appState.coin}/USDT`;
+  appState.alert_07r_sent = true;
+  appState.last_action = `Stop Loss spostato a Pareggio Netto (${fmtPrice(bePrice)}$) su ${appState.coin}/USDT`;
   persistLocalState();
   renderAll();
-  showToast(`Stop Loss spostato a Break-Even (${fmtPrice(bePrice)}$)!`);
+  showToast(`Stop Loss spostato a Pareggio Netto (${fmtPrice(bePrice)}$)!`);
 }
 
 function closeActivePosition(reasonText) {
@@ -2359,7 +2431,7 @@ window.addEventListener("DOMContentLoaded", initConsoleState);
 
 
 # ==============================================================================
-# INVIO TELEGRAM BLINDATO (Sanitizzazione HTML + Fallback Testo Puro)
+# INVIO TELEGRAM BLINDATO (Notifiche Sonore su Azione / Silenziose in Attesa)
 # ==============================================================================
 def sanitize_telegram_html(text):
     placeholders = {
@@ -2375,7 +2447,7 @@ def sanitize_telegram_html(text):
     return text
 
 
-def send_telegram_report(text):
+def send_telegram_report(text, silent=False):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
         print("[WARN] Credenziali Telegram mancanti nei Secrets.")
         return
@@ -2390,10 +2462,11 @@ def send_telegram_report(text):
             "chat_id": TELEGRAM_CHAT_ID,
             "text": safe_html,
             "parse_mode": "HTML",
-            "disable_web_page_preview": True
+            "disable_web_page_preview": True,
+            "disable_notification": silent
         }, timeout=15)
         if resp.status_code == 200:
-            print("[OK] Messaggio Telegram inviato con successo.")
+            print(f"[OK] Messaggio Telegram inviato (silent={silent}).")
             return
         print(f"[WARN] Telegram HTML resp ({resp.status_code}): {resp.text}. Provo fallback plain-text...")
     except Exception as e:
@@ -2410,21 +2483,22 @@ def send_telegram_report(text):
         resp2 = requests.post(url, json={
             "chat_id": TELEGRAM_CHAT_ID,
             "text": plain_text,
-            "disable_web_page_preview": True
+            "disable_web_page_preview": True,
+            "disable_notification": silent
         }, timeout=15)
         print(f"[INFO] Fallback plain-text status: {resp2.status_code}")
     except Exception as e2:
         print(f"[ERROR] Errore critico fallback Telegram: {e2}")
 
 
-def send_telegram_webapp(file_path, best_coin, final_score, action_state):
+def send_telegram_webapp(file_path, best_coin, final_score, action_state, silent=False):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID or not os.path.exists(file_path):
         return
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendDocument"
     caption = (
         f"🖥️ <b>CONSOLE WEB REAL-TIME (Top: {best_coin}/USDT — {final_score}/10 | {action_state})</b>\n"
         f"Tocca il file qui sopra per aprire la Console Live con prezzi in streaming WebSocket, "
-        f"posizioni aperte, storico posizioni chiuse e avvisi manuali in tempo reale."
+        f"posizioni aperte, storico posizioni chiuse e avvisi Fast-Scalp in tempo reale."
     )
     try:
         with open(file_path, "rb") as f:
@@ -2433,19 +2507,20 @@ def send_telegram_webapp(file_path, best_coin, final_score, action_state):
                 data={
                     "chat_id": TELEGRAM_CHAT_ID,
                     "caption": sanitize_telegram_html(caption),
-                    "parse_mode": "HTML"
+                    "parse_mode": "HTML",
+                    "disable_notification": silent
                 },
                 files={"document": ("Console_Live_AI_Bot.html", f, "text/html")},
                 timeout=25
             )
             if resp.status_code != 200:
-                print(f"[WARN] Invio documento HTML status {resp.status_code}: {resp.text}")
                 with open(file_path, "rb") as f2:
                     requests.post(
                         url,
                         data={
                             "chat_id": TELEGRAM_CHAT_ID,
-                            "caption": f"CONSOLE WEB REAL-TIME (Top: {best_coin}/USDT - {final_score}/10)"
+                            "caption": f"CONSOLE WEB REAL-TIME (Top: {best_coin}/USDT - {final_score}/10)",
+                            "disable_notification": silent
                         },
                         files={"document": ("Console_Live_AI_Bot.html", f2, "text/html")},
                         timeout=25
@@ -2533,9 +2608,9 @@ def main():
     bd = target_data["breakdown"]
 
     if t_score >= 8 and t_rm["passed"]:
-        verdict = f"🟢 FORTE OPPORTUNITÀ GRIGLIA SU {t_coin}/USDT"
+        verdict = f"🟢 FORTE OPPORTUNITÀ SCALP/GRID SU {t_coin}/USDT"
     elif t_score == 7 and t_rm["passed"]:
-        verdict = f"🟢 INGRESSO GRIGLIA AUTORIZZATO SU {t_coin}/USDT"
+        verdict = f"🟢 INGRESSO AUTORIZZATO SU {t_coin}/USDT"
     elif t_score >= 6:
         verdict = f"🟡 NEUTRALE / SEGNALE IN FORMAZIONE ({t_coin}/USDT)"
     else:
@@ -2556,7 +2631,7 @@ def main():
         manual_advice = (
             f"🟢 <b>POSIZIONE APERTA SU {state['coin']}/USDT</b>: Mantieni attiva nel range "
             f"{fmt_price(state['lower_bound'])}$ - {fmt_price(state['upper_bound'])}$. "
-            f"Chiudi manualmente solo se scende sotto {fmt_price(state['stop_loss'])}$ o supera {fmt_price(state['upper_bound'])}$."
+            f"Stop Loss dinamico attuale: <b>{fmt_price(state['stop_loss'])}$</b>."
         )
     elif t_score >= 7 and t_rm["passed"] and t_sc["triggered"]:
         manual_advice = (
@@ -2565,6 +2640,15 @@ def main():
         )
     else:
         manual_advice = "⏸️ <b>AZIONE MANUALE CONSIGLIATA: NON APRIRE ORA</b> (Resta liquido in USDT)"
+
+    # Determina se la notifica Telegram deve suonare o arrivare silenziosa
+    is_important_event = (
+        action_state in ("OPENED_NOW", "CLOSED_NOW")
+        or bool(alerts_fired)
+        or (t_score >= 7 and t_rm["passed"] and t_sc["triggered"])
+    )
+    silent_mode = not is_important_event
+    notif_badge = "🔔 NOTIFICA SONORA ATTIVA" if is_important_event else "🔕 Check Silenzioso"
 
     alerts_block = ""
     if alerts_fired:
@@ -2575,7 +2659,7 @@ def main():
     now_rome_str = datetime.now(ZoneInfo("Europe/Rome")).strftime("%d/%m/%Y %H:%M")
 
     report = (
-        f"🤖 <b>PIONEX MULTI-COIN QUANT AI v7.1</b> ({now_rome_str})\n"
+        f"🤖 <b>PIONEX FAST-SCALP & GRID AI v7.2</b> ({now_rome_str} | {notif_badge})\n"
         f"📊 <b>PUNTEGGIO TOP ({t_coin}/USDT): {t_score}/10</b> <i>({t_raw}/100 pt)</i>\n"
         f"🎯 <b>{verdict}</b>\n"
         f"{alerts_block}\n"
@@ -2588,14 +2672,14 @@ def main():
         f"• Dettaglio: {status_msg}\n"
         f"• Bilancio Chiuso: <b>{state['cumulative_pnl_usdt']:+.2f}$ ({state['cumulative_pnl_pct']:+.2f}%)</b> | "
         f"Trade: {total_t} (Win Rate: {win_rate:.0f}%)\n\n"
-        f"🛡️ <b>GATEKEEPER 5-SKILL ({t_coin}/USDT)</b>\n"
+        f"🛡️ <b>GATEKEEPER 5-SKILL & FAST-SCALP ({t_coin}/USDT)</b>\n"
         f"• <b>Risk & Budget Mgr</b>: <b>{t_rm['status_badge']}</b> ({t_rm['reason_str']})\n"
         f"• <b>Chart Scanner 15m</b>: {t_sc['pattern']} — <b>{t_sc['status_str']}</b>\n"
         f"• <b>Time Machine (24h)</b>: Win/Grid <b>{t_tm['win_or_grid_prob']:.1f}%</b> "
         f"(Target {t_tm['target_first_prob']:.1f}% | Grid {t_tm['in_range_prob']:.1f}% | Stop {t_tm['stop_first_prob']:.1f}%) | "
         f"EV: <b>{t_tm['expected_r']:+.2f}R</b>\n"
-        f"• <b>Exit Planner</b>: 1R = {fmt_price(t_ep['one_r_usd'])}$ ({t_ep['one_r_pct']:.2f}%) | "
-        f"R/R: <b>{t_ep['rr_ratio']:.2f}R</b> | +1R BE: {fmt_price(t_ep['level_1r'])}$ | +2R Lock: {fmt_price(t_ep['level_2r'])}$\n"
+        f"• <b>Fast-Scalp Exit Plan</b>: 1R = {fmt_price(t_ep['one_r_usd'])}$ ({t_ep['one_r_pct']:.2f}%) | "
+        f"R/R: <b>{t_ep['rr_ratio']:.2f}R</b> | +0.7R BE: {fmt_price(t_ep['level_07r'])}$ | +1R Lock: {fmt_price(t_ep['level_1r'])}$\n"
         f"• <b>Market Bell</b>: {nyse_bell_str}\n\n"
         f"🧠 <b>HYBRID NEURAL AI & MICROSTRUTTURA ({t_coin})</b>\n"
         f"• Ensemble Win Prob (12h): <b>{t_ai*100:.1f}%</b> (Lorentzian {t_lor*100:.1f}% | MLP {t_mlp*100:.1f}% | Conf. {t_conf:.0f}%)\n"
@@ -2614,15 +2698,13 @@ def main():
         f"• Stop Loss (1R): <code>{fmt_price(t_stop)}</code> USDT"
     )
 
-    # 1. Invio immediato del report testuale su Telegram
-    send_telegram_report(report)
+    send_telegram_report(report, silent=silent_mode)
 
-    # 2. Generazione e invio della Console Web Real-Time allegata
     html_path = generate_webapp_html(
         state, all_results, target_data, action_state, status_msg,
         open_pnl_usdt, open_pnl_pct, fng_val, fng_label, macro_events, nyse_bell_str, total_capital_usdt
     )
-    send_telegram_webapp(html_path, t_coin, t_score, action_state)
+    send_telegram_webapp(html_path, t_coin, t_score, action_state, silent=silent_mode)
 
 
 if __name__ == "__main__":
@@ -2631,5 +2713,5 @@ if __name__ == "__main__":
     except Exception as exc:
         err_msg = f"⚠️ ERRORE ESECUZIONE BOT:\n{exc}\n\n{traceback.format_exc()[-1200:]}"
         print(err_msg)
-        send_telegram_report(err_msg)
+        send_telegram_report(err_msg, silent=False)
         raise
