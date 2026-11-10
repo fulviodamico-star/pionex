@@ -2686,19 +2686,21 @@ setInterval(forceRefreshPrices, 8000);
 def send_telegram_report(msg):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
         print("⚠️ TELEGRAM_TOKEN o TELEGRAM_CHAT_ID non configurati.")
-        print(msg)
         return
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    safe_msg = sanitize_telegram_html(msg)
     payload = {
         "chat_id": TELEGRAM_CHAT_ID,
-        "text": msg,
+        "text": safe_msg,
         "parse_mode": "HTML",
         "disable_web_page_preview": True
     }
     try:
         r = requests.post(url, json=payload, timeout=15)
         if r.status_code != 200:
-            print(f"[ERRORE TELEGRAM] {r.status_code}: {r.text}")
+            print(f"[WARN TELEGRAM HTML] {r.status_code}: {r.text} -> Invio fallback testo puro")
+            clean_text = re.sub(r"<[^>]+>", "", msg)
+            requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": clean_text}, timeout=15)
     except Exception as e:
         print(f"[ECCEZIONE TELEGRAM] {e}")
 
@@ -2707,15 +2709,22 @@ def send_telegram_webapp(caption_text):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID or not os.path.exists(WEBAPP_FILE):
         return
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendDocument"
+    safe_caption = sanitize_telegram_html(caption_text)
     try:
         with open(WEBAPP_FILE, "rb") as f:
             files = {"document": ("Console_Live_AI_Bot.html", f, "text/html")}
             data = {
                 "chat_id": TELEGRAM_CHAT_ID,
-                "caption": caption_text,
+                "caption": safe_caption,
                 "parse_mode": "HTML"
             }
-            requests.post(url, data=data, files=files, timeout=20)
+            r = requests.post(url, data=data, files=files, timeout=25)
+            if r.status_code != 200:
+                print(f"[WARN TELEGRAM FILE] {r.status_code}: {r.text} -> Riprovo senza HTML")
+                with open(WEBAPP_FILE, "rb") as f2:
+                    files2 = {"document": ("Console_Live_AI_Bot.html", f2, "text/html")}
+                    clean_cap = re.sub(r"<[^>]+>", "", caption_text)
+                    requests.post(url, data={"chat_id": TELEGRAM_CHAT_ID, "caption": clean_cap}, files=files2, timeout=25)
     except Exception as e:
         print(f"[ECCEZIONE TELEGRAM FILE] {e}")
 
