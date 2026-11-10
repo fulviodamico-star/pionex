@@ -891,7 +891,7 @@ def run_time_machine(highs_1h, lows_1h, closes_1h, entry_price, stop_price, targ
             "verdict": "DATI PARZIALI",
         }
 
-    up_ target_pct = (target_price - entry_price) / entry_price
+    up_target_pct = (target_price - entry_price) / entry_price
     dn_stop_pct = (stop_price - entry_price) / entry_price  # negativo
 
     # 1. REPLAY STORICO SULLE ULTIME 320 ORE
@@ -924,7 +924,7 @@ def run_time_machine(highs_1h, lows_1h, closes_1h, entry_price, stop_price, targ
     hist_success_pct = ((hist_wins + hist_in_grid * 0.75) / tot_hist) * 100.0
 
     # 2. SIMULAZIONE MONTE CARLO (Bootstrap sui rendimenti ed escursioni High/Low reali)
-    bar_ shocks = []
+    bar_shocks = []
     for i in range(max(1, len(closes_1h) - 180), len(closes_1h)):
         c_prev = closes_1h[i - 1]
         if c_prev <= 0:
