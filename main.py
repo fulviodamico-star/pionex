@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 import time
 import math
@@ -201,7 +202,7 @@ def pionex_request(method, path, params=None, body=None):
         "PIONEX-KEY": PIONEX_API_KEY,
         "PIONEX-SIGNATURE": signature,
         "Content-Type": "application/json",
-        "User-Agent": "NeuralQuantGridBot/7.0"
+        "User-Agent": "NeuralQuantGridBot/7.1"
     }
     url = f"https://api.pionex.com{path_url}"
     try:
@@ -286,6 +287,18 @@ def ema_series(values, period):
     for v in values[1:]:
         out.append(v * k + out[-1] * (1.0 - k))
     return out
+
+
+def build_4h_from_1h(h1, l1, c1):
+    h4, l4, c4 = [], [], []
+    n = len(c1)
+    for i in range(0, n - 3, 4):
+        h4.append(max(h1[i:i + 4]))
+        l4.append(min(l1[i:i + 4]))
+        c4.append(c1[i + 3])
+    if not c4:
+        return h1, l1, c1
+    return h4, l4, c4
 
 
 def rsi_series(closes, period=14):
@@ -635,7 +648,7 @@ def run_neural_and_lorentzian_ai(highs, lows, closes, volumes):
 
 
 # ==========================================
-# RACCOLTA DATI MULTI-FONTE (GLOBAL & PER-COIN)
+# RACCOLTA DATI MULTI-FONTE (CON RETRY ANTI-BLOCCO)
 # ==========================================
 def fetch_eur_usd():
     try:
@@ -650,52 +663,58 @@ def fetch_eur_usd():
 
 def fetch_kraken_ohlc(pair, interval=60):
     url = f"https://api.kraken.com/0/public/OHLC?pair={pair}&interval={interval}"
-    r = requests.get(url, headers=HEADERS, timeout=12)
-    res = r.json().get("result", {})
-    for k, v in res.items():
-        if k != "last" and isinstance(v, list):
-            return v
+    for attempt in range(3):
+        try:
+            r = requests.get(url, headers=HEADERS, timeout=12)
+            res = r.json().get("result", {})
+            for k, v in res.items():
+                if k != "last" and isinstance(v, list) and len(v) > 10:
+                    return v
+        except Exception:
+            pass
+        time.sleep(0.45 * (attempt + 1))
     return []
 
 
 def fetch_kraken_orderbook_depth(pair, count=50):
-    try:
-        url = f"https://api.kraken.com/0/public/Depth?pair={pair}&count={count}"
-        r = requests.get(url, headers=HEADERS, timeout=10)
-        res = r.json().get("result", {})
-        for k, v in res.items():
-            bids = v.get("bids", [])
-            asks = v.get("asks", [])
-            if not bids or not asks:
-                break
-            best_bid = float(bids[0][0])
-            best_ask = float(asks[0][0])
-            mid = (best_bid + best_ask) / 2.0
-            spread_bps = ((best_ask - best_bid) / mid) * 10000.0 if mid > 0 else 5.0
+    url = f"https://api.kraken.com/0/public/Depth?pair={pair}&count={count}"
+    for attempt in range(2):
+        try:
+            r = requests.get(url, headers=HEADERS, timeout=10)
+            res = r.json().get("result", {})
+            for k, v in res.items():
+                bids = v.get("bids", [])
+                asks = v.get("asks", [])
+                if not bids or not asks:
+                    break
+                best_bid = float(bids[0][0])
+                best_ask = float(asks[0][0])
+                mid = (best_bid + best_ask) / 2.0
+                spread_bps = ((best_ask - best_bid) / mid) * 10000.0 if mid > 0 else 5.0
 
-            bid_vol_weighted = 0.0
-            for b in bids:
-                p, q = float(b[0]), float(b[1])
-                dist = max(0.0005, abs(mid - p) / mid)
-                bid_vol_weighted += (p * q) / (1.0 + dist * 100.0)
+                bid_vol_weighted = 0.0
+                for b in bids:
+                    p, q = float(b[0]), float(b[1])
+                    dist = max(0.0005, abs(mid - p) / mid)
+                    bid_vol_weighted += (p * q) / (1.0 + dist * 100.0)
 
-            ask_vol_weighted = 0.0
-            for a in asks:
-                p, q = float(a[0]), float(a[1])
-                dist = max(0.0005, abs(p - mid) / mid)
-                ask_vol_weighted += (p * q) / (1.0 + dist * 100.0)
+                ask_vol_weighted = 0.0
+                for a in asks:
+                    p, q = float(a[0]), float(a[1])
+                    dist = max(0.0005, abs(p - mid) / mid)
+                    ask_vol_weighted += (p * q) / (1.0 + dist * 100.0)
 
-            tot = bid_vol_weighted + ask_vol_weighted
-            imbalance = (bid_vol_weighted - ask_vol_weighted) / tot if tot > 0 else 0.0
-            ratio = bid_vol_weighted / ask_vol_weighted if ask_vol_weighted > 0 else 1.0
-            return {
-                "imbalance": round(imbalance, 3),
-                "bid_ask_ratio": round(ratio, 2),
-                "spread_bps": round(spread_bps, 2),
-                "ok": True
-            }
-    except Exception:
-        pass
+                tot = bid_vol_weighted + ask_vol_weighted
+                imbalance = (bid_vol_weighted - ask_vol_weighted) / tot if tot > 0 else 0.0
+                ratio = bid_vol_weighted / ask_vol_weighted if ask_vol_weighted > 0 else 1.0
+                return {
+                    "imbalance": round(imbalance, 3),
+                    "bid_ask_ratio": round(ratio, 2),
+                    "spread_bps": round(spread_bps, 2),
+                    "ok": True
+                }
+        except Exception:
+            time.sleep(0.3)
     return {"imbalance": 0.0, "bid_ask_ratio": 1.0, "spread_bps": 2.0, "ok": False}
 
 
@@ -900,7 +919,7 @@ def run_chart_scanner_and_entry_timer(h15, l15, c15, v15, h1, l1, c1, v1, lower_
             timer_state = "WAITING ⏳ (Attesa Chiusura 15m Rialzista)"
     else:
         triggered = True
-        timer_state = "TRIGGERED ✅ (Fallback Dati 1H)"
+        timer_state = "TRIGGERED ✅ (Conferma Struttura 1H)"
 
     return {
         "pattern": pattern,
@@ -1054,19 +1073,19 @@ def run_budget_and_risk_manager(bot_state, invest_usdt, entry_price, stop_loss, 
 
     reasons = []
     if daily_pnl < 0 and daily_loss_pct >= DAILY_MAX_LOSS_PCT:
-        reasons.append(f"Daily Loss Limit raggiunto (-{daily_loss_pct:.1f}% >= {DAILY_MAX_LOSS_PCT}%)")
+        reasons.append(f"Daily Loss Limit raggiunto (-{daily_loss_pct:.1f}% su max {DAILY_MAX_LOSS_PCT}%)")
     if daily_trades >= MAX_TRADES_PER_DAY:
         reasons.append(f"Max Trade Giornalieri raggiunto ({daily_trades}/{MAX_TRADES_PER_DAY})")
     if risk_pct > MAX_LOSS_PCT_PER_TRADE:
-        reasons.append(f"Rischio Stop Loss eccessivo ({risk_pct:.2f}% > {MAX_LOSS_PCT_PER_TRADE}%)")
+        reasons.append(f"Rischio Stop Loss eccessivo ({risk_pct:.2f}% oltre max {MAX_LOSS_PCT_PER_TRADE}%)")
     if rr_ratio < MIN_REWARD_RISK_R:
-        reasons.append(f"Reward/Risk insufficiente ({rr_ratio:.2f}R < {MIN_REWARD_RISK_R}R)")
+        reasons.append(f"Reward/Risk basso ({rr_ratio:.2f}R sotto min {MIN_REWARD_RISK_R}R)")
     if not spread_ok:
         reasons.append("Spread Bid/Ask troppo largo rispetto a 1R")
     if macro_check_urgent:
-        reasons.append("Evento Macro USD High-Impact imminente (<3h)")
+        reasons.append("Evento Macro USD High-Impact entro 3 ore")
     if time_machine_exp_r < 0.05:
-        reasons.append(f"Time Machine Expected R negativo/basso ({time_machine_exp_r:+.2f}R)")
+        reasons.append(f"Time Machine Expected R basso ({time_machine_exp_r:+.2f}R)")
 
     passed = len(reasons) == 0
     status_str = "PASS ✅" if passed else f"BLOCK ⛔ ({'; '.join(reasons)})"
@@ -1105,20 +1124,18 @@ def analyze_single_coin(coin_cfg, global_ctx, bot_state):
     p_sym = coin_cfg["pionex"]
 
     ohlc_1h = fetch_kraken_ohlc(k_pair, 60)
-    ohlc_4h = fetch_kraken_ohlc(k_pair, 240)
-    ohlc_15m = fetch_kraken_ohlc(k_pair, 15)
+    if len(ohlc_1h) < 120:
+        raise ValueError(f"Dati OHLC 1H insufficienti per {coin_name}")
 
-    if len(ohlc_1h) < 120 or len(ohlc_4h) < 50:
-        raise ValueError(f"Dati OHLC insufficienti per {coin_name}")
+    ohlc_15m = fetch_kraken_ohlc(k_pair, 15)
 
     h1 = [float(x[2]) for x in ohlc_1h]
     l1 = [float(x[3]) for x in ohlc_1h]
     c1 = [float(x[4]) for x in ohlc_1h]
     v1 = [float(x[6]) for x in ohlc_1h]
 
-    h4 = [float(x[2]) for x in ohlc_4h]
-    l4 = [float(x[3]) for x in ohlc_4h]
-    c4 = [float(x[4]) for x in ohlc_4h]
+    # Costruisce il 4H direttamente dalle 720 ore 1H per dimezzare le chiamate API a Kraken
+    h4, l4, c4 = build_4h_from_1h(h1, l1, c1)
 
     c15 = [float(x[4]) for x in ohlc_15m] if len(ohlc_15m) > 30 else c1
     h15 = [float(x[2]) for x in ohlc_15m] if len(ohlc_15m) > 30 else h1
@@ -1406,10 +1423,10 @@ def analyze_single_coin(coin_cfg, global_ctx, bot_state):
     penalties = []
     if global_ctx["high_impact_urgent"]:
         raw_total_100 -= 15
-        penalties.append("Evento Macro USD High Impact <3h (-15 pt)")
+        penalties.append("Evento Macro USD High Impact entro 3h (-15 pt)")
     elif global_ctx["high_impact_today"]:
         raw_total_100 -= 5
-        penalties.append("Evento Macro USD High Impact <12h (-5 pt)")
+        penalties.append("Evento Macro USD High Impact entro 12h (-5 pt)")
 
     if price < ema200_4h * 0.96 and adx_4h > 32 and minus_di_4h > plus_di_4h:
         raw_total_100 -= 12
@@ -1574,11 +1591,11 @@ def manage_autonomous_grid_bot(bot_state, coins_map, best_coin_data, invest_usdt
         close_reason = None
         if price <= sl:
             if bot_state.get("trailing_active"):
-                close_reason = f"TRAILING / BREAK-EVEN STOP COLPITO su {active_coin_name} ({fmt_p(price)}$ <= {fmt_p(sl)}$)"
+                close_reason = f"TRAILING / BREAK-EVEN STOP COLPITO su {active_coin_name} ({fmt_p(price)}$ sotto {fmt_p(sl)}$)"
             else:
-                close_reason = f"STOP LOSS DI EMERGENZA COLPITO su {active_coin_name} ({fmt_p(price)}$ <= {fmt_p(sl)}$)"
+                close_reason = f"STOP LOSS DI EMERGENZA COLPITO su {active_coin_name} ({fmt_p(price)}$ sotto {fmt_p(sl)}$)"
         elif price >= upper * 1.004:
-            close_reason = f"TAKE PROFIT SUPERIORE RAGGIUNTO su {active_coin_name} ({fmt_p(price)}$ >= Upper {fmt_p(upper)}$)"
+            close_reason = f"TAKE PROFIT SUPERIORE RAGGIUNTO su {active_coin_name} ({fmt_p(price)}$ oltre Upper {fmt_p(upper)}$)"
         elif final_score <= 3 and ai_prob < 0.42:
             close_reason = f"USCITA PREVENTIVA AI su {active_coin_name} (Score {final_score}/10 e Prob AI {ai_prob*100:.1f}%)"
         elif high_impact_urgent and total_pnl_pct > 0.35:
@@ -1709,7 +1726,7 @@ def manage_autonomous_grid_bot(bot_state, coins_map, best_coin_data, invest_usdt
         "details": (
             f"Migliore Coin attuale: {best_coin} con Punteggio {best_score}/10 ({best_coin_data['raw_score']}/100) "
             f"| Risk Check: {best_risk['status']}. "
-            f"Il bot aprirà automaticamente appena una delle 10 coin raggiunge >= 7/10 con Entry Timer TRIGGERED e Risk PASS."
+            f"Il bot aprirà automaticamente appena una delle 10 coin raggiunge almeno 7/10 con Entry Timer TRIGGERED e Risk PASS."
         ),
         "pnl_usdt": 0.0,
         "pnl_pct": 0.0
@@ -1948,7 +1965,6 @@ def generate_webapp_dashboard(ctx):
 </head>
 <body>
 <div class="container">
-    <!-- TOP BAR -->
     <div class="topbar">
         <div>
             <h1>🎛️ Console Operativa Web Live — Multi-Coin Neural Quant AI</h1>
@@ -1965,7 +1981,6 @@ def generate_webapp_dashboard(ctx):
         </div>
     </div>
 
-    <!-- SEMAFORO DECISIONALE IN TEMPO REALE: COSA DEVO FARE ADESSO? -->
     <div class="advisor-banner" id="advisor-banner">
         <div>
             <div style="font-size:0.75rem;text-transform:uppercase;letter-spacing:1px;color:var(--muted);">
@@ -1977,7 +1992,6 @@ def generate_webapp_dashboard(ctx):
         <div class="btn-group" id="advisor-actions"></div>
     </div>
 
-    <!-- 4 KPI CARDS LIVE -->
     <div class="kpi-grid">
         <div class="card">
             <div class="card-label">Stato Posizione Attiva</div>
@@ -2001,9 +2015,7 @@ def generate_webapp_dashboard(ctx):
         </div>
     </div>
 
-    <!-- PANNELLO POSIZIONE APERTA + CONTROLLO MANUALE -->
     <div class="main-grid">
-        <!-- COLONNA SINISTRA: MONITOR POSIZIONE APERTA IN TEMPO REALE -->
         <div class="card">
             <div class="section-title">
                 <span>🟢 Monitor Posizione Aperta (Live Tick-by-Tick)</span>
@@ -2012,7 +2024,6 @@ def generate_webapp_dashboard(ctx):
             <div id="active-pos-container"></div>
         </div>
 
-        <!-- COLONNA DESTRA: CONSOLE COMANDI MANUALI (APRI / SIMULA / COPIA PIONEX) -->
         <div class="card">
             <div class="section-title">
                 <span>🛠️ Console Apertura Manuale & Parametri Pionex</span>
@@ -2063,7 +2074,6 @@ def generate_webapp_dashboard(ctx):
         </div>
     </div>
 
-    <!-- CLASSIFICA LIVE DELLE 10 CRIPTOVALUTE CON PREZZI STREAMING -->
     <div class="card" style="margin-bottom:18px;overflow-x:auto;">
         <div class="section-title">
             <span>📊 Scanner Live delle 10 Criptovalute (Prezzi in Tempo Reale da Kraken)</span>
@@ -2088,7 +2098,6 @@ def generate_webapp_dashboard(ctx):
         </table>
     </div>
 
-    <!-- STORICO POSIZIONI CHIUSE (BOT + MANUALI) -->
     <div class="card" style="overflow-x:auto;">
         <div class="section-title">
             <span>📜 Registro Posizioni Chiuse (Automatiche Bot + Manuali Console)</span>
@@ -2118,7 +2127,6 @@ def generate_webapp_dashboard(ctx):
 const SNAPSHOT = __SNAPSHOT_JSON__;
 const STORAGE_KEY = "pionex_ai_console_state_v7";
 
-// Mappa prezzi live e decimali
 let livePrices = {};
 let coinsByName = {};
 SNAPSHOT.ranking.forEach(c => {
@@ -2126,13 +2134,11 @@ SNAPSHOT.ranking.forEach(c => {
     coinsByName[c.coin] = c;
 });
 
-// Stato operativo locale (sincronizzato con lo snapshot del bot + eventuali azioni manuali)
 function loadConsoleState() {
     const savedRaw = localStorage.getItem(STORAGE_KEY);
     if (savedRaw) {
         try {
             const parsed = JSON.parse(savedRaw);
-            // Se il bot GitHub ha un'operazione più recente o ha chiuso/aperto, aggiorna se non è un override manuale attivo
             if (!parsed.manual_override) {
                 return JSON.parse(JSON.stringify(SNAPSHOT.bot_state));
             }
@@ -2161,7 +2167,6 @@ function fmtPrice(p, coinName) {
     return Number(p).toFixed(dec);
 }
 
-// Popola menu a tendina delle 10 coin
 function initManualForm() {
     const sel = document.getElementById("man-coin");
     sel.innerHTML = "";
@@ -2204,7 +2209,6 @@ function fillFormWithCoin(coinName) {
     document.getElementById("man-invest").value = SNAPSHOT.invest_usdt;
 }
 
-// Azioni Manuali Utente: APRI, CHIUDI, SPOSTA STOP A PAREGGIO, COPIA PIONEX
 function openManualPosition() {
     const coinName = document.getElementById("man-coin").value;
     const c = coinsByName[coinName] || SNAPSHOT.best_coin;
@@ -2326,7 +2330,6 @@ function copyPionexParams() {
     });
 }
 
-// Calcolo PnL e metriche in tempo reale sulla posizione aperta
 function computeLivePositionMetrics() {
     if (!appState.active) {
         return { pnlUsdt: 0, pnlPct: 0, curPrice: 0, posPct: 50, distSlPct: 0 };
@@ -2337,7 +2340,6 @@ function computeLivePositionMetrics() {
     const qty = appState.qty || ((appState.invested_usdt || 50) / entry);
     const invested = appState.invested_usdt || SNAPSHOT.invest_usdt;
 
-    // Simula micro-fills se il prezzo si muove nel range mentre la console è aperta
     const lastSim = appState.last_sim_price || entry;
     const stepUsd = appState.step_usd || ((appState.upper - appState.lower) / Math.max(appState.grids || 10, 1));
     if (stepUsd > 0 && curPrice >= appState.lower && curPrice <= appState.upper) {
@@ -2364,7 +2366,6 @@ function computeLivePositionMetrics() {
     return { pnlUsdt, pnlPct, curPrice, posPct, distSlPct, gridPnl };
 }
 
-// Rendering completo dell'interfaccia ad ogni tick
 function renderAll() {
     document.getElementById("snap-time").textContent = SNAPSHOT.generated_at;
     document.getElementById("nyse-status").textContent = SNAPSHOT.nyse_bell.status;
@@ -2373,7 +2374,6 @@ function renderAll() {
     const bestLiveP = livePrices[best.coin] || best.price;
     const posMetrics = computeLivePositionMetrics();
 
-    // 1. Semaforo Decisionale in Tempo Reale (Cosa devi fare adesso)
     const banner = document.getElementById("advisor-banner");
     const advTitle = document.getElementById("advisor-title");
     const advDesc = document.getElementById("advisor-desc");
@@ -2420,7 +2420,6 @@ function renderAll() {
             `;
         }
     } else {
-        // Nessuna posizione aperta: dice chiaramente se conviene aprire manualmente oppure attendere
         if (best.final_score >= 7 && best.risk_manager.passed && best.scanner_timer.triggered) {
             banner.style.borderColor = "var(--green)";
             banner.style.background = "rgba(16, 185, 129, 0.12)";
@@ -2443,7 +2442,6 @@ function renderAll() {
         }
     }
 
-    // 2. Aggiorna le 4 KPI Cards
     if (appState.active) {
         document.getElementById("kpi-pos-status").innerHTML = `<span style="color:var(--green);">🟢 ${appState.coin}/USDT</span>`;
         document.getElementById("kpi-pos-sub").textContent = `Ingresso: ${fmtPrice(appState.entry_price, appState.coin)}$ | Stop: ${fmtPrice(appState.stop_loss, appState.coin)}$`;
@@ -2465,7 +2463,6 @@ function renderAll() {
     document.getElementById("kpi-hist-pnl").innerHTML = `<span style="color:${hCol};">${histPnl >= 0 ? '+' : ''}${histPnl.toFixed(2)} USDT</span>`;
     document.getElementById("kpi-hist-count").textContent = `Trade chiusi totali: ${appState.closed_trades_count || 0}`;
 
-    // 3. Pannello Posizione Attiva
     const posBox = document.getElementById("active-pos-container");
     document.getElementById("active-mode-badge").textContent = appState.active ? (appState.mode || "PAPER") : "STANDBY";
 
@@ -2506,13 +2503,11 @@ function renderAll() {
         `;
     }
 
-    // Aggiorna prezzo live nel form manuale
     const selCoin = document.getElementById("man-coin").value;
     if (selCoin && livePrices[selCoin]) {
         document.getElementById("man-price").value = fmtPrice(livePrices[selCoin], selCoin);
     }
 
-    // 4. Tabella Scanner 10 Criptovalute
     const rankBody = document.getElementById("ranking-tbody");
     rankBody.innerHTML = "";
     SNAPSHOT.ranking.forEach((c, idx) => {
@@ -2550,7 +2545,6 @@ function renderAll() {
         rankBody.appendChild(tr);
     });
 
-    // 5. Tabella Storico Posizioni Chiuse
     const histBody = document.getElementById("history-tbody");
     const histList = appState.trade_history || [];
     document.getElementById("closed-summary-badge").textContent = `${histList.length} operazioni registrate`;
@@ -2584,9 +2578,6 @@ function renderAll() {
     }
 }
 
-// ==========================================
-// STREAMING PREZZI IN TEMPO REALE (KRAKEN WEBSOCKET + REST FALLBACK)
-// ==========================================
 const wsMap = {};
 SNAPSHOT.ranking.forEach(c => { wsMap[c.ws_pair] = c.coin; });
 
@@ -2662,7 +2653,6 @@ async function forceRefreshPrices() {
     } catch (e) {}
 }
 
-// Avvio Console
 initManualForm();
 renderAll();
 connectKrakenWebSocket();
@@ -2681,14 +2671,31 @@ setInterval(forceRefreshPrices, 8000);
 
 
 # ==========================================
-# INVIO REPORT + FILE WEB CONSOLE DIRETTAMENTE SU TELEGRAM
+# INVIO GARANTITO REPORT + CONSOLE WEB SU TELEGRAM
 # ==========================================
+def sanitize_telegram_html(text):
+    placeholders = {
+        "<b>": "___B_OPEN___", "</b>": "___B_CLOSE___",
+        "<i>": "___I_OPEN___", "</i>": "___I_CLOSE___",
+        "<code>": "___C_OPEN___", "</code>": "___C_CLOSE___"
+    }
+    for tag, ph in placeholders.items():
+        text = text.replace(tag, ph)
+    text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    for tag, ph in placeholders.items():
+        text = text.replace(ph, tag)
+    return text
+
+
 def send_telegram_report(msg):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-        print("⚠️ TELEGRAM_TOKEN o TELEGRAM_CHAT_ID non configurati.")
+        print("⚠️ TELEGRAM_TOKEN o TELEGRAM_CHAT_ID non configurati nei Secrets!")
+        print(msg)
         return
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     safe_msg = sanitize_telegram_html(msg)
+    if len(safe_msg) > 4000:
+        safe_msg = safe_msg[:3990] + "\n..."
     payload = {
         "chat_id": TELEGRAM_CHAT_ID,
         "text": safe_msg,
@@ -2696,20 +2703,23 @@ def send_telegram_report(msg):
         "disable_web_page_preview": True
     }
     try:
-        r = requests.post(url, json=payload, timeout=15)
+        r = requests.post(url, json=payload, timeout=18)
+        print(f"[TELEGRAM MSG STATUS] {r.status_code}")
         if r.status_code != 200:
-            print(f"[WARN TELEGRAM HTML] {r.status_code}: {r.text} -> Invio fallback testo puro")
-            clean_text = re.sub(r"<[^>]+>", "", msg)
-            requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": clean_text}, timeout=15)
+            print(f"[WARN TELEGRAM HTML] {r.text} -> Invio fallback testo puro")
+            clean_text = re.sub(r"<[^>]+>", "", msg)[:4000]
+            r2 = requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": clean_text}, timeout=18)
+            print(f"[TELEGRAM FALLBACK STATUS] {r2.status_code}")
     except Exception as e:
-        print(f"[ECCEZIONE TELEGRAM] {e}")
+        print(f"[ECCEZIONE TELEGRAM MSG] {e}")
 
 
 def send_telegram_webapp(caption_text):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID or not os.path.exists(WEBAPP_FILE):
+        print("⚠️ Impossibile inviare il file WebApp: token/chat_id o index.html mancante.")
         return
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendDocument"
-    safe_caption = sanitize_telegram_html(caption_text)
+    safe_caption = sanitize_telegram_html(caption_text)[:950]
     try:
         with open(WEBAPP_FILE, "rb") as f:
             files = {"document": ("Console_Live_AI_Bot.html", f, "text/html")}
@@ -2719,12 +2729,14 @@ def send_telegram_webapp(caption_text):
                 "parse_mode": "HTML"
             }
             r = requests.post(url, data=data, files=files, timeout=25)
+            print(f"[TELEGRAM FILE STATUS] {r.status_code}")
             if r.status_code != 200:
-                print(f"[WARN TELEGRAM FILE] {r.status_code}: {r.text} -> Riprovo senza HTML")
+                print(f"[WARN TELEGRAM FILE] {r.text} -> Riprovo senza HTML")
                 with open(WEBAPP_FILE, "rb") as f2:
                     files2 = {"document": ("Console_Live_AI_Bot.html", f2, "text/html")}
-                    clean_cap = re.sub(r"<[^>]+>", "", caption_text)
-                    requests.post(url, data={"chat_id": TELEGRAM_CHAT_ID, "caption": clean_cap}, files=files2, timeout=25)
+                    clean_cap = re.sub(r"<[^>]+>", "", caption_text)[:950]
+                    r2 = requests.post(url, data={"chat_id": TELEGRAM_CHAT_ID, "caption": clean_cap}, files=files2, timeout=25)
+                    print(f"[TELEGRAM FILE FALLBACK STATUS] {r2.status_code}")
     except Exception as e:
         print(f"[ECCEZIONE TELEGRAM FILE] {e}")
 
@@ -2772,7 +2784,7 @@ def main():
     bot_state = load_bot_state()
 
     coins_results = []
-    with ThreadPoolExecutor(max_workers=4) as executor:
+    with ThreadPoolExecutor(max_workers=2) as executor:
         future_to_coin = {executor.submit(analyze_single_coin, cfg, global_ctx, bot_state): cfg for cfg in COIN_UNIVERSE}
         for fut in as_completed(future_to_coin):
             cfg = future_to_coin[fut]
@@ -2856,11 +2868,10 @@ def main():
     rk_b = best_coin["risk_manager"]
     st_b = best_coin["scanner_timer"]
 
-    # Indicazione esplicita per l'utente su cosa fare manualmente adesso
     if bot_state.get("active"):
         manual_advice = f"🟢 <b>MANTIENI POSIZIONE SU {bot_state.get('coin')}</b> (Stop Loss attivo a {fmt_p(bot_state.get('stop_loss', 0))}$)"
     elif best_coin["final_score"] >= 7 and rk_b["passed"] and st_b["triggered"]:
-        manual_advice = f"🚀 <b>PUOI APRIRE MANUALMENTE SU {best_coin['coin']}/USDT</b> (Usa Range {fmt_p(best_coin['lower_bound'])}$ - {fmt_p(best_coin['upper_bound'])}$, {best_coin['optimal_grids']} griglie)"
+        manual_advice = f"🚀 <b>PUOI APRIRE MANUALMENTE SU {best_coin['coin']}/USDT</b> (Range {fmt_p(best_coin['lower_bound'])}$ - {fmt_p(best_coin['upper_bound'])}$, {best_coin['optimal_grids']} griglie)"
     else:
         manual_advice = f"⏸️ <b>NON APRIRE MANUALMENTE ADESSO</b> (Migliore coin {best_coin['coin']} è a {best_coin['final_score']}/10, attendi almeno 7/10)"
 
@@ -2901,7 +2912,7 @@ def main():
     caption = (
         f"🎛️ <b>Console Web Interattiva in Tempo Reale (Console_Live_AI_Bot.html)</b>\n"
         f"Stato: {active_str} | Stream Prezzi Kraken Live attivo\n"
-        f"Aprila per vedere i prezzi in tempo reale, le posizioni aperte/chiuse e i pulsanti di apertura/chiusura manuale."
+        f"Aprila nel browser per vedere i prezzi in tempo reale, le posizioni aperte/chiuse e i pulsanti manuali."
     )
     send_telegram_webapp(caption)
 
