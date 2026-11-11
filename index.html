@@ -2,102 +2,153 @@
 <html lang="it">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Pionex FreqAI v10 Bot</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Pionex Bot Console</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
 <style>
-      :root { --bg:#0b1220; --card:#121a2b; --line:#22304a; --text:#f1f5f9; --muted:#94a3b8; --green:#10b981; --red:#ef4444; --amber:#f59e0b; --blue:#38bdf8; }
-  * { box-sizing:border-box; margin:0; padding:0; font-family:system-ui,-apple-system,sans-serif; }
-  body { background:var(--bg); color:var(--text); padding:14px; max-width:960px; margin:0 auto; line-height:1.45; }
-  .top { display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:12px; }
-  .title { font-size:18px; font-weight:800; }
-  .sub { font-size:12px; color:var(--muted); }
-  .pill { font-size:11px; font-weight:700; padding:4px 9px; border-radius:999px; background:#1e293b; border:1px solid var(--line); }
-  .banner { padding:14px; border-radius:12px; border:1px solid var(--line); margin-bottom:12px; }
-  .banner-title { font-size:15px; font-weight:800; margin-bottom:4px; }
-  .banner-sub { font-size:13px; color:#cbd5e1; }
-  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px; margin-bottom:12px; }
-  .card-h { font-size:12px; font-weight:800; text-transform:uppercase; color:var(--muted); letter-spacing:0.6px; margin-bottom:10px; display:flex; justify-content:space-between; align-items:center; }
-  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:8px; }
-  .kv { background:#0f172a; padding:10px; border-radius:8px; border:1px solid #1e293b; }
+  :root { --bg:#090f1d; --card:#131c31; --card2:#192540; --line:#263554; --text:#f8fafc; --muted:#94a3b8; --green:#10b981; --red:#ef4444; --amber:#f59e0b; --blue:#38bdf8; }
+  * { box-sizing:border-box; margin:0; padding:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; -webkit-tap-highlight-color:transparent; }
+  body { background:var(--bg); color:var(--text); padding:12px; max-width:600px; margin:0 auto 80px; line-height:1.4; }
+  .header { display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; gap:8px; }
+  .h-title { font-size:18px; font-weight:900; letter-spacing:-0.3px; }
+  .h-sub { font-size:12px; color:var(--muted); margin-top:2px; }
+  .badge-pill { font-size:11px; font-weight:800; padding:5px 10px; border-radius:99px; background:var(--card2); border:1px solid var(--line); white-space:nowrap; }
+  .hero { padding:16px; border-radius:16px; border:2px solid var(--line); margin-bottom:14px; }
+  .hero-t { font-size:17px; font-weight:900; margin-bottom:6px; }
+  .hero-s { font-size:13px; color:#e2e8f0; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:16px; padding:14px; margin-bottom:14px; }
+  .sec-title { font-size:12px; font-weight:800; text-transform:uppercase; color:var(--muted); letter-spacing:0.5px; margin-bottom:12px; display:flex; justify-content:space-between; align-items:center; }
+  .big-actions { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .act-btn { border:none; border-radius:14px; padding:14px 12px; font-size:14px; font-weight:800; color:#fff; cursor:pointer; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:4px; text-align:center; transition:transform .1s; }
+  .act-btn:active { transform:scale(0.97); }
+  .act-btn small { font-size:11px; font-weight:600; opacity:0.85; }
+  .b-green { background:linear-gradient(135deg,#059669,#10b981); }
+  .b-red { background:linear-gradient(135deg,#dc2626,#ef4444); }
+  .b-blue { background:linear-gradient(135deg,#0284c7,#38bdf8); }
+  .b-amber { background:linear-gradient(135deg,#d97706,#f59e0b); }
+  .b-dark { background:var(--card2); border:1px solid var(--line); color:var(--text); }
+  .kv-grid { display:grid; grid-template-columns:repeat(2,1fr); gap:8px; }
+  .kv { background:#0c1426; padding:10px 12px; border-radius:12px; border:1px solid #1e2d4a; }
   .kv-l { font-size:11px; color:var(--muted); }
-  .kv-v { font-size:15px; font-weight:800; margin-top:2px; font-variant-numeric:tabular-nums; }
-  .tabs { display:flex; gap:6px; overflow-x:auto; padding-bottom:4px; margin-bottom:12px; }
-  .tab { background:#162033; border:1px solid var(--line); color:var(--text); padding:8px 11px; border-radius:9px; cursor:pointer; min-width:86px; text-align:left; }
-  .tab.active { border-color:var(--blue); background:#1a2b46; }
-  .tab-top { display:flex; justify-content:space-between; font-size:12px; font-weight:800; }
-  .tab-px { font-size:11px; color:var(--muted); margin-top:2px; font-variant-numeric:tabular-nums; }
-  .bar { height:8px; background:#0f172a; border-radius:99px; overflow:hidden; margin:8px 0 4px; position:relative; border:1px solid #1e293b; }
-  .bar > div { height:100%; transition:width .3s; }
-  table { width:100%; border-collapse:collapse; font-size:12px; }
-  th, td { padding:7px 6px; border-bottom:1px solid #1e293b; text-align:left; font-variant-numeric:tabular-nums; }
-  th { color:var(--muted); font-weight:700; font-size:11px; }
-  .btn { background:#1e293b; color:var(--text); border:1px solid #334155; padding:8px 12px; border-radius:8px; font-size:12px; font-weight:700; cursor:pointer; }
-  .btn:hover { filter:brightness(1.15); }
-  .btn-red { background:rgba(239,68,68,.18); border-color:#ef4444; color:#fca5a5; }
-  .btn-green { background:rgba(16,185,129,.18); border-color:#10b981; color:#6ee7b7; }
-  input, select { background:#0f172a; color:var(--text); border:1px solid #334155; padding:7px 9px; border-radius:8px; font-size:12px; }
-  .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
-  .muted { color:var(--muted); font-size:12px; }
+  .kv-v { font-size:16px; font-weight:900; margin-top:2px; font-variant-numeric:tabular-nums; }
+  .prog-bar { height:10px; background:#0c1426; border-radius:99px; overflow:hidden; margin:12px 0 6px; border:1px solid #1e2d4a; }
+  .prog-bar > div { height:100%; transition:width .3s; }
+  .coin-list { display:flex; flex-direction:column; gap:10px; }
+  .coin-item { background:#0d1629; border:1px solid var(--line); border-radius:14px; padding:12px; }
+  .coin-item.ready { border-color:var(--green); background:rgba(16,185,129,0.07); }
+  .coin-top { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; }
+  .coin-name { font-size:16px; font-weight:900; display:flex; align-items:center; gap:6px; }
+  .coin-px { font-size:16px; font-weight:900; font-variant-numeric:tabular-nums; }
+  .coin-meta { display:grid; grid-template-columns:repeat(3,1fr); gap:6px; font-size:12px; margin-bottom:10px; background:var(--card); padding:8px; border-radius:10px; }
+  .coin-meta div span { display:block; font-size:10px; color:var(--muted); }
+  .coin-foot { display:flex; justify-content:space-between; align-items:center; gap:8px; }
+  .mini-btn { padding:8px 12px; border-radius:10px; font-size:12px; font-weight:800; border:none; cursor:pointer; color:#fff; white-space:nowrap; }
+  input, select { width:100%; background:#0c1426; color:var(--text); border:1px solid var(--line); padding:11px 12px; border-radius:12px; font-size:14px; font-weight:600; }
+  .toast { position:fixed; bottom:16px; left:12px; right:12px; max-width:576px; margin:0 auto; background:#1e293b; border:2px solid var(--blue); color:#fff; padding:13px 16px; border-radius:14px; font-size:13px; font-weight:700; display:none; z-index:99; box-shadow:0 10px 25px rgba(0,0,0,.6); }
   .pos-green { color:var(--green); } .pos-red { color:var(--red); } .pos-amber { color:var(--amber); }
+  .muted { color:var(--muted); font-size:12px; }
 </style>
 </head>
 <body>
 
-<div class="top">
+<div class="header">
   <div>
-    <div class="title">⚡ Pionex Freqtrade + FreqAI v10 Engine</div>
-    <div class="sub" id="subline">Caricamento...</div>
+    <div class="h-title">⚡ Pionex AI Console</div>
+    <div class="h-sub" id="subline">Caricamento...</div>
   </div>
-  <div class="row">
-    <span class="pill" id="ws-pill">🔴 Prezzi Live...</span>
-    <span class="pill" id="btc-pill">⚪ BTC</span>
-    <span class="pill" id="mode-pill">MODO</span>
+  <div style="display:flex;gap:6px;align-items:center;">
+    <span class="badge-pill" id="ws-pill">🔴 Live</span>
+    <span class="badge-pill" id="mode-pill">MODO</span>
   </div>
 </div>
 
-<div class="banner" id="advisor">
-  <div class="banner-title" id="adv-title"></div>
-  <div class="banner-sub" id="adv-sub"></div>
+<!-- SEMAFORO PRINCIPALE -->
+<div class="hero" id="advisor">
+  <div class="hero-t" id="adv-title"></div>
+  <div class="hero-s" id="adv-sub"></div>
 </div>
 
+<!-- POSIZIONE ATTIVA (SE PRESENTE) -->
 <div class="card" id="pos-card"></div>
 
-<div class="tabs" id="coin-tabs"></div>
-
-<div class="card" id="coin-detail"></div>
-
+<!-- TELECOMANDO RAPIDO A 1 TOCCO -->
 <div class="card">
-  <div class="card-h"><span>🎛️ Controlli Manuali (GitHub Actions / Telegram)</span><button class="btn" onclick="toggleCfg()">⚙️ Token GitHub</button></div>
-  <div id="cfg-box" style="display:none; margin-bottom:10px;" class="row">
-    <input id="gh-token" type="password" placeholder="GitHub Personal Access Token (scope: workflow)" style="flex:1;min-width:220px;">
-    <button class="btn btn-green" onclick="saveToken()">Salva nel browser</button>
-    <span class="muted">oppure invia direttamente <code>/status</code>, <code>/close</code>, <code>/open SOL</code>, <code>/sellall SOL</code> al bot Telegram.</span>
+  <div class="sec-title">
+    <span>🎛️ Telecomando Rapido (1-Tap)</span>
+    <button class="badge-pill" onclick="toggleSetup()" id="key-btn" style="cursor:pointer;">🔑 Chiave GitHub</button>
   </div>
-  <div class="row">
-    <button class="btn" onclick="dispatchCmd('status','',0)">🔄 Aggiorna Stato Ora</button>
-    <button class="btn btn-red" onclick="dispatchCmd('close','',0)">🛑 Chiudi Posizione Registrata</button>
-    <select id="man-coin"></select>
-    <input id="man-usdt" type="number" step="1" placeholder="USDT (0 = auto)" style="width:120px;">
-    <button class="btn btn-green" onclick="manualOpen()">🚀 Apri Long Manuale</button>
-    <button class="btn btn-red" onclick="manualSellAll()">🧹 Vendi Tutto Saldo Coin</button>
+
+  <div id="setup-box" style="display:none; background:#0c1426; padding:12px; border-radius:12px; margin-bottom:12px; border:1px solid var(--amber);">
+    <div style="font-size:13px; font-weight:800; margin-bottom:6px; color:var(--amber);">Configurazione Rapida (solo la prima volta):</div>
+    <div class="muted" style="margin-bottom:8px;">
+      Per far eseguire i pulsanti istantaneamente, incolla un Token GitHub.
+      <a id="gh-create-link" href="https://github.com/settings/tokens/new?description=PionexTelegramConsole&scopes=repo,workflow" target="_blank" style="color:var(--blue);font-weight:800;display:block;margin-top:4px;">👉 1. Tocca qui per generare il Token su GitHub (spunta 'workflow' e premi Generate)</a>
+    </div>
+    <input id="gh-token" type="password" placeholder="2. Incolla qui il Token ghp_... e premi Salva" style="margin-bottom:8px;">
+    <button class="act-btn b-green" style="width:100%;padding:10px;" onclick="saveToken()">💾 Salva Chiave nel Telefono</button>
   </div>
-  <div id="cmd-msg" class="muted" style="margin-top:8px;"></div>
+
+  <div class="big-actions" style="margin-bottom:10px;">
+    <button class="act-btn b-blue" onclick="sendCmd('status','',0)">
+      🔄 Aggiorna Ora
+      <small>Ricalcola AI + Report</small>
+    </button>
+    <button class="act-btn b-red" onclick="confirmClose()">
+      🛑 Chiudi Posizione
+      <small>Vendi trade attivo</small>
+    </button>
+  </div>
+
+  <div style="background:#0c1426; padding:10px; border-radius:12px; border:1px solid #1e2d4a;">
+    <div class="muted" style="margin-bottom:6px; font-weight:700;">Operazione manuale su singola Coin:</div>
+    <div style="display:grid; grid-template-columns:1.2fr 1fr; gap:8px; margin-bottom:8px;">
+      <select id="man-coin"></select>
+      <input id="man-usdt" type="number" inputmode="decimal" placeholder="USDT (0 = Auto)">
+    </div>
+    <div class="big-actions">
+      <button class="act-btn b-green" style="padding:11px;" onclick="manualOpen()">🚀 Compra (Long)</button>
+      <button class="act-btn b-amber" style="padding:11px;" onclick="manualSellAll()">🧹 Vendi Tutto Saldo</button>
+    </div>
+  </div>
 </div>
 
+<!-- CLASSIFICA DELLE 10 COIN CON PULSANTE DIRETTO -->
 <div class="card">
-  <div class="card-h"><span>📊 Statistiche & Protezioni Giornaliere</span><span id="daily-tag"></span></div>
-  <div class="grid" id="stats-grid"></div>
+  <div class="sec-title">
+    <span>🏆 Classifica 10 Coin in Tempo Reale</span>
+    <span id="btc-pill" class="muted"></span>
+  </div>
+  <div class="coin-list" id="coin-list"></div>
 </div>
 
+<!-- STATISTICHE E STORICO -->
 <div class="card">
-  <div class="card-h"><span>📜 Storico Operazioni Recenti</span><span id="macro-tag"></span></div>
-  <div id="hist-box"></div>
+  <div class="sec-title"><span>📊 Rendimento & Sicurezza</span><span id="daily-tag" class="muted"></span></div>
+  <div class="kv-grid" id="stats-grid"></div>
+  <div id="hist-box" style="margin-top:12px;"></div>
 </div>
+
+<div class="toast" id="toast"></div>
 
 <script>
-const D = {"updated_ts": 1794399717, "session": "🇪🇺 Sessione Europea Attiva", "btc_regime": "⚪ BTC Neutrale / Range", "fng_val": 29, "fng_class": "Fear", "mode": "SIMULAZIONE", "advisor": {"badge": "👀 QUASI PRONTO SU AVAX (65/100) - ATTENDI", "color": "#f59e0b", "bg": "rgba(245,158,11,0.14)", "instruction": "AVAX e' vicino alla soglia di ingresso (65/100), ma manca una conferma (L2 Bid (+11.0%) | PASS (Rischio OK))."}, "waiting": "", "position": {"is_open": false, "coin_code": "DOT", "symbol": "DOT_USDT", "entry_price": 0.84, "amount_coin": 62.98, "invested_usdt": 52.93, "sl_price": 0.849112, "tp_price": 0.8605082528033542, "initial_sl": 0.8292797769437011, "one_r": 0.010720223056298828, "highest_price": 0.8584, "breakeven_locked": true, "tp1_locked": true, "tp2_locked": true, "alerts_triggered": [], "opened_at": "11/11 08:40 UTC", "opened_ts": 1794386437, "mode": "SIMULATION", "order_id": "SIM", "last_check_ts": 1794393679, "close_fail_count": 0, "enter_tag": "freqai_fastscalp", "partial_tp_done": false, "realized_partial_usdt": 0.0}, "stats": {"total_trades": 2, "wins": 1, "losses": 1, "total_pnl_pct": -0.95, "total_pnl_usdt": -0.51, "daily_date": "2026-11-11", "daily_pnl_pct": 1.37, "daily_trades": 1, "last_action": "CHIUSO DOT (+1.45%) il 11/11 10:51 UTC", "daily_pnl_usdt": 0.77, "consec_losses": 0, "last_close_ts": 1794394316, "last_loss_ts": 0, "coin_last_close": {"DOT": 1794394316}, "last_tg_update_id": 540276387}, "history": [{"coin": "DOT", "entry": 0.84, "exit": 0.853, "pnl_pct": 1.45, "pnl_usdt": 0.77, "reason": "💰 FAST-SCALP PROFIT TAKE (+1.45% netto su rallentamento 15m)", "closed_at": "11/11 10:51 UTC", "mode": "SIMULATION"}, {"coin": "AVAX", "entry": 8.38, "exit": 8.187, "pnl_pct": -2.4, "pnl_usdt": -1.28, "reason": "🛑 STOP LOSS TOCCATO ($8.187)", "closed_at": "10/11 16:54 UTC", "mode": "SIMULATION"}, {"closed_at": "10/11/2026 11:26", "coin": "LINK", "entry": 10.6168, "exit": 10.4738, "pnl_usdt": -0.0, "pnl_pct": -0.69, "reason": "🎯 TAKE PROFIT GRIGLIA RAGGIUNTO su LINK (10.47$ >= 0.00$)"}], "coins": [{"code": "AVAX", "name": "Avalanche", "ws": "AVAX/USD", "kraken": "AVAXUSD", "price": 8.57, "sl_price": 8.49287, "tp_price": 8.698568, "final_score": 6, "raw_100": 65, "ai_prob": 36, "timer_summary": "L2 Bid (+11.0%)", "risk_ok": true, "risk_status": "PASS (Rischio OK)", "rr_ratio": 1.4, "pos_usdt": 52.89, "entry_ok": false}, {"code": "ADA", "name": "Cardano", "ws": "ADA/USD", "kraken": "ADAUSD", "price": 0.1767, "sl_price": 0.1748540860611262, "tp_price": 0.1791919838174796, "final_score": 6, "raw_100": 60, "ai_prob": 32, "timer_summary": "EMA20 15m Hold/Bounce + L2 Bid (+37.3%)", "risk_ok": false, "risk_status": "BLOCCATO: R:R netto basso (1.14x < 1.15x)", "rr_ratio": 1.14, "pos_usdt": 52.89, "entry_ok": false}, {"code": "SUI", "name": "Sui", "ws": "SUI/USD", "kraken": "SUIUSD", "price": 0.8318, "sl_price": 0.822405130892011, "tp_price": 0.8444830732957852, "final_score": 6, "raw_100": 57, "ai_prob": 39, "timer_summary": "L2 Bid (+8.9%)", "risk_ok": true, "risk_status": "PASS (Rischio OK)", "rr_ratio": 1.16, "pos_usdt": 52.89, "entry_ok": false}, {"code": "DOT", "name": "Polkadot", "ws": "DOT/USD", "kraken": "DOTUSD", "price": 0.85, "sl_price": 0.8392645056649688, "tp_price": 0.8666632, "final_score": 6, "raw_100": 55, "ai_prob": 33, "timer_summary": "EMA20 15m Hold/Bounce + L2 Bid (+22.7%)", "risk_ok": false, "risk_status": "BLOCCATO: DOT chiusa da meno di 6h", "rr_ratio": 1.36, "pos_usdt": 49.02, "entry_ok": false}, {"code": "DOGE", "name": "Dogecoin", "ws": "XDG/USD", "kraken": "XDGUSD", "price": 0.06816, "sl_price": 0.06750526620478764, "tp_price": 0.06941253421692799, "final_score": 5, "raw_100": 48, "ai_prob": 36, "timer_summary": "L2 Bid (+26.1%)", "risk_ok": true, "risk_status": "PASS (Rischio OK)", "rr_ratio": 1.64, "pos_usdt": 52.89, "entry_ok": false}, {"code": "SOL", "name": "Solana", "ws": "SOL/USD", "kraken": "SOLUSD", "price": 83.85, "sl_price": 82.96273897056338, "tp_price": 85.04780238973943, "final_score": 5, "raw_100": 46, "ai_prob": 31, "timer_summary": "L2 Bid (+11.1%)", "risk_ok": false, "risk_status": "BLOCCATO: R:R netto basso (1.15x < 1.15x)", "rr_ratio": 1.15, "pos_usdt": 52.89, "entry_ok": false}, {"code": "LINK", "name": "Chainlink", "ws": "LINK/USD", "kraken": "LINKUSD", "price": 10.39, "sl_price": 10.283379086863093, "tp_price": 10.567073500000001, "final_score": 4, "raw_100": 44, "ai_prob": 41, "timer_summary": "In attesa trigger 15m", "risk_ok": true, "risk_status": "PASS (Rischio OK)", "rr_ratio": 1.42, "pos_usdt": 52.89, "entry_ok": false}, {"code": "ETH", "name": "Ethereum", "ws": "ETH/USD", "kraken": "ETHUSD", "price": 2057.22, "sl_price": 2038.7050199999999, "tp_price": 2090.5369887989496, "final_score": 4, "raw_100": 43, "ai_prob": 57, "timer_summary": "In attesa trigger 15m", "risk_ok": true, "risk_status": "PASS (Rischio OK)", "rr_ratio": 1.52, "pos_usdt": 52.89, "entry_ok": false}, {"code": "BTC", "name": "Bitcoin", "ws": "XBT/USD", "kraken": "XBTUSD", "price": 74038.01, "sl_price": 73371.66790999999, "tp_price": 75037.523135, "final_score": 4, "raw_100": 42, "ai_prob": 42, "timer_summary": "In attesa trigger 15m", "risk_ok": true, "risk_status": "PASS (Rischio OK)", "rr_ratio": 1.25, "pos_usdt": 52.89, "entry_ok": false}, {"code": "XRP", "name": "Ripple", "ws": "XRP/USD", "kraken": "XRPUSD", "price": 1.0557, "sl_price": 1.0461987000000001, "tp_price": 1.0770031885257638, "final_score": 4, "raw_100": 35, "ai_prob": 36, "timer_summary": "In attesa trigger 15m", "risk_ok": true, "risk_status": "PASS (Rischio OK)", "rr_ratio": 1.92, "pos_usdt": 52.89, "entry_ok": false}], "macro": [{"title": "Unemployment Claims", "impact": "Medium", "ts": 1794490200}], "macro_ok": true, "repo": "fulviodamico-star/pionex", "workflow": "bot.yml", "ref": "main", "limits": {"max_trades": 5, "daily_max_loss": 4.0, "fee_rt": 0.1}};
+const D = {"updated_ts": 1794400397, "session": "🇪🇺 Sessione Europea Attiva", "btc_regime": "⚪ BTC Neutrale / Range", "fng_val": 29, "fng_class": "Fear", "mode": "SIMULAZIONE", "advisor": {"badge": "🟢 SEGNALE FORTE: COMPRA ETH ORA", "color": "#10b981", "bg": "rgba(16,185,129,0.16)", "instruction": "Tutti i parametri sono positivi su ETH (6/10 · 62/100). Importo consigliato 52.88 USDT, SL $2,034.11, TP $2,085.90."}, "waiting": "", "position": {"is_open": false, "coin_code": "ETH", "symbol": "ETH_USDT", "entry_price": 2052.58, "amount_coin": 0.0257, "invested_usdt": 52.88, "sl_price": 2034.1067799999998, "tp_price": 2085.8969887989497, "initial_sl": 2034.1067799999998, "one_r": 18.473220000000083, "highest_price": 2052.58, "breakeven_locked": false, "tp1_locked": false, "tp2_locked": false, "alerts_triggered": [], "opened_at": "11/11 12:32 UTC", "opened_ts": 1794400365, "mode": "SIMULATION", "order_id": "SIM", "last_check_ts": 1794400380, "close_fail_count": 0, "enter_tag": "freqai_tb_62_ai_57", "partial_tp_done": false, "realized_partial_usdt": 0.0}, "stats": {"total_trades": 3, "wins": 1, "losses": 2, "total_pnl_pct": -1.27, "total_pnl_usdt": -0.68, "daily_date": "2026-11-11", "daily_pnl_pct": 1.07, "daily_trades": 2, "last_action": "CHIUSO ETH (-0.32%) il 11/11 12:33 UTC", "daily_pnl_usdt": 0.6, "consec_losses": 1, "last_close_ts": 1794400397, "last_loss_ts": 1794400397, "coin_last_close": {"DOT": 1794394316, "ETH": 1794400397}, "last_tg_update_id": 540276388}, "history": [{"coin": "ETH", "entry": 2052.58, "exit": 2052.02, "pnl_pct": -0.32, "pnl_usdt": -0.17, "reason": "🖐️ CHIUSURA MANUALE D'EMERGENZA", "closed_at": "11/11 12:33 UTC", "mode": "SIMULATION"}, {"coin": "DOT", "entry": 0.84, "exit": 0.853, "pnl_pct": 1.45, "pnl_usdt": 0.77, "reason": "💰 FAST-SCALP PROFIT TAKE (+1.45% netto su rallentamento 15m)", "closed_at": "11/11 10:51 UTC", "mode": "SIMULATION"}, {"coin": "AVAX", "entry": 8.38, "exit": 8.187, "pnl_pct": -2.4, "pnl_usdt": -1.28, "reason": "🛑 STOP LOSS TOCCATO ($8.187)", "closed_at": "10/11 16:54 UTC", "mode": "SIMULATION"}, {"closed_at": "10/11/2026 11:26", "coin": "LINK", "entry": 10.6168, "exit": 10.4738, "pnl_usdt": -0.0, "pnl_pct": -0.69, "reason": "🎯 TAKE PROFIT GRIGLIA RAGGIUNTO su LINK (10.47$ >= 0.00$)"}], "coins": [{"code": "AVAX", "name": "Avalanche", "ws": "AVAX/USD", "kraken": "AVAXUSD", "price": 8.51, "sl_price": 8.43341, "tp_price": 8.698568, "final_score": 6, "raw_100": 65, "ai_prob": 34, "timer_summary": "L2 Bid (+9.0%)", "triggers": 1, "risk_ok": true, "risk_status": "PASS (Rischio OK)", "rr_ratio": 2.12, "pos_usdt": 52.88, "entry_ok": false}, {"code": "ETH", "name": "Ethereum", "ws": "ETH/USD", "kraken": "ETHUSD", "price": 2051.82, "sl_price": 2034.1067799999998, "tp_price": 2085.8969887989497, "final_score": 6, "raw_100": 62, "ai_prob": 57, "timer_summary": "EMA20 15m Hold/Bounce + L2 Bid (+1.6%)", "triggers": 2, "risk_ok": true, "risk_status": "PASS (Rischio OK)", "rr_ratio": 1.52, "pos_usdt": 52.88, "entry_ok": true}, {"code": "BTC", "name": "Bitcoin", "ws": "XBT/USD", "kraken": "XBTUSD", "price": 73886.01, "sl_price": 73221.03590999999, "tp_price": 74883.471135, "final_score": 6, "raw_100": 56, "ai_prob": 42, "timer_summary": "VWAP Active + EMA20 15m Hold/Bounce", "triggers": 2, "risk_ok": true, "risk_status": "PASS (Rischio OK)", "rr_ratio": 1.25, "pos_usdt": 52.88, "entry_ok": false}, {"code": "SUI", "name": "Sui", "ws": "SUI/USD", "kraken": "SUIUSD", "price": 0.8286, "sl_price": 0.8201745822902623, "tp_price": 0.8441084, "final_score": 5, "raw_100": 52, "ai_prob": 39, "timer_summary": "L2 Bid (+6.9%)", "triggers": 1, "risk_ok": true, "risk_status": "PASS (Rischio OK)", "rr_ratio": 1.59, "pos_usdt": 52.88, "entry_ok": false}, {"code": "DOT", "name": "Polkadot", "ws": "DOT/USD", "kraken": "DOTUSD", "price": 0.848, "sl_price": 0.8372645056649688, "tp_price": 0.8666632, "final_score": 5, "raw_100": 52, "ai_prob": 33, "timer_summary": "L2 Bid (+27.6%)", "triggers": 1, "risk_ok": false, "risk_status": "BLOCCATO: DOT chiusa da meno di 6h", "rr_ratio": 1.54, "pos_usdt": 48.9, "entry_ok": false}, {"code": "ADA", "name": "Cardano", "ws": "ADA/USD", "kraken": "ADAUSD", "price": 0.1757, "sl_price": 0.17392922861666862, "tp_price": 0.17826775, "final_score": 5, "raw_100": 52, "ai_prob": 32, "timer_summary": "L2 Bid (+19.3%)", "triggers": 1, "risk_ok": true, "risk_status": "PASS (Rischio OK)", "rr_ratio": 1.23, "pos_usdt": 52.88, "entry_ok": false}, {"code": "SOL", "name": "Solana", "ws": "SOL/USD", "kraken": "SOLUSD", "price": 83.75, "sl_price": 82.86273897056338, "tp_price": 84.94780238973944, "final_score": 5, "raw_100": 51, "ai_prob": 31, "timer_summary": "EMA20 15m Hold/Bounce + L2 Bid (+13.7%)", "triggers": 2, "risk_ok": false, "risk_status": "BLOCCATO: R:R netto basso (1.15x < 1.15x)", "rr_ratio": 1.15, "pos_usdt": 52.88, "entry_ok": false}, {"code": "XRP", "name": "Ripple", "ws": "XRP/USD", "kraken": "XRPUSD", "price": 1.0527, "sl_price": 1.0432257, "tp_price": 1.0740031885257637, "final_score": 4, "raw_100": 43, "ai_prob": 36, "timer_summary": "L2 Bid (+15.9%)", "triggers": 1, "risk_ok": true, "risk_status": "PASS (Rischio OK)", "rr_ratio": 1.92, "pos_usdt": 52.88, "entry_ok": false}, {"code": "DOGE", "name": "Dogecoin", "ws": "XDG/USD", "kraken": "XDGUSD", "price": 0.06788, "sl_price": 0.06726908, "tp_price": 0.06913253421692798, "final_score": 4, "raw_100": 42, "ai_prob": 35, "timer_summary": "L2 Bid (+16.1%)", "triggers": 1, "risk_ok": true, "risk_status": "PASS (Rischio OK)", "rr_ratio": 1.75, "pos_usdt": 52.88, "entry_ok": false}, {"code": "LINK", "name": "Chainlink", "ws": "LINK/USD", "kraken": "LINKUSD", "price": 10.34, "sl_price": 10.24694, "tp_price": 10.54397044252278, "final_score": 3, "raw_100": 33, "ai_prob": 39, "timer_summary": "In attesa trigger 15m", "triggers": 0, "risk_ok": true, "risk_status": "PASS (Rischio OK)", "rr_ratio": 1.87, "pos_usdt": 52.88, "entry_ok": false}], "macro": [{"title": "Unemployment Claims", "impact": "Medium", "ts": 1794490200}], "macro_ok": true, "repo": "fulviodamico-star/pionex", "workflow": "bot.yml", "ref": "main", "limits": {"max_trades": 5, "daily_max_loss": 4.0, "fee_rt": 0.1}};
 const livePx = {};
-let selected = (D.position && D.position.is_open) ? D.position.coin_code : (D.coins[0]?.code || 'SOL');
+
+try {
+  if (window.Telegram && window.Telegram.WebApp) {
+    window.Telegram.WebApp.ready();
+    window.Telegram.WebApp.expand();
+  }
+} catch(e){}
+
+function showToast(msg, border='#38bdf8'){
+  const t = document.getElementById('toast');
+  t.style.borderColor = border;
+  t.innerHTML = msg;
+  t.style.display = 'block';
+  clearTimeout(window._toastTimer);
+  window._toastTimer = setTimeout(()=>{ t.style.display='none'; }, 6000);
+}
 
 function fmtPx(p){
   p = Number(p||0);
@@ -110,18 +161,16 @@ function fmtPx(p){
 function ageStr(ts){
   const s = Math.max(0, Math.floor(Date.now()/1000 - ts));
   if(s<60) return s+'s fa';
-  if(s<3600) return Math.floor(s/60)+'m fa';
-  return (s/3600).toFixed(1)+'h fa';
+  if(s<3600) return Math.floor(s/60)+' min fa';
+  return (s/3600).toFixed(1)+' ore fa';
 }
 
-function renderTop(){
-  document.getElementById('subline').textContent =
-    `Ultimo calcolo AI: ${ageStr(D.updated_ts)} · ${D.session} · Fear&Greed: ${D.fng_val} (${D.fng_class})`;
+function renderHeader(){
+  document.getElementById('subline').textContent = `Aggiornato ${ageStr(D.updated_ts)} · ${D.session}`;
   const mp = document.getElementById('mode-pill');
-  mp.textContent = D.mode === 'LIVE' ? '🟢 LIVE PIONEX' : '🧪 SIMULAZIONE';
+  mp.textContent = D.mode === 'LIVE' ? '🟢 LIVE REALE' : '🧪 SIMULAZIONE';
   mp.style.borderColor = D.mode === 'LIVE' ? '#10b981' : '#f59e0b';
-  const bp = document.getElementById('btc-pill');
-  bp.textContent = D.btc_regime || '⚪ BTC';
+  document.getElementById('btc-pill').textContent = D.btc_regime || '';
 
   const adv = document.getElementById('advisor');
   adv.style.background = D.advisor.bg;
@@ -129,15 +178,20 @@ function renderTop(){
   const t = document.getElementById('adv-title');
   t.style.color = D.advisor.color;
   t.textContent = D.advisor.badge;
-  document.getElementById('adv-sub').textContent = D.advisor.instruction + (D.waiting ? ' — ' + D.waiting : '');
+  document.getElementById('adv-sub').textContent = D.advisor.instruction;
+
+  const hasKey = Boolean(localStorage.getItem('gh_pat'));
+  const kb = document.getElementById('key-btn');
+  kb.textContent = hasKey ? '🟢 Telecomando Attivo' : '🔑 Attiva Telecomando';
+  kb.style.borderColor = hasKey ? '#10b981' : '#f59e0b';
 }
 
 function renderPosition(){
   const box = document.getElementById('pos-card');
   const p = D.position;
   if(!p || !p.is_open){
-    box.innerHTML = `<div class="card-h"><span>💼 Posizione Attiva</span><span>FLAT (100% USDT)</span></div>
-      <div class="muted">${D.waiting || 'Nessuna posizione aperta. Il motore FreqAI v10 attende un setup ad alta probabilita\'.'}</div>`;
+    box.innerHTML = `<div class="sec-title"><span>💼 Posizione Attiva</span><span>NESSUNA (100% USDT)</span></div>
+      <div class="muted">${D.waiting || 'Il capitale è al sicuro in USDT. Puoi aprire un trade toccando "🚀 Compra" su una delle coin qui sotto.'}</div>`;
     return;
   }
   const coin = D.coins.find(c=>c.code===p.coin_code) || {};
@@ -146,96 +200,125 @@ function renderPosition(){
   const partialPnl = Number(p.realized_partial_usdt || 0);
   const netPct = (((cur - p.entry_price) / p.entry_price) - fee) * 100;
   const netUsdt = p.invested_usdt * (netPct / 100) + partialPnl;
-  const oneR = p.one_r || Math.max(p.entry_price - p.initial_sl, p.entry_price*0.01);
-  const rMult = (cur - p.entry_price) / oneR;
   const span = Math.max(p.tp_price - p.sl_price, 1e-9);
   const prog = Math.max(0, Math.min(100, ((cur - p.sl_price) / span) * 100));
   const col = netUsdt >= 0 ? 'pos-green' : 'pos-red';
-  const scaleTag = p.partial_tp_done ? ` · 💰 Scale-Out 50% (+${partialPnl.toFixed(2)} USDT)` : '';
 
   box.innerHTML = `
-    <div class="card-h"><span>🔥 POSIZIONE APERTA: ${p.coin_code} (${p.mode}${scaleTag})</span><span>Aperta: ${p.opened_at}</span></div>
-    <div class="grid">
-      <div class="kv"><div class="kv-l">Prezzo Ingresso</div><div class="kv-v">${fmtPx(p.entry_price)}</div></div>
-      <div class="kv"><div class="kv-l">Prezzo Live</div><div class="kv-v">${fmtPx(cur)}</div></div>
-      <div class="kv"><div class="kv-l">PnL Netto Totale</div><div class="kv-v ${col}">${netPct>=0?'+':''}${netPct.toFixed(2)}% (${netUsdt>=0?'+':''}${netUsdt.toFixed(2)} $)</div></div>
-      <div class="kv"><div class="kv-l">Multiplo R</div><div class="kv-v ${col}">${rMult>=0?'+':''}${rMult.toFixed(2)}R</div></div>
+    <div class="sec-title"><span>🔥 POSIZIONE APERTA SU ${p.coin_code}</span><span>${p.opened_at}</span></div>
+    <div class="kv-grid">
+      <div class="kv"><div class="kv-l">Prezzo Acquisto</div><div class="kv-v">${fmtPx(p.entry_price)}</div></div>
+      <div class="kv"><div class="kv-l">Prezzo Attuale</div><div class="kv-v">${fmtPx(cur)}</div></div>
+      <div class="kv"><div class="kv-l">Guadagno / Perdita</div><div class="kv-v ${col}">${netPct>=0?'+':''}${netPct.toFixed(2)}% (${netUsdt>=0?'+':''}${netUsdt.toFixed(2)}$)</div></div>
+      <div class="kv"><div class="kv-l">Investito</div><div class="kv-v">${Number(p.invested_usdt).toFixed(2)} USDT</div></div>
       <div class="kv"><div class="kv-l">Stop-Loss ${p.breakeven_locked?'🔒':''}</div><div class="kv-v pos-red">${fmtPx(p.sl_price)}</div></div>
       <div class="kv"><div class="kv-l">Take-Profit 🎯</div><div class="kv-v pos-green">${fmtPx(p.tp_price)}</div></div>
     </div>
-    <div class="bar"><div style="width:${prog}%; background:${netUsdt>=0?'#10b981':'#ef4444'}"></div></div>
-    <div class="row" style="justify-content:space-between"><span class="muted">SL ${fmtPx(p.sl_price)}</span><span class="muted">Investito residuo: ${Number(p.invested_usdt).toFixed(2)} USDT (${p.amount_coin} ${p.coin_code})</span><span class="muted">TP ${fmtPx(p.tp_price)}</span></div>`;
+    <div class="prog-bar"><div style="width:${prog}%; background:${netUsdt>=0?'#10b981':'#ef4444'}"></div></div>
+    <button class="act-btn b-red" style="width:100%; margin-top:8px; padding:12px;" onclick="confirmClose()">🛑 CHIUDI SUBITO ${p.coin_code} A MERCATO</button>`;
 }
 
-function renderTabs(){
-  const t = document.getElementById('coin-tabs');
-  t.innerHTML = D.coins.map(c=>{
+function renderCoins(){
+  const box = document.getElementById('coin-list');
+  box.innerHTML = D.coins.map((c, idx) => {
     const px = livePx[c.code] || c.price;
-    const badge = c.entry_ok ? '🟢' : (c.raw_100>=54 ? '🟡' : '⚪');
-    return `<button class="tab ${c.code===selected?'active':''}" onclick="selCoin('${c.code}')">
-      <div class="tab-top"><span>${badge} ${c.code}</span><span>${c.raw_100}/100</span></div>
-      <div class="tab-px" id="tabpx-${c.code}">${fmtPx(px)}</div>
-    </button>`;
+    const icon = c.entry_ok ? '🟢' : (c.raw_100 >= 54 ? '🟡' : '⚪');
+    const barCol = c.entry_ok ? '#10b981' : (c.raw_100 >= 54 ? '#f59e0b' : '#38bdf8');
+    return `
+      <div class="coin-item ${c.entry_ok?'ready':''}">
+        <div class="coin-top">
+          <div class="coin-name">${icon} #${idx+1} ${c.name} (${c.code})</div>
+          <div class="coin-px" id="px-${c.code}">${fmtPx(px)}</div>
+        </div>
+        <div class="prog-bar" style="margin:6px 0 10px;height:7px;"><div style="width:${c.raw_100}%;background:${barCol}"></div></div>
+        <div class="coin-meta">
+          <div><span>Punteggio</span><b>${c.final_score}/10 (${c.raw_100}%)</b></div>
+          <div><span>Probabilità AI</span><b>${c.ai_prob}%</b></div>
+          <div><span>Trigger 15m</span><b>${c.triggers || 0}/4 attivi</b></div>
+          <div><span>Stop-Loss</span><b class="pos-red">${fmtPx(c.sl_price)}</b></div>
+          <div><span>Take-Profit</span><b class="pos-green">${fmtPx(c.tp_price)}</b></div>
+          <div><span>Size Auto</span><b>${c.pos_usdt.toFixed(1)} USDT</b></div>
+        </div>
+        <div class="coin-foot">
+          <span class="muted" style="font-size:11px;">${c.risk_ok ? '✅ Rischio OK' : c.risk_status}</span>
+          <button class="mini-btn b-green" onclick="quickBuy('${c.code}', ${c.pos_usdt.toFixed(2)})">🚀 Compra ${c.code}</button>
+        </div>
+      </div>`;
   }).join('');
-}
-
-function renderDetail(){
-  const c = D.coins.find(x=>x.code===selected) || D.coins[0];
-  if(!c) return;
-  const px = livePx[c.code] || c.price;
-  document.getElementById('coin-detail').innerHTML = `
-    <div class="card-h"><span>🔍 Dettaglio ${c.name} (${c.code}) — Score ${c.final_score}/10 (${c.raw_100}/100)</span><span>${c.entry_ok?'🟢 SEGNALE PRONTO':'⏳ IN ATTESA'}</span></div>
-    <div class="grid">
-      <div class="kv"><div class="kv-l">Prezzo Live</div><div class="kv-v">${fmtPx(px)}</div></div>
-      <div class="kv"><div class="kv-l">FreqAI Triple-Barrier</div><div class="kv-v">${c.ai_prob}%</div></div>
-      <div class="kv"><div class="kv-l">Stop-Loss Calcolato</div><div class="kv-v pos-red">${fmtPx(c.sl_price)}</div></div>
-      <div class="kv"><div class="kv-l">Take-Profit Calcolato</div><div class="kv-v pos-green">${fmtPx(c.tp_price)}</div></div>
-      <div class="kv"><div class="kv-l">Reward / Risk Netto</div><div class="kv-v">${c.rr_ratio}x</div></div>
-      <div class="kv"><div class="kv-l">Size Consigliata</div><div class="kv-v">${c.pos_usdt.toFixed(2)} USDT</div></div>
-    </div>
-    <div class="muted" style="margin-top:8px;">⏱️ <b>Timer 15m:</b> ${c.timer_summary} &nbsp;|&nbsp; 🛡️ <b>Rischio:</b> ${c.risk_status}</div>`;
 }
 
 function renderStats(){
   const s = D.stats || {};
-  const wr = s.total_trades ? ((s.wins/s.total_trades)*100).toFixed(0)+'%' : 'N/A';
-  document.getElementById('daily-tag').textContent = `Oggi: ${s.daily_trades||0}/${D.limits.max_trades} trade · PnL oggi: ${(s.daily_pnl_pct||0)>=0?'+':''}${(s.daily_pnl_pct||0).toFixed(2)}%`;
+  const wr = s.total_trades ? ((s.wins/s.total_trades)*100).toFixed(0)+'%' : '—';
+  document.getElementById('daily-tag').textContent = `Oggi: ${s.daily_trades||0}/${D.limits.max_trades} trade`;
   document.getElementById('stats-grid').innerHTML = `
-    <div class="kv"><div class="kv-l">Trade Totali (W/L)</div><div class="kv-v">${s.total_trades||0} (${s.wins||0}W / ${s.losses||0}L)</div></div>
-    <div class="kv"><div class="kv-l">Win Rate</div><div class="kv-v">${wr}</div></div>
-    <div class="kv"><div class="kv-l">PnL Cumulato USDT</div><div class="kv-v ${(s.total_pnl_usdt||0)>=0?'pos-green':'pos-red'}">${(s.total_pnl_usdt||0)>=0?'+':''}${(s.total_pnl_usdt||0).toFixed(2)} $</div></div>
-    <div class="kv"><div class="kv-l">Ultima Azione</div><div class="kv-v" style="font-size:12px;">${s.last_action||'—'}</div></div>`;
+    <div class="kv"><div class="kv-l">Operazioni Totali</div><div class="kv-v">${s.total_trades||0} (${s.wins||0} V / ${s.losses||0} P)</div></div>
+    <div class="kv"><div class="kv-l">Precisione (Win Rate)</div><div class="kv-v">${wr}</div></div>
+    <div class="kv"><div class="kv-l">Profitto Totale</div><div class="kv-v ${(s.total_pnl_usdt||0)>=0?'pos-green':'pos-red'}">${(s.total_pnl_usdt||0)>=0?'+':''}${(s.total_pnl_usdt||0).toFixed(2)} $</div></div>
+    <div class="kv"><div class="kv-l">Profitto Oggi</div><div class="kv-v ${(s.daily_pnl_pct||0)>=0?'pos-green':'pos-red'}">${(s.daily_pnl_pct||0)>=0?'+':''}${(s.daily_pnl_pct||0).toFixed(2)}%</div></div>`;
 
   const h = D.history || [];
-  document.getElementById('macro-tag').textContent = D.macro_ok ? `Calendario USD: ${(D.macro||[]).length} eventi` : 'Calendario USD offline';
-  document.getElementById('hist-box').innerHTML = h.length ? `<table><thead><tr><th>Coin</th><th>Ingresso</th><th>Uscita</th><th>PnL</th><th>Motivo</th><th>Data</th></tr></thead><tbody>` +
-    h.slice(0,10).map(r=>`<tr><td><b>${r.coin}</b></td><td>${fmtPx(r.entry)}</td><td>${fmtPx(r.exit)}</td><td class="${r.pnl_usdt>=0?'pos-green':'pos-red'}">${r.pnl_pct>=0?'+':''}${r.pnl_pct}% (${r.pnl_usdt>=0?'+':''}${r.pnl_usdt}$)</td><td>${r.reason}</td><td>${r.closed_at}</td></tr>`).join('') +
-    `</tbody></table>` : `<div class="muted">Nessun trade chiuso finora.</div>`;
+  document.getElementById('hist-box').innerHTML = h.length
+    ? `<div class="muted" style="margin-bottom:6px;font-weight:700;">Ultime chiusure:</div>` +
+      h.slice(0,6).map(r=>`<div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid #1e2d4a;font-size:12px;">
+        <span><b>${r.coin}</b> · ${r.closed_at}</span>
+        <span class="${r.pnl_usdt>=0?'pos-green':'pos-red'}"><b>${r.pnl_pct>=0?'+':''}${r.pnl_pct}% (${r.pnl_usdt>=0?'+':''}${r.pnl_usdt}$)</b></span>
+      </div>`).join('')
+    : `<div class="muted">Nessuna operazione chiusa finora.</div>`;
 }
 
-function selCoin(code){ selected = code; renderTabs(); renderDetail(); }
-function toggleCfg(){ const b=document.getElementById('cfg-box'); b.style.display=b.style.display==='none'?'flex':'none'; }
-function saveToken(){ localStorage.setItem('gh_pat', document.getElementById('gh-token').value.trim()); document.getElementById('cmd-msg').textContent='✅ Token salvato nel browser.'; }
+function toggleSetup(){
+  const b = document.getElementById('setup-box');
+  b.style.display = b.style.display === 'none' ? 'block' : 'none';
+}
+function saveToken(){
+  const v = document.getElementById('gh-token').value.trim();
+  if(!v){ showToast('⚠️ Incolla prima il Token GitHub (inizia con ghp_ o github_pat_)', '#f59e0b'); return; }
+  localStorage.setItem('gh_pat', v);
+  document.getElementById('setup-box').style.display = 'none';
+  renderHeader();
+  showToast('✅ Telecomando attivato! Ora puoi usare tutti i pulsanti con 1 tocco.', '#10b981');
+}
 
-async function dispatchCmd(command, coin, amount_usdt){
+async function sendCmd(command, coin, amount_usdt){
   const tok = localStorage.getItem('gh_pat') || document.getElementById('gh-token').value.trim();
-  const msg = document.getElementById('cmd-msg');
-  if(!tok){ toggleCfg(); msg.textContent='⚠️ Inserisci prima un GitHub Personal Access Token (scope: workflow) oppure invia il comando su Telegram.'; return; }
-  if(!D.repo){ msg.textContent='⚠️ Repository GitHub non rilevato.'; return; }
-  msg.textContent = `⏳ Invio comando '${command}' a GitHub Actions...`;
+  if(!tok){
+    document.getElementById('setup-box').style.display = 'block';
+    window.scrollTo({top: 180, behavior: 'smooth'});
+    showToast('🔑 Attiva prima il Telecomando incollando il Token GitHub nel riquadro giallo.', '#f59e0b');
+    return;
+  }
+  showToast(`⏳ Invio comando <b>${command.toUpperCase()} ${coin}</b> al bot...`, '#38bdf8');
   try{
     const r = await fetch(`https://api.github.com/repos/${D.repo}/actions/workflows/${D.workflow}/dispatches`, {
       method:'POST',
       headers:{'Authorization':`Bearer ${tok}`,'Accept':'application/vnd.github+json','Content-Type':'application/json'},
       body: JSON.stringify({ref: D.ref || 'main', inputs:{command, coin: String(coin||''), amount_usdt: String(amount_usdt||0)}})
     });
-    msg.textContent = r.status===204 ? `✅ Comando '${command}' avviato! Riceverai conferma su Telegram tra ~40s.` : `❌ Errore GitHub API HTTP ${r.status}`;
-  }catch(e){ msg.textContent = '❌ Errore rete: '+e; }
+    if(r.status === 204){
+      showToast(`✅ Comando <b>${command.toUpperCase()} ${coin}</b> avviato! Riceverai conferma su Telegram tra ~35 secondi.`, '#10b981');
+    } else {
+      showToast(`❌ GitHub ha rifiutato il comando (HTTP ${r.status}). Verifica che il Token abbia il permesso 'workflow'.`, '#ef4444');
+    }
+  }catch(e){
+    showToast('❌ Errore di connessione: '+e, '#ef4444');
+  }
 }
-function manualOpen(){ dispatchCmd('open', document.getElementById('man-coin').value, document.getElementById('man-usdt').value||0); }
+
+function confirmClose(){
+  if(confirm('Vuoi chiudere subito la posizione aperta a prezzo di mercato?')) sendCmd('close','',0);
+}
+function quickBuy(code, usdt){
+  if(confirm(`Vuoi aprire subito un LONG su ${code} (circa ${usdt} USDT)?`)) sendCmd('open', code, usdt);
+}
+function manualOpen(){
+  const c = document.getElementById('man-coin').value;
+  const u = document.getElementById('man-usdt').value || 0;
+  if(confirm(`Confermi apertura LONG su ${c}?`)) sendCmd('open', c, u);
+}
 function manualSellAll(){
   const c = document.getElementById('man-coin').value;
-  if(confirm(`Confermi la vendita immediata a mercato di TUTTO il saldo ${c} su Pionex?`)) dispatchCmd('sell_all', c, 0);
+  if(confirm(`Confermi la vendita immediata di TUTTO il saldo ${c} su Pionex?`)) sendCmd('sell_all', c, 0);
 }
 
 function connectWS(){
@@ -244,7 +327,7 @@ function connectWS(){
     const pairToCode = {};
     D.coins.forEach(c => { pairToCode[c.ws] = c.code; });
     ws.onopen = () => {
-      document.getElementById('ws-pill').textContent = '🟢 Live Kraken WS';
+      document.getElementById('ws-pill').textContent = '🟢 Prezzi Live';
       ws.send(JSON.stringify({event:'subscribe', pair: D.coins.map(c=>c.ws), subscription:{name:'ticker'}}));
     };
     ws.onmessage = (ev) => {
@@ -254,23 +337,22 @@ function connectWS(){
         const px = parseFloat(m[1].c[0]);
         if(code && px>0){
           livePx[code] = px;
-          const el = document.getElementById('tabpx-'+code);
+          const el = document.getElementById('px-'+code);
           if(el) el.textContent = fmtPx(px);
-          if(code===selected) renderDetail();
           if(D.position && D.position.is_open && D.position.coin_code===code) renderPosition();
         }
       }
     };
-    ws.onclose = () => { document.getElementById('ws-pill').textContent = '🟡 Riconnessione WS...'; setTimeout(connectWS, 4000); };
+    ws.onclose = () => { document.getElementById('ws-pill').textContent = '🟡 Riconnessione...'; setTimeout(connectWS, 4000); };
   }catch(e){}
 }
 
 (function init(){
   document.getElementById('gh-token').value = localStorage.getItem('gh_pat') || '';
   const sel = document.getElementById('man-coin');
-  sel.innerHTML = D.coins.map(c=>`<option value="${c.code}">${c.code}</option>`).join('');
-  renderTop(); renderPosition(); renderTabs(); renderDetail(); renderStats();
-  setInterval(renderTop, 10000);
+  sel.innerHTML = D.coins.map(c=>`<option value="${c.code}">${c.name} (${c.code})</option>`).join('');
+  renderHeader(); renderPosition(); renderCoins(); renderStats();
+  setInterval(renderHeader, 10000);
   connectWS();
 })();
 </script>
