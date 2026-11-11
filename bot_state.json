@@ -28,6 +28,16 @@
   "last_action": "CHIUSO LINK (PAPER AUTONOMO): 🎯 TAKE PROFIT GRIGLIA RAGGIUNTO su LINK (10.47$ >= 0.00$) | PnL: -0.00$ (-0.69%) il 10/11/2026 11:26",
   "history": [
     {
+      "coin": "ADA",
+      "entry": 0.1764,
+      "exit": 0.1766,
+      "pnl_pct": 0.01,
+      "pnl_usdt": 0.01,
+      "reason": "🔒 PROFIT LOCK / TRAILING STOP ($0.1766)",
+      "closed_at": "11/11 14:27 UTC",
+      "mode": "SIMULATION"
+    },
+    {
       "coin": "ETH",
       "entry": 2052.58,
       "exit": 2052.02,
@@ -98,7 +108,7 @@
   "pending_close_fail": 0,
   "qty_sol": 0.0,
   "position": {
-    "is_open": true,
+    "is_open": false,
     "coin_code": "ADA",
     "symbol": "ADA_USDT",
     "entry_price": 0.1764,
@@ -117,29 +127,30 @@
     "opened_ts": 1794401676,
     "mode": "SIMULATION",
     "order_id": "SIM",
-    "last_check_ts": 1794407107,
+    "last_check_ts": 1794407205,
     "close_fail_count": 0,
     "enter_tag": "freqai_manuale",
     "partial_tp_done": false,
     "realized_partial_usdt": 0.0
   },
   "stats": {
-    "total_trades": 3,
-    "wins": 1,
+    "total_trades": 4,
+    "wins": 2,
     "losses": 2,
-    "total_pnl_pct": -1.27,
-    "total_pnl_usdt": -0.68,
+    "total_pnl_pct": -1.26,
+    "total_pnl_usdt": -0.67,
     "daily_date": "2026-11-11",
-    "daily_pnl_pct": 1.07,
+    "daily_pnl_pct": 1.08,
     "daily_trades": 3,
-    "last_action": "APERTO LONG ADA a $0.1764 il 11/11 12:54 UTC (MANUALE)",
-    "daily_pnl_usdt": 0.6,
-    "consec_losses": 1,
-    "last_close_ts": 1794400397,
+    "last_action": "CHIUSO ADA (+0.01%) il 11/11 14:27 UTC",
+    "daily_pnl_usdt": 0.61,
+    "consec_losses": 0,
+    "last_close_ts": 1794407221,
     "last_loss_ts": 1794400397,
     "coin_last_close": {
       "DOT": 1794394316,
-      "ETH": 1794400397
+      "ETH": 1794400397,
+      "ADA": 1794407221
     },
     "last_tg_update_id": 540276390,
     "last_report_ts": 1794405672
