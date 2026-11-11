@@ -2905,9 +2905,45 @@ def build_telegram_report(ranked_evals, state, trade_status, fng_val, fng_class,
 
 
 # ==============================================================================
-# 13. ESECUZIONE CICLO COMPLETO + MODALITA' CONTINUA (TICK GUARDIAN)
+# 13. ESECUZIONE CICLO COMPLETO + MODALITA' CONTINUA 24/7 (TICK GUARDIAN)
 # ==============================================================================
-def run_full_cycle(state, manual_override=None):
+ALWAYS_ON_24_7 = _env("ALWAYS_ON_24_7", "true").lower() == "true"
+TELEGRAM_ROUTINE_MIN = int(_env("TELEGRAM_ROUTINE_MIN", 30))
+
+
+def sync_live_files_to_github():
+    """Pubblica subito bot_state.json e index.html su GitHub Pages durante il loop 24/7."""
+    if not os.getenv("GITHUB_ACTIONS"):
+        return
+    try:
+        os.system(
+            'git add bot_state.json index.html >/dev/null 2>&1 && '
+            'if ! git diff --cached --quiet; then '
+            'git commit -m "Live update state & console [skip ci]" >/dev/null 2>&1 && '
+            'git pull --rebase -X theirs origin "${GITHUB_REF_NAME:-main}" >/dev/null 2>&1 || true; '
+            'git push >/dev/null 2>&1 || true; '
+            'fi'
+        )
+    except Exception:
+        pass
+
+
+def should_send_telegram_now(state, trade_status, ranked_evals, force=False):
+    """Invia sempre subito per eventi/comandi/segnali; limita i report di routine a ogni TELEGRAM_ROUTINE_MIN minuti."""
+    if force:
+        return True
+    act = trade_status.get("action_state", "")
+    if act in ("OPENED_NOW", "CLOSED_NOW", "ENTRY_FAILED", "CLOSE_FAILED", "MANUAL_DONE", "MANUAL_NOOP"):
+        return True
+    if trade_status.get("alerts_fired"):
+        return True
+    if ranked_evals and entry_conditions(ranked_evals[0]):
+        return True
+    last_rep = int(state["stats"].get("last_report_ts", 0))
+    return (time.time() - last_rep) >= (TELEGRAM_ROUTINE_MIN * 60)
+
+
+def run_full_cycle(state, manual_override=None, force_telegram=False):
     """Esegue una scansione completa multi-timeframe + FreqAI su tutte le 10 coin."""
     LIVE_PX.clear()
     LIVE_PX.update(fetch_pionex_prices())
@@ -2942,13 +2978,22 @@ def run_full_cycle(state, manual_override=None):
         trade_status = run_manual_command(
             state, all_evals, eur_usd, cmd_obj["command"], cmd_obj.get("coin", ""), cmd_obj.get("usdt", 0.0)
         )
+        force_telegram = True
     else:
+        if cmd_obj and cmd_obj.get("command") == "status":
+            force_telegram = True
         trade_status = manage_autonomous_trading(state, ranked_evals, all_evals, eur_usd)
 
     generate_webapp_html(ranked_evals, state, trade_status, fng_val, fng_class, session_str, eur_usd, macro_events)
-    report = build_telegram_report(ranked_evals, state, trade_status, fng_val, fng_class, session_str, eur_usd)
-    kb = build_telegram_inline_keyboard(ranked_evals, state)
-    send_telegram_message(report, reply_markup=kb)
+
+    if should_send_telegram_now(state, trade_status, ranked_evals, force=force_telegram):
+        report = build_telegram_report(ranked_evals, state, trade_status, fng_val, fng_class, session_str, eur_usd)
+        kb = build_telegram_inline_keyboard(ranked_evals, state)
+        send_telegram_message(report, reply_markup=kb)
+        state["stats"]["last_report_ts"] = int(time.time())
+        save_state(state)
+
+    sync_live_files_to_github()
 
     return {
         "ranked_evals": ranked_evals,
@@ -2969,13 +3014,13 @@ def run_continuous_guardian(state, ctx):
 
     if DAEMON_MODE:
         max_seconds = 10 ** 9
-        log("INFO", f"DAEMON_MODE=true attivo: avvio loop infinito 24/7 (tick ogni {GUARDIAN_TICK_SEC}s, rescan AI ogni {GUARDIAN_RESCAN_SEC}s).")
-    elif pos["is_open"]:
+        log("INFO", f"DAEMON_MODE=true: loop infinito 24/7 (tick {GUARDIAN_TICK_SEC}s, rescan AI {GUARDIAN_RESCAN_SEC}s).")
+    elif ALWAYS_ON_24_7 or pos["is_open"]:
         max_seconds = int(GUARDIAN_MINUTES_OPEN * 60)
-        log("INFO", f"Posizione aperta su {pos['coin_code']}: avvio Tick Guardian continuo per {GUARDIAN_MINUTES_OPEN:.1f} minuti (tick ogni {GUARDIAN_TICK_SEC}s).")
+        log("INFO", f"Modalita' Continua 24/7 attiva per {GUARDIAN_MINUTES_OPEN:.1f} min (tick prezzi/Telegram ogni {GUARDIAN_TICK_SEC}s, rescan AI ogni {GUARDIAN_RESCAN_SEC}s).")
     elif is_hot:
         max_seconds = int(GUARDIAN_MINUTES_HOT * 60)
-        log("INFO", f"Setup quasi pronto su {best['code']} ({best['raw_100']}/100): avvio Tick Guardian per {GUARDIAN_MINUTES_HOT:.1f} minuti.")
+        log("INFO", f"Setup quasi pronto su {best['code']} ({best['raw_100']}/100): Tick Guardian per {GUARDIAN_MINUTES_HOT:.1f} min.")
     else:
         return
 
@@ -2991,13 +3036,14 @@ def run_continuous_guardian(state, ctx):
         if px_now:
             LIVE_PX.update(px_now)
 
+        # Ascolto istantaneo dei pulsanti Telegram ogni 15s
         tg_cmd = poll_telegram_commands(state)
         if tg_cmd:
             c_type = tg_cmd["command"]
-            log("INFO", f"Comando Telegram ricevuto nel Tick Guardian: {tg_cmd}")
-            kb = build_telegram_inline_keyboard(ctx["ranked_evals"], state)
+            log("INFO", f"Pulsante/Comando Telegram ricevuto in tempo reale: {tg_cmd}")
             if c_type == "status":
                 rep = build_telegram_report(ctx["ranked_evals"], state, ctx["trade_status"], ctx["fng_val"], ctx["fng_class"], ctx["session_str"], ctx["eur_usd"])
+                kb = build_telegram_inline_keyboard(ctx["ranked_evals"], state)
                 send_telegram_message(rep, reply_markup=kb)
             else:
                 st = run_manual_command(state, ctx["all_evals"], ctx["eur_usd"], c_type, tg_cmd.get("coin", ""), tg_cmd.get("usdt", 0.0))
@@ -3005,9 +3051,9 @@ def run_continuous_guardian(state, ctx):
                 kb = build_telegram_inline_keyboard(ctx["ranked_evals"], state)
                 send_telegram_message(f"<b>{html_lib.escape(st['headline'])}</b>\n{html_lib.escape(st['detail'])}", reply_markup=kb)
                 generate_webapp_html(ctx["ranked_evals"], state, st, ctx["fng_val"], ctx["fng_class"], ctx["session_str"], ctx["eur_usd"], ctx["macro_events"])
-                if not state["position"]["is_open"] and not DAEMON_MODE:
-                    break
+                sync_live_files_to_github()
 
+        # Controllo posizione aperta ogni 15s (SL, TP, Break-Even, Scale-Out 50%)
         if state["position"]["is_open"]:
             capital_usdt = INVEST_EUR * ctx["eur_usd"]
             st = _manage_open_position(state, ctx["all_evals"], capital_usdt, now_str, now_ts)
@@ -3017,41 +3063,42 @@ def run_continuous_guardian(state, ctx):
                 kb = build_telegram_inline_keyboard(ctx["ranked_evals"], state)
                 for al in st["alerts_fired"]:
                     send_telegram_message(f"⚡ <b>TICK GUARDIAN ({state['position']['coin_code']})</b>\n{html_lib.escape(al)}", reply_markup=kb)
+                generate_webapp_html(ctx["ranked_evals"], state, st, ctx["fng_val"], ctx["fng_class"], ctx["session_str"], ctx["eur_usd"], ctx["macro_events"])
+                sync_live_files_to_github()
 
             if st["action_state"] in ("CLOSED_NOW", "CLOSE_FAILED"):
                 kb = build_telegram_inline_keyboard(ctx["ranked_evals"], state)
                 send_telegram_message(f"<b>{html_lib.escape(st['headline'])}</b>\n{html_lib.escape(st['detail'])}", reply_markup=kb)
                 generate_webapp_html(ctx["ranked_evals"], state, st, ctx["fng_val"], ctx["fng_class"], ctx["session_str"], ctx["eur_usd"], ctx["macro_events"])
-                if st["action_state"] == "CLOSED_NOW" and not DAEMON_MODE:
-                    log("INFO", "Posizione chiusa durante il Tick Guardian: termino il job per salvare subito lo stato.")
-                    break
+                sync_live_files_to_github()
 
+        # Rianalisi completa 15m/1h + FreqAI ogni 5 minuti
         if time.monotonic() - last_rescan >= GUARDIAN_RESCAN_SEC:
             last_rescan = time.monotonic()
-            log("INFO", "Tick Guardian: avvio rianalisi periodica 15m/1h + FreqAI...")
-            new_ctx = run_full_cycle(state)
+            log("INFO", "Tick Guardian 24/7: rianalisi completa 15m/1h + FreqAI...")
+            new_ctx = run_full_cycle(state, force_telegram=False)
             if new_ctx:
                 ctx = new_ctx
-                if state["position"]["is_open"] and not DAEMON_MODE:
-                    max_seconds = max(max_seconds, int(GUARDIAN_MINUTES_OPEN * 60))
 
 
 def main():
-    log("INFO", f"Avvio Pionex Freqtrade + FreqAI Engine v10.0 (Evento: {GITHUB_EVENT_NAME}, AutoTrade={AUTO_TRADE_ENABLED}, Live={pionex_live_enabled()})")
+    log("INFO", f"Avvio Pionex Freqtrade + FreqAI Engine v10.0 (Evento: {GITHUB_EVENT_NAME}, 24/7={ALWAYS_ON_24_7}, AutoTrade={AUTO_TRADE_ENABLED}, Live={pionex_live_enabled()})")
     state = load_state()
 
     manual_override = None
+    force_tg = (GITHUB_EVENT_NAME == "workflow_dispatch")
     if MANUAL_COMMAND in ("close", "sell_all", "open", "status"):
         manual_override = {"command": MANUAL_COMMAND, "coin": MANUAL_COIN, "usdt": MANUAL_USDT}
+        force_tg = True
 
-    ctx = run_full_cycle(state, manual_override=manual_override)
+    ctx = run_full_cycle(state, manual_override=manual_override, force_telegram=force_tg)
     if not ctx:
         return
 
-    if MANUAL_COMMAND not in ("close", "sell_all"):
-        run_continuous_guardian(state, ctx)
+    run_continuous_guardian(state, ctx)
 
-    if state["position"]["is_open"] and not DAEMON_MODE:
+    # Passa il testimone al ciclo successivo per coprire 24/7 senza interruzioni
+    if (ALWAYS_ON_24_7 or state["position"]["is_open"]) and not DAEMON_MODE:
         trigger_self_chain_dispatch()
 
 
