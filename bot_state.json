@@ -127,7 +127,7 @@
     "opened_ts": 1794412970,
     "mode": "SIMULATION",
     "order_id": "SIM",
-    "last_check_ts": 1794418634,
+    "last_check_ts": 1794418959,
     "close_fail_count": 0,
     "enter_tag": "freqai_tb_76_ai_50",
     "partial_tp_done": false,
@@ -153,6 +153,6 @@
       "ADA": 1794407221
     },
     "last_tg_update_id": 540276390,
-    "last_report_ts": 1794416997
+    "last_report_ts": 1794418960
   }
 }
