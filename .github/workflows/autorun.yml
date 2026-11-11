@@ -4,8 +4,7 @@ on:
   repository_dispatch:
     types: [tick]
   schedule:
-    - cron: '17,47 7-21 * * *'
-    - cron: '17 22-23,0-6 * * *'
+    - cron: '*/15 * * * *'
   workflow_dispatch:
     inputs:
       command:
@@ -48,7 +47,12 @@ jobs:
           python -m pip install --upgrade pip
           pip install --prefer-binary "requests>=2.32.5,<3" "pandas>=2.2.0" "scikit-learn>=1.4.0"
 
-      - name: Esegui Pionex FreqAI v10 Engine (con Tick Guardian)
+      - name: Configura Git per aggiornamenti live della Web Console
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Esegui Pionex FreqAI v10 Engine (24/7 Continuous Guardian)
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
@@ -57,18 +61,18 @@ jobs:
           GH_PAT: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
           INVEST_EUR: ${{ vars.INVEST_EUR || '50' }}
           AUTO_TRADE_ENABLED: ${{ vars.AUTO_TRADE_ENABLED || 'false' }}
+          ALWAYS_ON_24_7: ${{ vars.ALWAYS_ON_24_7 || 'true' }}
           GUARDIAN_MINUTES_OPEN: ${{ vars.GUARDIAN_MINUTES_OPEN || '18' }}
-          GUARDIAN_MINUTES_HOT: ${{ vars.GUARDIAN_MINUTES_HOT || '6' }}
           GUARDIAN_TICK_SEC: ${{ vars.GUARDIAN_TICK_SEC || '15' }}
+          GUARDIAN_RESCAN_SEC: ${{ vars.GUARDIAN_RESCAN_SEC || '300' }}
+          TELEGRAM_ROUTINE_MIN: ${{ vars.TELEGRAM_ROUTINE_MIN || '30' }}
           MANUAL_COMMAND: ${{ github.event.inputs.command || '' }}
           MANUAL_COIN: ${{ github.event.inputs.coin || '' }}
           MANUAL_USDT: ${{ github.event.inputs.amount_usdt || '0' }}
         run: python3 main.py
 
-      - name: Salva stato (bot_state.json) e Web Console (index.html)
+      - name: Salva stato finale (bot_state.json) e Web Console (index.html)
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
           git add bot_state.json index.html
           if ! git diff --cached --quiet; then
             git commit -m "Update bot state & web console [skip ci]"
