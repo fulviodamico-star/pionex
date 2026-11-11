@@ -4,7 +4,9 @@ on:
   repository_dispatch:
     types: [tick]
   schedule:
-    - cron: '47 7-21 * * *'
+    # Ogni 30 min (minuto 17 e 47) nella finestra operativa 07:00 - 21:59 UTC
+    - cron: '17,47 7-21 * * *'
+    # Guardia notturna leggera (1 volta all'ora) solo se c'è una posizione aperta
     - cron: '17 22-23,0-6 * * *'
   workflow_dispatch:
     inputs:
@@ -35,12 +37,16 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
 
-      - name: Install dependencies
-        run: python3 -m pip install --break-system-packages "requests>=2.32.5,<3"
+      - name: Install dependencies (Freqtrade + FreqAI stack)
+        run: |
+          python3 -m pip install --break-system-packages --prefer-binary \
+            "requests>=2.32.5,<3" \
+            "pandas>=2.2.0" \
+            "scikit-learn>=1.4.0"
 
-      - name: Run Pionex AI Fast-Scalp Engine
+      - name: Run Pionex Freqtrade + FreqAI Engine
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN || secrets.TELEGRAM_BOT_TOKEN || secrets.BOT_TOKEN || secrets.TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || secrets.CHAT_ID || secrets.TELEGRAM_CHAT }}
