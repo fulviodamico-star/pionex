@@ -117,7 +117,7 @@
     "opened_ts": 1794401676,
     "mode": "SIMULATION",
     "order_id": "SIM",
-    "last_check_ts": 1794405364,
+    "last_check_ts": 1794405672,
     "close_fail_count": 0,
     "enter_tag": "freqai_manuale",
     "partial_tp_done": false,
@@ -142,6 +142,6 @@
       "ETH": 1794400397
     },
     "last_tg_update_id": 540276390,
-    "last_report_ts": 1794403721
+    "last_report_ts": 1794405672
   }
 }
