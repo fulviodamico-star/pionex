@@ -1045,7 +1045,7 @@ def build_feature_matrix(candles_1h):
         mv, sv = sum(v_win) / len(v_win), statistics.pstdev(v_win)
         f5 = clamp((candles_1h[i]["volume"] - mv) / sv if sv > 0 else 0.0, -2.5, 2.5)
         rng = max(candles_1h[i]["high"] - candles_1h[i]["low"], 1e-8)
-        f6 = ((c - candles[i - 1]) / atr) if i > 0 else (((c - candles_1h[i]["low"]) / rng) * 2.0 - 1.0)
+        f6 = ((c - closes[i - 1]) / atr) if i > 0 else (((c - candles_1h[i]["low"]) / rng) * 2.0 - 1.0)
         features.append([f1, f2, f3, f4, f5, clamp(f6, -2.5, 2.5)])
     return features
 
