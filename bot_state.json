@@ -108,7 +108,7 @@
     "tp_price": 0.17889198381747962,
     "initial_sl": 0.1745540860611262,
     "one_r": 0.0018459139388737889,
-    "highest_price": 0.1764,
+    "highest_price": 0.1766,
     "breakeven_locked": false,
     "tp1_locked": false,
     "tp2_locked": false,
@@ -117,7 +117,7 @@
     "opened_ts": 1794401676,
     "mode": "SIMULATION",
     "order_id": "SIM",
-    "last_check_ts": 1794401676,
+    "last_check_ts": 1794401725,
     "close_fail_count": 0,
     "enter_tag": "freqai_manuale",
     "partial_tp_done": false,
@@ -141,7 +141,7 @@
       "DOT": 1794394316,
       "ETH": 1794400397
     },
-    "last_tg_update_id": 540276389,
+    "last_tg_update_id": 540276390,
     "last_report_ts": 1794401643
   }
 }
