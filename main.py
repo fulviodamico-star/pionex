@@ -540,11 +540,16 @@ def fetch_fear_and_greed():
     return 50, "Neutral"
 
 
+MACRO_STATUS = {"ok": False}
+
+
 def fetch_macro_calendar():
     now_utc = datetime.now(timezone.utc)
     events = []
+    MACRO_STATUS["ok"] = False
     data = safe_get_json("https://nfs.faireconomy.media/ff_calendar_thisweek.json")
     if isinstance(data, list):
+        MACRO_STATUS["ok"] = True
         for item in data:
             try:
                 country = str(item.get("country", "")).upper()
@@ -555,8 +560,8 @@ def fetch_macro_calendar():
                     continue
                 ev_dt = datetime.fromisoformat(date_str).astimezone(timezone.utc)
                 diff_hours = (ev_dt - now_utc).total_seconds() / 3600.0
-                if -2.0 <= diff_hours <= 36.0:
-                    events.append({"title": title, "impact": impact, "diff_hours": diff_hours})
+                if -12.0 <= diff_hours <= 36.0:
+                    events.append({"title": title, "impact": impact, "diff_hours": diff_hours, "ts": int(now_utc.timestamp() + diff_hours * 3600)})
             except Exception:
                 continue
     if not events:
@@ -564,6 +569,7 @@ def fetch_macro_calendar():
             r = SESSION.get("https://nfs.faireconomy.media/ff_calendar_thisweek.xml", timeout=HTTP_TIMEOUT)
             if r.status_code == 200 and r.text.strip().startswith("<"):
                 root = ET.fromstring(r.text)
+                MACRO_STATUS["ok"] = True
                 for ev in root.findall("event"):
                     country = (ev.findtext("country") or "").strip().upper()
                     impact = (ev.findtext("impact") or "").strip().capitalize()
@@ -584,11 +590,11 @@ def fetch_macro_calendar():
                         hh = 0
                     dt_parsed = datetime.strptime(f"{date_s} {hh:02d}:{mm:02d}", "%m-%d-%Y %H:%M").replace(tzinfo=timezone.utc)
                     diff_hours = (dt_parsed - now_utc).total_seconds() / 3600.0
-                    if -2.0 <= diff_hours <= 36.0:
-                        events.append({"title": title, "impact": impact, "diff_hours": diff_hours})
+                    if -12.0 <= diff_hours <= 36.0:
+                        events.append({"title": title, "impact": impact, "diff_hours": diff_hours, "ts": int(now_utc.timestamp() + diff_hours * 3600)})
         except Exception:
             pass
-    events.sort(key=lambda x: abs(x["diff_hours"]))
+    events.sort(key=lambda x: x["ts"])
     return events
 
 
@@ -1601,34 +1607,30 @@ def build_manual_action_advisor(state, best_eval, all_evals, trade_status):
             "instruction": f"Nessuna delle 10 coin offre un vantaggio sufficiente in questo momento (Migliore: {code} con {raw_100}/100). Non aprire posizioni manuali."}
 
 
-def generate_webapp_html(ranked_evals, state, trade_status, fng_val, fng_class, session_str, eur_usd=1.08):
+def generate_webapp_html(ranked_evals, state, trade_status, fng_val, fng_class, session_str, eur_usd=1.08, macro_events=None):
     focus = next((e for e in ranked_evals if entry_conditions(e)), ranked_evals[0])
     advisor = build_manual_action_advisor(state, focus, {e["code"]: e for e in ranked_evals}, trade_status)
-    now_str = datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M:%S UTC")
+    now = datetime.now(timezone.utc)
 
     coins_payload = []
     for e in ranked_evals:
         rm = e.get("risk_manager") or skill_budget_and_risk_manager(INVEST_EUR, eur_usd, e["price"], e["sl_price"], e["tp_price"], state, e["high_soon"], e["code"])
-        ep = e.get("exit_plan") or skill_exit_planner(e["price"], e["sl_price"], e["tp_price"])
         coins_payload.append({
-            "code": e["code"], "name": e["coin"]["name"], "pionex": e["coin"]["pionex"], "kraken": e["coin"]["kraken"],
-            "ws": e["coin"]["ws"], "price": e["price"], "sl_price": e["sl_price"], "tp_price": e["tp_price"],
-            "final_score": e["final_score"], "raw_100": e["raw_100"], "ai_prob": round(e["ai_prob"] * 100, 1),
-            "prob_mlp": round(e["prob_mlp"] * 100, 1), "prob_knn": round(e["prob_knn"] * 100, 1),
-            "prob_mc": round(e["prob_mc"] * 100, 1), "rsi_1h": round(e["rsi_1h"], 1), "rsi_15m": round(e["rsi_15m"], 1),
-            "ob_imb": round(e["ob"]["imbalance"] * 100, 1), "tm_wr": round(e["tm_stats"]["win_rate"], 1),
-            "tm_exp": round(e["tm_stats"]["expectancy_r"], 2), "timer_ok": e["scanner_timer"]["triggered"],
-            "timer_triggers": e["scanner_timer"]["triggers"], "timer_summary": e["scanner_timer"]["summary"],
-            "vwap_15m": e["scanner_timer"]["vwap_15m"], "risk_ok": rm["passed"], "risk_status": rm["status_str"],
-            "rr_ratio": round(rm["rr_ratio"], 2), "pos_usdt": round(rm["position_usdt"], 2),
-            "entry_ok": entry_conditions(e), "be_trigger": ep["be_trigger"], "tp1_trigger": ep["tp1_trigger"],
-            "tp2_trigger": ep["tp2_trigger"]})
+            "code": e["code"], "name": e["coin"]["name"], "ws": e["coin"]["ws"], "kraken": e["coin"]["kraken"],
+            "price": e["price"], "sl_price": e["sl_price"], "tp_price": e["tp_price"],
+            "final_score": e["final_score"], "raw_100": e["raw_100"], "ai_prob": round(e["ai_prob"] * 100),
+            "timer_summary": e["scanner_timer"]["summary"], "risk_ok": rm["passed"], "risk_status": rm["status_str"],
+            "rr_ratio": round(rm["rr_ratio"], 2), "pos_usdt": round(rm["position_usdt"], 2), "entry_ok": entry_conditions(e)})
 
-    payload = {"updated_at": now_str, "session": session_str, "fng_val": fng_val, "fng_class": fng_class,
-               "advisor": advisor, "position": state["position"], "stats": state["stats"],
-               "history": state.get("history", []), "coins": coins_payload,
-               "repo": os.getenv("GITHUB_REPOSITORY", ""), "workflow": "bot.yml", "ref": os.getenv("GITHUB_REF_NAME") or "main",
-               "limits": {"max_trades": MAX_TRADES_PER_DAY, "daily_max_loss": DAILY_MAX_LOSS_PCT, "fee_rt": PIONEX_FEE_ROUNDTRIP_PCT}}
+    macro = [{"title": ev["title"], "impact": ev["impact"], "ts": ev["ts"]} for ev in (macro_events or []) if "ts" in ev]
+    payload = {
+        "updated_ts": int(now.timestamp()), "session": session_str, "fng_val": fng_val, "fng_class": fng_class,
+        "mode": "LIVE" if pionex_live_enabled() else "SIMULAZIONE", "advisor": advisor,
+        "waiting": trade_status["detail"] if trade_status.get("action_state") == "WAITING" else "",
+        "position": state["position"], "stats": state["stats"], "history": state.get("history", []),
+        "coins": coins_payload, "macro": macro, "macro_ok": bool(MACRO_STATUS.get("ok")),
+        "repo": os.getenv("GITHUB_REPOSITORY", ""), "workflow": "bot.yml", "ref": os.getenv("GITHUB_REF_NAME") or "main",
+        "limits": {"max_trades": MAX_TRADES_PER_DAY, "daily_max_loss": DAILY_MAX_LOSS_PCT, "fee_rt": PIONEX_FEE_ROUNDTRIP_PCT}}
     payload_json = json.dumps(payload, ensure_ascii=False).replace("</", "<\\/")
 
     html = """<!DOCTYPE html>
@@ -1636,129 +1638,128 @@ def generate_webapp_html(ranked_evals, state, trade_status, fng_val, fng_class, 
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Pionex AI Live Trading Console v8.0</title>
+<title>Pionex Bot</title>
 <style>
-  :root { --bg: #070b14; --card: #111827; --card-border: #1f2937; --text: #f8fafc; --muted: #94a3b8;
-          --accent: #38bdf8; --green: #10b981; --amber: #f59e0b; --red: #ef4444; }
+  :root { --bg:#0b1220; --card:#121a2b; --line:#22304a; --text:#f1f5f9; --muted:#8fa0b8; --green:#22c55e; --red:#ef4444; --amber:#f59e0b; --blue:#38bdf8; }
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    background: radial-gradient(circle at top, #131c31 0%, var(--bg) 70%); color: var(--text);
-    padding: 14px; max-width: 960px; margin: 0 auto; }
-  .topbar { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px;
-    padding: 12px 16px; background: rgba(17,24,39,0.9); border: 1px solid var(--card-border); border-radius: 14px; margin-bottom: 14px; }
-  .brand { font-size: 17px; font-weight: 800; display: flex; align-items: center; gap: 8px; }
-  .live-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--green); box-shadow: 0 0 10px var(--green); display: inline-block; animation: pulse 1.6s infinite; }
-  @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.35; } 100% { opacity: 1; } }
-  .meta-bar { font-size: 12px; color: var(--muted); display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
-  .btn-refresh { background: rgba(56,189,248,0.15); color: var(--accent); border: 1px solid rgba(56,189,248,0.4); padding: 6px 12px; border-radius: 8px; font-size: 12px; font-weight: 700; cursor: pointer; }
-  .advisor-box { border-radius: 14px; padding: 16px; margin-bottom: 14px; border: 1px solid var(--card-border); }
-  .advisor-badge { font-size: 15px; font-weight: 800; margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 6px; }
-  .advisor-text { font-size: 13.5px; line-height: 1.45; color: #e2e8f0; }
-  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px; }
-  @media (max-width: 720px) { .grid-2 { grid-template-columns: 1fr; } }
-  .card { background: rgba(17, 24, 39, 0.9); border: 1px solid var(--card-border); border-radius: 14px; padding: 15px; box-shadow: 0 8px 24px rgba(0,0,0,0.3); }
-  .card-title { font-size: 12px; text-transform: uppercase; letter-spacing: 0.8px; color: var(--muted); font-weight: 700; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; }
-  .stat-row { display: flex; justify-content: space-between; gap: 10px; font-size: 13px; padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.05); }
-  .stat-row:last-child { border-bottom: none; }
-  .val-bold { font-weight: 700; text-align: right; }
-  .pnl-big { font-size: 24px; font-weight: 800; margin: 6px 0; }
-  .progress-wrap { background: #1e293b; height: 10px; border-radius: 8px; overflow: hidden; margin: 10px 0 4px; position: relative; }
-  .progress-bar { height: 100%; transition: width 0.4s ease; }
-  .table-wrap { overflow-x: auto; }
-  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
-  th { text-align: left; padding: 9px 8px; color: var(--muted); border-bottom: 1px solid var(--card-border); font-size: 11px; text-transform: uppercase; }
-  td { padding: 9px 8px; border-bottom: 1px solid rgba(255,255,255,0.04); vertical-align: middle; }
-  tr.clickable-row { cursor: pointer; transition: background 0.15s; }
-  tr.clickable-row:hover { background: rgba(56,189,248,0.08); }
-  .pill { padding: 3px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; display: inline-block; }
-  .pill-green { background: rgba(16,185,129,0.18); color: #34d399; }
-  .pill-amber { background: rgba(245,158,11,0.18); color: #fbbf24; }
-  .pill-red { background: rgba(239,68,68,0.18); color: #f87171; }
-  .btn-danger { background: rgba(239,68,68,0.2); color: #f87171; border: 1px solid rgba(239,68,68,0.6); padding: 8px 14px; border-radius: 8px; font-size: 13px; font-weight: 800; cursor: pointer; }
-  .inp { background:#0b1220; color:#f8fafc; border:1px solid var(--card-border); border-radius:8px; padding:7px 10px; font-size:13px; width:170px; }
-  .flash-up { color: #34d399 !important; transition: color 0.2s; }
-  .flash-dn { color: #f87171 !important; transition: color 0.2s; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); padding: 12px; max-width: 720px; margin: 0 auto; font-size: 15px; line-height: 1.4; }
+  h2 { font-size: 13px; letter-spacing: .6px; text-transform: uppercase; color: var(--muted); margin-bottom: 12px; font-weight: 700; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 16px; margin-bottom: 14px; }
+  .head { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+  .title { font-size: 19px; font-weight: 800; }
+  .chips { display: flex; gap: 6px; flex-wrap: wrap; }
+  .chip { display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; white-space: nowrap; }
+  .g { background: rgba(34,197,94,.15); color: #4ade80; } .r { background: rgba(239,68,68,.15); color: #f87171; }
+  .a { background: rgba(245,158,11,.15); color: #fbbf24; } .b { background: rgba(56,189,248,.15); color: #7dd3fc; }
+  .n { background: rgba(143,160,184,.15); color: var(--muted); }
+  .banner { border-radius: 14px; padding: 12px 14px; margin-bottom: 14px; font-size: 15px; font-weight: 700; }
+  .warn { display: none; background: rgba(245,158,11,.15); border: 1px solid var(--amber); color: #fbbf24; border-radius: 12px; padding: 10px 12px; margin-bottom: 14px; font-size: 13.5px; font-weight: 600; }
+  .sub { color: var(--muted); font-size: 12.5px; font-weight: 400; }
+  .big { font-size: 38px; font-weight: 800; line-height: 1.05; }
+  .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin: 14px 0; }
+  .stat { background: #0d1626; border-radius: 12px; padding: 10px 12px; }
+  .stat small { display: block; color: var(--muted); font-size: 12px; }
+  .stat b { font-size: 16px; }
+  .bar { position: relative; height: 12px; border-radius: 8px; background: #1b2740; margin: 16px 0 6px; }
+  .fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 8px; transition: width .4s; }
+  .tick { position: absolute; top: -4px; bottom: -4px; width: 2px; background: #fff; opacity: .85; }
+  .scale { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); }
+  .btn { border: 1px solid var(--line); background: #16213a; color: var(--text); padding: 10px 14px; border-radius: 10px; font-size: 14px; font-weight: 700; cursor: pointer; text-decoration: none; display: inline-block; }
+  .btn.danger { background: rgba(239,68,68,.18); border-color: rgba(239,68,68,.6); color: #fca5a5; width: 100%; padding: 14px; font-size: 15px; margin-top: 4px; }
+  .empty { text-align: center; padding: 14px 4px; }
+  .empty b { display: block; font-size: 17px; margin: 6px 0; }
+  .sumrow { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 12px; }
+  .sumrow div { background: #0d1626; border-radius: 10px; padding: 8px; text-align: center; }
+  .sumrow small { display: block; color: var(--muted); font-size: 11px; }
+  .sumrow b { font-size: 14px; }
+  .h { padding: 11px 0; border-bottom: 1px solid var(--line); }
+  .h:last-child { border-bottom: none; }
+  .h-top { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+  .h-res { text-align: right; font-weight: 800; }
+  .h-res small { display: block; font-weight: 500; font-size: 12px; }
+  .why { color: var(--muted); font-size: 12.5px; margin-top: 3px; }
+  .ev { display: flex; gap: 12px; align-items: center; padding: 9px 0; border-bottom: 1px solid var(--line); }
+  .ev:last-child { border-bottom: none; }
+  .evt { font-weight: 800; min-width: 46px; font-size: 15px; }
+  .evn { flex: 1; font-size: 14px; }
+  .day { font-size: 12px; color: var(--muted); text-transform: uppercase; margin: 12px 0 2px; font-weight: 700; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th { text-align: left; color: var(--muted); font-size: 11px; text-transform: uppercase; padding: 6px 4px; }
+  td { padding: 9px 4px; border-top: 1px solid var(--line); }
+  tr.row { cursor: pointer; }
+  tr.drow { display: none; } tr.drow.open { display: table-row; }
+  tr.drow td { color: var(--muted); font-size: 12.5px; background: #0d1626; border-radius: 8px; }
+  details summary { cursor: pointer; font-weight: 700; font-size: 14px; }
+  .inp { background: #0b1220; color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 9px 10px; font-size: 14px; width: 100%; }
+  .flex { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+  .flex > * { flex: 1; min-width: 120px; }
+  .note { font-size: 12px; color: var(--muted); margin-top: 10px; }
 </style>
 </head>
 <body>
 
-<div class="topbar">
-  <div class="brand"><span class="live-dot" id="ws-dot"></span><span>PIONEX AI FAST-SCALP CONSOLE v8.0</span></div>
-  <div class="meta-bar">
-    <span id="ws-status">Connessione Kraken Live...</span><span>|</span>
-    <span id="session-label"></span>
-    <button class="btn-refresh" onclick="forcePollKraken()">🔄 Aggiorna Prezzi Live</button>
-  </div>
+<div class="head">
+  <div class="title">🤖 Pionex Bot</div>
+  <div class="chips"><span id="mode" class="chip"></span><span id="upd" class="chip"></span></div>
 </div>
+<div id="stale" class="warn">⚠️ Dati vecchi: il bot non risulta in esecuzione da piu' di 90 minuti. Controlla GitHub Actions.</div>
+<div id="banner" class="banner"></div>
 
-<div class="advisor-box" id="advisor-box">
-  <div class="advisor-badge"><span id="advisor-badge-text"></span><span style="font-size:11px; font-weight:600; opacity:0.85;" id="snapshot-time"></span></div>
-  <div class="advisor-text" id="advisor-instruction"></div>
-</div>
+<div class="card" id="pos"></div>
 
-<div class="card" style="margin-bottom:14px; border-color:#ef4444;">
-  <div class="card-title"><span>🚨 CONTROLLO MANUALE / EMERGENZA</span><span id="cmd-status" class="pill pill-amber">Token non impostato</span></div>
-  <div style="font-size:12.5px; color:var(--muted); margin-bottom:10px;">I pulsanti avviano il bot su GitHub (esecuzione in 30-90 secondi, conferma su Telegram). Le chiavi Pionex restano nei Secrets e non passano mai dal browser.</div>
-  <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px;">
-    <button class="btn-danger" onclick="cmdClose()">🛑 CHIUDI POSIZIONE ORA</button>
-    <button class="btn-refresh" onclick="cmdSellAll()">💥 VENDI TUTTO UNA COIN</button>
-    <button class="btn-refresh" onclick="setToken()">🔑 Imposta token GitHub</button>
-    <a class="btn-refresh" id="actions-link" target="_blank" rel="noopener" style="text-decoration:none;">⚙️ GitHub Actions</a>
-    <a class="btn-refresh" href="https://www.pionex.com/" target="_blank" rel="noopener" style="text-decoration:none;">📱 Pionex (chiusura a mano)</a>
-  </div>
-  <div id="cmd-log" style="font-size:12.5px; color:#e2e8f0;"></div>
-</div>
-
-<div class="grid-2">
-  <div class="card">
-    <div class="card-title"><span>📌 POSIZIONE APERTA IN TEMPO REALE</span><span id="pos-status-pill" class="pill"></span></div>
-    <div id="open-pos-content"></div>
-  </div>
-  <div class="card">
-    <div class="card-title"><span>📊 STATISTICHE & RISCHIO PORTAFOGLIO</span><span id="fng-badge" class="pill pill-amber"></span></div>
-    <div id="portfolio-stats-content"></div>
-  </div>
-</div>
-
-<div class="card" style="margin-bottom:14px;">
-  <div class="card-title"><span>📡 SCANNER LIVE 10 CRIPTOVALUTE (CLICCA UNA RIGA PER I DETTAGLI)</span><span style="color:var(--accent);">Prezzi Live via Kraken WebSocket</span></div>
-  <div class="table-wrap">
-    <table>
-      <thead><tr><th>Coin</th><th>Prezzo Live</th><th>Score</th><th>AI Prob</th><th>Timer 15m</th><th>R:R & Risk</th><th>Azione Manuale Consigliata</th></tr></thead>
-      <tbody id="scanner-tbody"></tbody>
-    </table>
-  </div>
-</div>
-
-<div class="card" style="margin-bottom:14px;" id="detail-card">
-  <div class="card-title"><span id="detail-title">🔍 PIANO OPERATIVO DETTAGLIATO</span><span id="detail-pair" style="color:var(--accent);"></span></div>
-  <div id="detail-content"></div>
-  <div style="margin-top:12px; display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-    <input id="open-amount" class="inp" type="number" min="10" step="1" placeholder="USDT (vuoto = auto)">
-    <button id="open-btn" class="btn-refresh" onclick="cmdOpen()">🚀 APRI LONG MANUALE</button>
-  </div>
+<div class="card">
+  <h2>📜 Storico posizioni chiuse</h2>
+  <div id="sum" class="sumrow"></div>
+  <div id="hist"></div>
 </div>
 
 <div class="card">
-  <div class="card-title"><span>📜 STORICO POSIZIONI CHIUSE</span><span id="history-count"></span></div>
-  <div class="table-wrap">
-    <table>
-      <thead><tr><th>Data Chiusura</th><th>Coin</th><th>Prezzo Entry</th><th>Prezzo Exit</th><th>PnL Netto</th><th>Motivo Chiusura</th></tr></thead>
-      <tbody id="history-tbody"></tbody>
-    </table>
-  </div>
+  <h2>📅 News e calendario (cosa valuta il bot)</h2>
+  <div id="macro-banner" class="banner" style="margin-bottom:10px;"></div>
+  <div id="macro-list"></div>
+  <div id="fng" class="sub" style="margin-top:12px;"></div>
+  <div class="note">Il bot non legge i titoli dei giornali: considera solo il calendario macro USD (impatto Alto e Medio) e l'indice Fear &amp; Greed. Con un evento ad impatto Alto sospende i nuovi acquisti da 2 ore prima a 30 minuti dopo.</div>
+</div>
+
+<div class="card">
+  <h2>📡 Mercato: le 10 coin controllate</h2>
+  <table>
+    <thead><tr><th>Coin</th><th>Prezzo</th><th>Punteggio</th><th>Stato</th></tr></thead>
+    <tbody id="scan"></tbody>
+  </table>
+  <div class="note">Tocca una riga per i dettagli. Il bot compra solo con punteggio almeno 58/100 e tutti i controlli verdi.</div>
+</div>
+
+<div class="card">
+  <details>
+    <summary>🚨 Controlli manuali / emergenza</summary>
+    <div class="note" style="margin-top:8px;">I comandi avviano il bot su GitHub (30-90 secondi) e ti arriva conferma su Telegram. Le chiavi Pionex restano nei Secrets.</div>
+    <div class="flex">
+      <select id="m-coin" class="inp"></select>
+      <input id="m-amt" class="inp" type="number" min="10" step="1" placeholder="USDT (vuoto = auto)">
+    </div>
+    <div class="flex">
+      <button class="btn" onclick="cmdOpen()">🚀 Apri long manuale</button>
+      <button class="btn" onclick="cmdSellAll()">💥 Vendi tutto il saldo della coin</button>
+    </div>
+    <div class="flex">
+      <button class="btn" onclick="setToken()">🔑 Imposta token GitHub</button>
+      <a class="btn" id="actions-link" target="_blank" rel="noopener">⚙️ GitHub Actions</a>
+      <a class="btn" href="https://www.pionex.com/" target="_blank" rel="noopener">📱 Pionex</a>
+    </div>
+    <div class="sub" style="margin-top:10px;">Token: <span id="tok-state"></span></div>
+    <div id="cmd-log" style="font-size:13px; margin-top:8px;"></div>
+  </details>
 </div>
 
 <script>
 const DATA = __CONSOLE_PAYLOAD__;
-const livePrices = {};
-const wsMap = {};
-DATA.coins.forEach(c => { livePrices[c.code] = c.price; wsMap[c.ws] = c.code; });
-let selectedCoinCode = DATA.position.is_open ? DATA.position.coin_code : DATA.coins[0].code;
+const live = {}; const wsMap = {};
+DATA.coins.forEach(c => { live[c.code] = c.price; wsMap[c.ws] = c.code; });
+const $ = id => document.getElementById(id);
 
 function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, m => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m])); }
-
-function fmtPrice(p) {
+function fp(p) {
   p = Number(p || 0);
   if (p <= 0) return "$0.00";
   if (p >= 1000) return "$" + p.toLocaleString("en-US", {minimumFractionDigits: 2, maximumFractionDigits: 2});
@@ -1766,218 +1767,211 @@ function fmtPrice(p) {
   if (p >= 1) return "$" + p.toFixed(3);
   return "$" + p.toFixed(4);
 }
-
-function renderAdvisor() {
-  const box = document.getElementById("advisor-box");
-  box.style.background = DATA.advisor.bg;
-  box.style.borderColor = DATA.advisor.color;
-  const badge = document.getElementById("advisor-badge-text");
-  badge.style.color = DATA.advisor.color;
-  badge.textContent = DATA.advisor.badge;
-  document.getElementById("snapshot-time").textContent = "Ultimo calcolo AI: " + DATA.updated_at;
-  document.getElementById("advisor-instruction").textContent = DATA.advisor.instruction;
-  document.getElementById("session-label").textContent = DATA.session;
-  document.getElementById("fng-badge").textContent = "Fear & Greed: " + DATA.fng_val + " (" + DATA.fng_class + ")";
+function sg(x) { return (x >= 0 ? "+" : "") + x.toFixed(2); }
+function ago(ts) {
+  const m = Math.max(0, Math.round((Date.now() / 1000 - ts) / 60));
+  if (m < 60) return m + " min fa";
+  return Math.floor(m / 60) + "h " + (m % 60) + "m fa";
+}
+function dur(ts) {
+  const m = Math.max(0, Math.round((Date.now() / 1000 - ts) / 60));
+  return m < 60 ? m + " min" : Math.floor(m / 60) + "h " + (m % 60) + "m";
+}
+function hm(ts) { return new Date(ts * 1000).toLocaleTimeString("it-IT", {hour: "2-digit", minute: "2-digit"}); }
+function dayLabel(ts) {
+  const d = new Date(ts * 1000), t = new Date(), tm = new Date(t.getTime() + 86400000);
+  if (d.toDateString() === t.toDateString()) return "Oggi";
+  if (d.toDateString() === tm.toDateString()) return "Domani";
+  return d.toLocaleDateString("it-IT", {weekday: "long", day: "numeric", month: "long"});
 }
 
-function renderOpenPosition() {
-  const pos = DATA.position;
-  const pill = document.getElementById("pos-status-pill");
-  const container = document.getElementById("open-pos-content");
-  if (!pos.is_open) {
-    pill.className = "pill pill-amber";
-    pill.textContent = "FLAT (100% USDT)";
-    container.innerHTML = `<div style="padding:18px 4px; text-align:center; color:var(--muted); font-size:13.5px;">Nessuna posizione aperta al momento.<br><span style="color:#e2e8f0; font-weight:600; display:block; margin-top:6px;">Il capitale e' protetto in USDT in attesa di un segnale Fast-Scalp.</span></div>`;
+function renderHead() {
+  const age = (Date.now() / 1000 - DATA.updated_ts) / 60;
+  $("mode").className = "chip " + (DATA.mode === "LIVE" ? "r" : "b");
+  $("mode").textContent = DATA.mode === "LIVE" ? "LIVE · soldi reali" : "SIMULAZIONE";
+  $("upd").className = "chip " + (age > 90 ? "a" : "n");
+  $("upd").textContent = "Aggiornato " + ago(DATA.updated_ts);
+  $("stale").style.display = age > 90 ? "block" : "none";
+  const a = DATA.advisor, b = $("banner");
+  b.style.background = a.bg;
+  b.style.border = "1px solid " + a.color;
+  b.innerHTML = `<div style="color:${a.color}">${esc(a.badge)}</div><div class="sub" style="margin-top:4px;color:#cbd5e1;">${esc(a.instruction)}</div>`;
+}
+
+function renderPosition() {
+  const p = DATA.position, el = $("pos");
+  if (!p.is_open) {
+    el.innerHTML = `<h2>📌 Posizione aperta</h2><div class="empty"><div style="font-size:30px;">⚪</div><b>Nessuna posizione aperta</b><div class="sub">Il capitale e' in USDT, il bot attende un segnale.</div>${DATA.waiting ? `<div class="sub" style="margin-top:8px;">${esc(DATA.waiting)}</div>` : ""}</div>`;
     return;
   }
-  const code = pos.coin_code;
-  const cur = livePrices[code] || pos.entry_price;
-  const entry = pos.entry_price, sl = pos.sl_price, tp = pos.tp_price;
-  const oneR = pos.one_r || Math.max(entry - pos.initial_sl, entry * 0.009);
-  const grossPct = ((cur - entry) / entry) * 100.0;
-  const netPct = grossPct - DATA.limits.fee_rt;
-  const pnlUsdt = pos.invested_usdt * (netPct / 100.0);
-  const curR = oneR > 0 ? (cur - entry) / oneR : 0.0;
-  pill.className = "pill " + (netPct >= 0 ? "pill-green" : "pill-red");
-  pill.textContent = "LONG " + code + " (" + pos.mode + ")";
-  const totalSpan = Math.max(tp - sl, 1e-8);
-  const progressPct = Math.max(0, Math.min(100, ((cur - sl) / totalSpan) * 100));
-  const barColor = netPct >= 0 ? "var(--green)" : "var(--red)";
-  let manualPosAdvice = "✅ MANTIENI POSIZIONE (In linea con il piano)";
-  if (cur <= sl) manualPosAdvice = "🛑 ATTENZIONE: Prezzo sotto lo Stop-Loss! Il bot chiude al prossimo giro: valuta chiusura manuale.";
-  else if (cur >= tp) manualPosAdvice = "🎯 TARGET RAGGIUNTO: Prendi profitto!";
-  container.innerHTML = `
-    <div style="display:flex; justify-content:space-between; align-items:baseline;">
-      <div><div style="font-size:12px; color:var(--muted);">PnL Netto Live (${esc(code)})</div>
-        <div class="pnl-big" style="color:${barColor};">${netPct >= 0 ? "+" : ""}${netPct.toFixed(2)}% (${pnlUsdt >= 0 ? "+" : ""}${pnlUsdt.toFixed(2)} USDT)</div></div>
-      <div style="text-align:right;"><div style="font-size:12px; color:var(--muted);">Multiplo R Live</div>
-        <div style="font-size:18px; font-weight:800; color:var(--accent);">${curR >= 0 ? "+" : ""}${curR.toFixed(2)}R</div></div>
+  const prot = p.tp2_locked ? "Profitto blindato +1.45R" : (p.tp1_locked ? "Profitto blindato +1R" : (p.breakeven_locked ? "Break-even (non puoi perdere)" : "Stop iniziale"));
+  el.innerHTML = `
+    <h2>📌 Posizione aperta · ${esc(p.coin_code)} <span class="chip ${p.mode === "LIVE_PIONEX" ? "r" : "b"}">${p.mode === "LIVE_PIONEX" ? "REALE" : "SIM"}</span></h2>
+    <div id="pos-pnl" class="big">—</div>
+    <div id="pos-usdt" class="sub" style="font-size:14px;"></div>
+    <div class="bar"><div id="pos-fill" class="fill"></div><div id="pos-tick" class="tick"></div></div>
+    <div class="scale"><span>🛑 Stop ${fp(p.sl_price)}</span><span id="pos-now"></span><span>🎯 Target ${fp(p.tp_price)}</span></div>
+    <div class="grid">
+      <div class="stat"><small>Prezzo di ingresso</small><b>${fp(p.entry_price)}</b></div>
+      <div class="stat"><small>Investito</small><b>${p.invested_usdt.toFixed(2)} USDT</b></div>
+      <div class="stat"><small>Aperta da</small><b>${dur(p.opened_ts)}</b></div>
+      <div class="stat"><small>Protezione</small><b style="font-size:13px;">${prot}</b></div>
     </div>
-    <div class="progress-wrap"><div class="progress-bar" style="width:${progressPct.toFixed(1)}%; background:${barColor};"></div></div>
-    <div style="display:flex; justify-content:space-between; font-size:11px; color:var(--muted); margin-bottom:10px;">
-      <span>🛑 SL: ${fmtPrice(sl)}</span><span>📍 Live: <strong style="color:#fff;">${fmtPrice(cur)}</strong></span><span>🎯 TP: ${fmtPrice(tp)}</span>
-    </div>
-    <div class="stat-row"><span>Prezzo Ingresso (Aperta il ${esc(pos.opened_at)})</span><span class="val-bold">${fmtPrice(entry)}</span></div>
-    <div class="stat-row"><span>Capitale Investito / Quantita'</span><span class="val-bold">${pos.invested_usdt.toFixed(2)} USDT (${pos.amount_coin} ${esc(code)})</span></div>
-    <div class="stat-row"><span>Stato Protezione Trailing</span><span class="val-bold">${pos.tp2_locked ? "🚀 +1.45R Locked" : (pos.tp1_locked ? "🔒 +1R Locked" : (pos.breakeven_locked ? "🛡️ Break-Even Netto" : "Iniziale"))}</span></div>
-    <div class="stat-row"><span>Indicazione Operativa</span><span class="val-bold" style="color:var(--accent);">${manualPosAdvice}</span></div>`;
+    <button class="btn danger" onclick="cmdClose()">🛑 CHIUDI ORA A MERCATO</button>`;
+  updatePosLive();
 }
 
-function renderPortfolioStats() {
-  const s = DATA.stats;
-  const wr = s.total_trades > 0 ? ((s.wins / s.total_trades) * 100).toFixed(1) + "%" : "N/A";
-  const pnlColor = s.total_pnl_pct >= 0 ? "var(--green)" : "var(--red)";
-  const dailyColor = (s.daily_pnl_pct || 0) >= 0 ? "var(--green)" : "var(--red)";
-  document.getElementById("portfolio-stats-content").innerHTML = `
-    <div class="stat-row"><span>Operazioni Concluse Totali</span><span class="val-bold">${s.total_trades} (${s.wins} Vinte / ${s.losses} Perse)</span></div>
-    <div class="stat-row"><span>Win Rate Reale</span><span class="val-bold">${wr}</span></div>
-    <div class="stat-row"><span>PnL Netto Cumulato</span><span class="val-bold" style="color:${pnlColor};">${s.total_pnl_pct >= 0 ? "+" : ""}${s.total_pnl_pct.toFixed(2)}% (${s.total_pnl_usdt >= 0 ? "+" : ""}${s.total_pnl_usdt.toFixed(2)} USDT)</span></div>
-    <div class="stat-row"><span>PnL Giornaliero (stop a -${DATA.limits.daily_max_loss}% del capitale)</span><span class="val-bold" style="color:${dailyColor};">${(s.daily_pnl_pct || 0) >= 0 ? "+" : ""}${(s.daily_pnl_pct || 0).toFixed(2)}% (${s.daily_trades || 0}/${DATA.limits.max_trades} trade oggi)</span></div>
-    <div class="stat-row"><span>Ultima Azione Bot</span><span class="val-bold" style="font-size:12px;">${esc(s.last_action)}</span></div>`;
+function updatePosLive() {
+  const p = DATA.position;
+  if (!p.is_open || !$("pos-pnl")) return;
+  const cur = live[p.coin_code] || p.entry_price, entry = p.entry_price;
+  const net = ((cur - entry) / entry) * 100 - DATA.limits.fee_rt;
+  const usdt = p.invested_usdt * net / 100;
+  const oneR = p.one_r || Math.max(entry - p.initial_sl, entry * 0.009);
+  const r = (cur - entry) / oneR;
+  const col = net >= 0 ? "var(--green)" : "var(--red)";
+  $("pos-pnl").style.color = col;
+  $("pos-pnl").textContent = sg(net) + "%";
+  $("pos-usdt").textContent = sg(usdt) + " USDT · " + sg(r) + "R (al netto delle commissioni)";
+  const span = Math.max(p.tp_price - p.sl_price, 1e-9);
+  const pc = x => Math.max(0, Math.min(100, (x - p.sl_price) / span * 100));
+  $("pos-fill").style.width = pc(cur) + "%";
+  $("pos-fill").style.background = col;
+  $("pos-tick").style.left = pc(entry) + "%";
+  $("pos-now").textContent = "Ora " + fp(cur);
 }
 
-function renderScannerTable() {
-  const tbody = document.getElementById("scanner-tbody");
-  tbody.innerHTML = "";
-  DATA.coins.forEach(c => {
-    const cur = livePrices[c.code] || c.price;
-    const scoreClass = c.final_score >= 7 ? "pill-green" : (c.final_score >= 6 ? "pill-amber" : "pill-red");
-    const timerBadge = c.timer_ok ? `<span class="pill pill-green">⚡ OK (${c.timer_triggers}/4)</span>` : `<span class="pill pill-amber">⏳ ${c.timer_triggers}/4</span>`;
-    const riskBadge = c.risk_ok ? `<span class="pill pill-green">${c.rr_ratio}x PASS</span>` : `<span class="pill pill-red">${c.rr_ratio}x STOP</span>`;
-    let manualAdvice = "🛡️ Attendi (Non aprire)";
-    let adviceColor = "var(--muted)";
-    if (DATA.position.is_open && DATA.position.coin_code === c.code) { manualAdvice = "📌 POSIZIONE ATTIVA"; adviceColor = "var(--accent)"; }
-    else if (c.entry_ok) { manualAdvice = "🚀 APRI LONG ORA"; adviceColor = "var(--green)"; }
-    else if (c.raw_100 >= 54) { manualAdvice = "👀 Quasi pronto (Attendi)"; adviceColor = "var(--amber)"; }
-    const tr = document.createElement("tr");
-    tr.className = "clickable-row";
-    if (c.code === selectedCoinCode) tr.style.background = "rgba(56,189,248,0.12)";
-    tr.onclick = () => { selectedCoinCode = c.code; renderScannerTable(); renderCoinDetail(); };
-    tr.innerHTML = `
-      <td><strong>${esc(c.code)}</strong> <span style="color:var(--muted); font-size:11px;">${esc(c.name)}</span></td>
-      <td id="price-cell-${c.code}" class="val-bold">${fmtPrice(cur)}</td>
-      <td><span class="pill ${scoreClass}">${c.final_score}/10 (${c.raw_100})</span></td>
-      <td class="val-bold">${c.ai_prob}%</td><td>${timerBadge}</td><td>${riskBadge}</td>
-      <td style="font-weight:700; color:${adviceColor};">${manualAdvice}</td>`;
-    tbody.appendChild(tr);
-  });
-}
-
-function renderCoinDetail() {
-  const c = DATA.coins.find(x => x.code === selectedCoinCode) || DATA.coins[0];
-  const cur = livePrices[c.code] || c.price;
-  document.getElementById("detail-title").textContent = `🔍 PIANO OPERATIVO DETTAGLIATO: ${c.name.toUpperCase()} (${c.code})`;
-  document.getElementById("detail-pair").textContent = `Pionex Spot: ${c.pionex}`;
-  document.getElementById("open-btn").textContent = `🚀 APRI LONG MANUALE ${c.code}`;
-  document.getElementById("detail-content").innerHTML = `
-    <div class="grid-2" style="margin-bottom:0;">
-      <div>
-        <div class="stat-row"><span>Prezzo Live / VWAP 15m</span><span class="val-bold">${fmtPrice(cur)} / ${fmtPrice(c.vwap_15m)}</span></div>
-        <div class="stat-row"><span>Budget a rischio fisso</span><span class="val-bold">${c.pos_usdt.toFixed(2)} USDT</span></div>
-        <div class="stat-row"><span>Stop-Loss Iniziale</span><span class="val-bold" style="color:var(--red);">${fmtPrice(c.sl_price)}</span></div>
-        <div class="stat-row"><span>Take-Profit Target</span><span class="val-bold" style="color:var(--green);">${fmtPrice(c.tp_price)}</span></div>
-        <div class="stat-row"><span>Livelli Profit-Lock (BE / +1R / +1.45R)</span><span class="val-bold">${fmtPrice(c.be_trigger)} / ${fmtPrice(c.tp1_trigger)} / ${fmtPrice(c.tp2_trigger)}</span></div>
+function renderHistory() {
+  const s = DATA.stats, h = DATA.history || [];
+  const wr = s.total_trades > 0 ? Math.round(s.wins / s.total_trades * 100) + "%" : "—";
+  const tc = s.total_pnl_usdt >= 0 ? "var(--green)" : "var(--red)";
+  const dc = (s.daily_pnl_usdt || 0) >= 0 ? "var(--green)" : "var(--red)";
+  $("sum").innerHTML = `
+    <div><small>Chiuse</small><b>${s.total_trades}</b></div>
+    <div><small>Vinte</small><b>${wr}</b></div>
+    <div><small>Totale</small><b style="color:${tc};">${sg(s.total_pnl_usdt)}$</b></div>
+    <div><small>Oggi (${s.daily_trades || 0}/${DATA.limits.max_trades})</small><b style="color:${dc};">${sg(s.daily_pnl_usdt || 0)}$</b></div>`;
+  if (h.length === 0) { $("hist").innerHTML = `<div class="sub" style="text-align:center;padding:14px;">Ancora nessuna posizione chiusa.</div>`; return; }
+  $("hist").innerHTML = h.map(x => {
+    const win = x.pnl_pct >= 0, col = win ? "var(--green)" : "var(--red)";
+    return `<div class="h">
+      <div class="h-top">
+        <div><b>${esc(x.coin)}</b> <span class="chip n">${x.mode === "LIVE_PIONEX" ? "REALE" : "SIM"}</span>
+          <div class="sub">${esc(x.closed_at)} · ${fp(x.entry)} → ${fp(x.exit)}</div></div>
+        <div class="h-res" style="color:${col};">${sg(x.pnl_pct)}%<small>${sg(x.pnl_usdt || 0)} USDT</small></div>
       </div>
-      <div>
-        <div class="stat-row"><span>Reti Neurali (MLP / k-NN / MonteCarlo)</span><span class="val-bold">${c.prob_mlp}% / ${c.prob_knn}% / ${c.prob_mc}%</span></div>
-        <div class="stat-row"><span>Time Machine (20 pattern simili)</span><span class="val-bold">WinRate ${c.tm_wr}% (${c.tm_exp >= 0 ? "+" : ""}${c.tm_exp}R)</span></div>
-        <div class="stat-row"><span>RSI 1H / RSI 15m / Orderbook L2</span><span class="val-bold">${c.rsi_1h} / ${c.rsi_15m} / ${c.ob_imb >= 0 ? "+" : ""}${c.ob_imb}%</span></div>
-        <div class="stat-row"><span>Dettaglio Entry Timer 15m</span><span class="val-bold">${esc(c.timer_summary)}</span></div>
-        <div class="stat-row"><span>Stato Risk Manager</span><span class="val-bold">${esc(c.risk_status)}</span></div>
-      </div>
-    </div>`;
-}
-
-function renderHistoryTable() {
-  const hist = DATA.history || [];
-  document.getElementById("history-count").textContent = hist.length + " operazioni registrate";
-  const tbody = document.getElementById("history-tbody");
-  if (hist.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; color:var(--muted); padding:16px;">Nessuna posizione chiusa nello storico recente.</td></tr>`;
-    return;
-  }
-  tbody.innerHTML = hist.map(h => {
-    const cls = h.pnl_pct >= 0 ? "pill-green" : "pill-red";
-    const sign = h.pnl_pct >= 0 ? "+" : "";
-    return `<tr><td>${esc(h.closed_at)}</td>
-      <td><strong>${esc(h.coin)}</strong> <span style="font-size:10px; color:var(--muted);">(${esc(h.mode || "SIM")})</span></td>
-      <td>${fmtPrice(h.entry)}</td><td>${fmtPrice(h.exit)}</td>
-      <td><span class="pill ${cls}">${sign}${Number(h.pnl_pct).toFixed(2)}% (${sign}${Number(h.pnl_usdt || 0).toFixed(2)} USDT)</span></td>
-      <td>${esc(h.reason)}</td></tr>`;
+      <div class="why">${esc(x.reason)}</div></div>`;
   }).join("");
 }
 
-function updateLivePrice(code, newPrice) {
-  if (!newPrice || newPrice <= 0) return;
-  const oldPrice = livePrices[code] || newPrice;
-  livePrices[code] = newPrice;
-  const cell = document.getElementById("price-cell-" + code);
-  if (cell) {
-    cell.textContent = fmtPrice(newPrice);
-    if (newPrice > oldPrice) { cell.classList.add("flash-up"); setTimeout(() => cell.classList.remove("flash-up"), 350); }
-    else if (newPrice < oldPrice) { cell.classList.add("flash-dn"); setTimeout(() => cell.classList.remove("flash-dn"), 350); }
+function renderMacro() {
+  const now = Date.now() / 1000, ev = DATA.macro || [];
+  let blocking = null, nextHigh = null;
+  ev.forEach(e => {
+    if (e.impact !== "High") return;
+    if (now >= e.ts - 7200 && now <= e.ts + 1800) blocking = e;
+    else if (e.ts > now && (!nextHigh || e.ts < nextHigh.ts)) nextHigh = e;
+  });
+  const b = $("macro-banner");
+  if (!DATA.macro_ok) {
+    b.style.background = "rgba(245,158,11,.14)"; b.style.border = "1px solid var(--amber)";
+    b.innerHTML = `<div style="color:#fbbf24;">⚠️ Calendario non raggiungibile in questo giro</div><div class="sub">Il bot non ha potuto controllare le news: nessun blocco applicato.</div>`;
+  } else if (blocking) {
+    b.style.background = "rgba(239,68,68,.14)"; b.style.border = "1px solid var(--red)";
+    b.innerHTML = `<div style="color:#f87171;">⛔ Acquisti sospesi: ${esc(blocking.title)} alle ${hm(blocking.ts)}</div>`;
+  } else if (nextHigh) {
+    b.style.background = "rgba(56,189,248,.12)"; b.style.border = "1px solid var(--blue)";
+    b.innerHTML = `<div style="color:#7dd3fc;">✅ Nessun blocco ora</div><div class="sub">Prossimo evento forte: ${esc(nextHigh.title)} alle ${hm(nextHigh.ts)} (stop acquisti da 2 ore prima)</div>`;
+  } else {
+    b.style.background = "rgba(34,197,94,.12)"; b.style.border = "1px solid var(--green)";
+    b.innerHTML = `<div style="color:#4ade80;">✅ Nessun evento forte in arrivo</div>`;
   }
-  if (DATA.position.is_open && DATA.position.coin_code === code) renderOpenPosition();
-  if (selectedCoinCode === code) renderCoinDetail();
+  let html = "", last = "";
+  ev.filter(e => e.ts > now - 6 * 3600).forEach(e => {
+    const d = dayLabel(e.ts);
+    if (d !== last) { html += `<div class="day">${esc(d)}</div>`; last = d; }
+    let chip;
+    if (now > e.ts + 1800) chip = `<span class="chip n">concluso</span>`;
+    else if (e.impact === "High" && now >= e.ts - 7200) chip = `<span class="chip r">⛔ blocca acquisti</span>`;
+    else if (e.impact === "High") chip = `<span class="chip a">⚠️ stop 2h prima</span>`;
+    else chip = `<span class="chip n">monitorato</span>`;
+    html += `<div class="ev"><div class="evt">${hm(e.ts)}</div><div class="evn">${esc(e.title)}<div class="sub">Impatto ${e.impact === "High" ? "ALTO" : "medio"} · USD</div></div>${chip}</div>`;
+  });
+  $("macro-list").innerHTML = html || (DATA.macro_ok ? `<div class="sub">Nessun evento USD importante nelle prossime 36 ore.</div>` : "");
+  $("fng").textContent = "Sentiment di mercato: Fear & Greed " + DATA.fng_val + " (" + DATA.fng_class + ")";
 }
 
-function connectKrakenWebSocket() {
+function renderScanner() {
+  const tb = $("scan");
+  tb.innerHTML = "";
+  DATA.coins.forEach(c => {
+    let st = `<span class="chip n">—</span>`;
+    if (DATA.position.is_open && DATA.position.coin_code === c.code) st = `<span class="chip b">📌 Aperta</span>`;
+    else if (c.entry_ok) st = `<span class="chip g">✅ Pronta</span>`;
+    else if (c.raw_100 >= 54) st = `<span class="chip a">👀 Quasi</span>`;
+    const tr = document.createElement("tr");
+    tr.className = "row";
+    tr.onclick = () => $("d-" + c.code).classList.toggle("open");
+    tr.innerHTML = `<td><b>${esc(c.code)}</b></td><td id="px-${c.code}">${fp(live[c.code] || c.price)}</td><td>${c.raw_100}/100</td><td>${st}</td>`;
+    tb.appendChild(tr);
+    const dr = document.createElement("tr");
+    dr.className = "drow"; dr.id = "d-" + c.code;
+    dr.innerHTML = `<td colspan="4">Stop ${fp(c.sl_price)} · Target ${fp(c.tp_price)} · Budget ${c.pos_usdt.toFixed(2)} USDT · Probabilita' AI ${c.ai_prob}%<br>Segnale 15m: ${esc(c.timer_summary)}<br>Controllo rischio: ${esc(c.risk_status)}</td>`;
+    tb.appendChild(dr);
+  });
+  const sel = $("m-coin");
+  DATA.coins.forEach(c => { const o = document.createElement("option"); o.value = c.code; o.textContent = c.code + " - " + c.name; sel.appendChild(o); });
+  if (DATA.position.is_open) sel.value = DATA.position.coin_code;
+}
+
+function updateLivePrice(code, price) {
+  if (!price || price <= 0) return;
+  live[code] = price;
+  const c = $("px-" + code);
+  if (c) c.textContent = fp(price);
+  if (DATA.position.is_open && DATA.position.coin_code === code) updatePosLive();
+}
+
+function connectWS() {
   try {
     const ws = new WebSocket("wss://ws.kraken.com");
-    ws.onopen = () => {
-      document.getElementById("ws-status").textContent = "🟢 Streaming Live Kraken Attivo";
-      ws.send(JSON.stringify({ event: "subscribe", pair: DATA.coins.map(c => c.ws), subscription: { name: "ticker" } }));
-    };
-    ws.onmessage = (event) => {
-      const msg = JSON.parse(event.data);
-      if (Array.isArray(msg) && msg.length >= 4 && msg[1] && msg[1].c) {
-        const code = wsMap[msg[3]];
-        const price = parseFloat(msg[1].c[0]);
-        if (code && price > 0) updateLivePrice(code, price);
+    ws.onopen = () => ws.send(JSON.stringify({ event: "subscribe", pair: DATA.coins.map(c => c.ws), subscription: { name: "ticker" } }));
+    ws.onmessage = ev => {
+      const m = JSON.parse(ev.data);
+      if (Array.isArray(m) && m.length >= 4 && m[1] && m[1].c) {
+        const code = wsMap[m[3]], pr = parseFloat(m[1].c[0]);
+        if (code && pr > 0) updateLivePrice(code, pr);
       }
     };
-    ws.onerror = () => { document.getElementById("ws-status").textContent = "🟡 Fallback Polling REST Live"; };
-    ws.onclose = () => { setTimeout(connectKrakenWebSocket, 5000); };
-  } catch (e) { console.warn("WS error:", e); }
+    ws.onclose = () => setTimeout(connectWS, 5000);
+  } catch (e) {}
 }
-
-async function forcePollKraken() {
+async function pollPrices() {
   try {
-    const pairs = DATA.coins.map(c => c.kraken).join(",");
-    const res = await fetch("https://api.kraken.com/0/public/Ticker?pair=" + pairs);
+    const res = await fetch("https://api.kraken.com/0/public/Ticker?pair=" + DATA.coins.map(c => c.kraken).join(","));
     const j = await res.json();
-    if (j && j.result) {
-      Object.keys(j.result).forEach(k => {
-        const p = parseFloat(j.result[k].c[0]);
-        DATA.coins.forEach(c => {
-          if (k.includes(c.code) || (c.code === "BTC" && k.includes("XBT")) || (c.code === "DOGE" && k.includes("XDG"))) updateLivePrice(c.code, p);
-        });
-      });
-    }
-  } catch (e) { console.warn("Poll error:", e); }
+    if (j && j.result) Object.keys(j.result).forEach(k => {
+      const p = parseFloat(j.result[k].c[0]);
+      DATA.coins.forEach(c => { if (k.includes(c.code) || (c.code === "BTC" && k.includes("XBT")) || (c.code === "DOGE" && k.includes("XDG"))) updateLivePrice(c.code, p); });
+    });
+  } catch (e) {}
 }
-
 
 function tokenNow() {
   try { const t = localStorage.getItem("gh_token"); if (t) return t; } catch (e) {}
   return window._tok || "";
 }
-function updateTokenPill() {
-  const el = document.getElementById("cmd-status");
-  const ok = !!tokenNow();
-  el.className = "pill " + (ok ? "pill-green" : "pill-amber");
-  el.textContent = ok ? "Token impostato" : "Token non impostato";
-}
+function tokState() { $("tok-state").textContent = tokenNow() ? "impostato ✅" : "non impostato"; }
 function setToken() {
   const t = prompt("Incolla il token GitHub (fine-grained, SOLO il repo del bot, permesso Actions: Read and write):");
   if (!t) return;
   window._tok = t.trim();
   try { localStorage.setItem("gh_token", t.trim()); } catch (e) {}
-  updateTokenPill();
+  tokState();
 }
 async function dispatchBot(command, coin, amount) {
-  const log = document.getElementById("cmd-log");
-  if (!tokenNow()) { setToken(); }
+  const log = $("cmd-log");
+  if (!tokenNow()) setToken();
   const tok = tokenNow();
   if (!tok) { log.textContent = "❌ Token mancante."; return; }
   if (!DATA.repo) { log.textContent = "❌ Repo sconosciuta: usa il pulsante GitHub Actions (Run workflow)."; return; }
@@ -1988,35 +1982,31 @@ async function dispatchBot(command, coin, amount) {
       headers: { "Authorization": "Bearer " + tok, "Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28", "Content-Type": "application/json" },
       body: JSON.stringify({ ref: DATA.ref, inputs: { command: command, coin: coin || "", amount_usdt: String(amount || "") } })
     });
-    if (r.status === 204) log.textContent = "✅ Comando '" + command + "' inviato. Conferma su Telegram entro 30-90 secondi.";
-    else { const t = await r.text(); log.textContent = "❌ Errore " + r.status + ": " + t.slice(0, 200); }
+    if (r.status === 204) { log.textContent = "✅ Comando '" + command + "' inviato. Conferma su Telegram entro 30-90 secondi."; alert("✅ Comando inviato. Attendi la conferma su Telegram."); }
+    else { const t = await r.text(); log.textContent = "❌ Errore " + r.status + ": " + t.slice(0, 200); alert("❌ Errore " + r.status); }
   } catch (e) { log.textContent = "❌ Errore di rete: " + e; }
 }
 function cmdClose() {
-  const code = DATA.position.is_open ? DATA.position.coin_code : "";
-  if (!DATA.position.is_open && !confirm("Il bot non risulta avere posizioni aperte. Inviare comunque il comando?")) return;
-  if (!confirm("CHIUDERE a mercato la posizione " + code + " ORA?")) return;
-  dispatchBot("close", code, "");
+  if (!confirm("CHIUDERE a mercato la posizione " + DATA.position.coin_code + " ORA?")) return;
+  dispatchBot("close", DATA.position.coin_code, "");
 }
 function cmdSellAll() {
-  const def = DATA.position.is_open ? DATA.position.coin_code : "SOL";
-  const c = (prompt("Coin da vendere INTERAMENTE a mercato (es. SOL):", def) || "").toUpperCase().trim();
-  if (!c) return;
+  const c = $("m-coin").value;
   if (!confirm("VENDERE TUTTO il saldo libero di " + c + " a mercato?")) return;
   dispatchBot("sell_all", c, "");
 }
 function cmdOpen() {
   if (DATA.position.is_open) { alert("C'e' gia' una posizione aperta su " + DATA.position.coin_code + ": chiudila prima."); return; }
-  const amt = document.getElementById("open-amount").value;
-  if (!confirm("APRIRE LONG a mercato su " + selectedCoinCode + (amt ? " con " + amt + " USDT" : " (importo automatico)") + "?")) return;
-  dispatchBot("open", selectedCoinCode, amt);
+  const c = $("m-coin").value, a = $("m-amt").value;
+  if (!confirm("APRIRE LONG a mercato su " + c + (a ? " con " + a + " USDT" : " (importo automatico)") + "?")) return;
+  dispatchBot("open", c, a);
 }
-document.getElementById("actions-link").href = "https://github.com/" + DATA.repo + "/actions/workflows/" + DATA.workflow;
-updateTokenPill();
 
-renderAdvisor(); renderOpenPosition(); renderPortfolioStats(); renderScannerTable(); renderCoinDetail(); renderHistoryTable();
-connectKrakenWebSocket();
-setInterval(forcePollKraken, 8000);
+$("actions-link").href = "https://github.com/" + DATA.repo + "/actions/workflows/" + DATA.workflow;
+renderHead(); renderPosition(); renderHistory(); renderMacro(); renderScanner(); tokState();
+setInterval(() => { renderHead(); renderMacro(); }, 60000);
+connectWS();
+setInterval(pollPrices, 10000);
 </script>
 </body>
 </html>"""
@@ -2162,7 +2152,7 @@ def main():
         trade_status = run_manual_command(state, all_evals, eur_usd, MANUAL_COMMAND, MANUAL_COIN, MANUAL_USDT)
     else:
         trade_status = manage_autonomous_trading(state, ranked_evals, all_evals, eur_usd)
-    generate_webapp_html(ranked_evals, state, trade_status, fng_val, fng_class, session_str, eur_usd)
+    generate_webapp_html(ranked_evals, state, trade_status, fng_val, fng_class, session_str, eur_usd, macro_events)
 
     action_state = trade_status["action_state"]
     notify_states = ("OPENED_NOW", "CLOSED_NOW", "CLOSE_FAILED", "ENTRY_FAILED", "MANUAL_DONE", "MANUAL_NOOP")
