@@ -469,13 +469,13 @@ def live_sell(pos, coin_cfg, price, fraction=1.0):
 # 4. ACQUISIZIONE DATI E COMANDI TELEGRAM DIRETTI
 # ==============================================================================
 def poll_telegram_commands(state):
-    """Legge comandi inviati direttamente nella chat Telegram (/status, /close, /open SOL, /sellall SOL)."""
+    """Legge sia i pulsanti premuti sotto i messaggi Telegram (callback_query) sia i comandi da menu."""
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
         return None
     offset = int(state["stats"].get("last_tg_update_id", 0)) + 1
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
     try:
-        r = SESSION.get(url, params={"offset": offset, "limit": 10, "timeout": 1}, timeout=5)
+        r = SESSION.get(url, params={"offset": offset, "limit": 15, "timeout": 1}, timeout=5)
         if r.status_code != 200:
             return None
         j = r.json()
@@ -489,11 +489,35 @@ def poll_telegram_commands(state):
         uid = int(upd.get("update_id", 0))
         if uid > state["stats"].get("last_tg_update_id", 0):
             state["stats"]["last_tg_update_id"] = uid
+
+        # 1. Tocco su un pulsante sotto il messaggio Telegram (Inline Keyboard)
+        cb = upd.get("callback_query")
+        if cb:
+            cb_msg = cb.get("message") or {}
+            chat_id = str((cb_msg.get("chat") or {}).get("id", ""))
+            if chat_id == str(TELEGRAM_CHAT_ID):
+                data = (cb.get("data") or "").strip()
+                parts = data.split(":")
+                if parts[0] == "cmd" and len(parts) >= 2:
+                    action = parts[1].lower()
+                    coin_arg = parts[2].upper() if len(parts) >= 3 else ""
+                    amt_arg = float(parts[3]) if len(parts) >= 4 and parts[3].replace(".", "", 1).isdigit() else 0.0
+                    cmd_found = {"command": action, "coin": coin_arg, "usdt": amt_arg}
+                    try:
+                        SESSION.post(
+                            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/answerCallbackQuery",
+                            json={"callback_query_id": cb["id"], "text": f"✅ Comando '{action.upper()} {coin_arg}' preso in carico!", "show_alert": False},
+                            timeout=4,
+                        )
+                    except Exception:
+                        pass
+            continue
+
+        # 2. Messaggio o voce del Menu Telegram
         msg = upd.get("message") or upd.get("edited_message") or {}
         chat_id = str((msg.get("chat") or {}).get("id", ""))
         if chat_id != str(TELEGRAM_CHAT_ID):
             continue
-        # Ignora comandi piu' vecchi di 15 minuti
         if time.time() - int(msg.get("date", 0)) > 900:
             continue
         text = (msg.get("text") or "").strip()
@@ -509,13 +533,20 @@ def poll_telegram_commands(state):
             except ValueError:
                 amt_arg = 0.0
 
+        if cmd_raw.startswith("open_") and len(cmd_raw) > 5:
+            coin_arg = cmd_raw.split("_", 1)[1].upper()
+            cmd_raw = "open"
+        elif cmd_raw.startswith("sell_") and len(cmd_raw) > 5:
+            coin_arg = cmd_raw.split("_", 1)[1].upper()
+            cmd_raw = "sell_all"
+
         if cmd_raw in ("close", "chiudi", "panic", "stop"):
             cmd_found = {"command": "close", "coin": coin_arg, "usdt": 0.0}
         elif cmd_raw in ("sellall", "sell_all", "venditutto"):
             cmd_found = {"command": "sell_all", "coin": coin_arg, "usdt": 0.0}
         elif cmd_raw in ("open", "buy", "apri", "long"):
             cmd_found = {"command": "open", "coin": coin_arg, "usdt": amt_arg}
-        elif cmd_raw in ("status", "stato", "report"):
+        elif cmd_raw in ("status", "stato", "report", "start"):
             cmd_found = {"command": "status", "coin": "", "usdt": 0.0}
 
     if cmd_found:
@@ -2302,8 +2333,16 @@ def trigger_self_chain_dispatch():
 
 
 # ==============================================================================
-# 11. WEB CONSOLE (index.html)
+# 11. WEB CONSOLE MOBILE-FIRST PER TELEGRAM (index.html)
 # ==============================================================================
+def get_public_webapp_url():
+    """Ricava automaticamente l'URL GitHub Pages della Web Console."""
+    if "/" in GITHUB_REPO:
+        owner, repo = GITHUB_REPO.split("/", 1)
+        return f"https://{owner.lower()}.github.io/{repo}/"
+    return ""
+
+
 def build_manual_action_advisor(state, best_eval, all_evals, trade_status):
     pos = state["position"]
     if pos["is_open"]:
@@ -2311,28 +2350,28 @@ def build_manual_action_advisor(state, best_eval, all_evals, trade_status):
         ev = all_evals.get(code, best_eval)
         pnl, curr_r = trade_status["pnl_pct"], trade_status["current_r"]
         if ev["final_score"] <= 4 or ev["ai_prob"] < 0.44:
-            return {"badge": "⚠️ CONSIGLIO MANUALE: VALUTA CHIUSURA ANTICIPATA", "color": "#f59e0b", "bg": "rgba(245,158,11,0.14)",
-                    "instruction": f"Il punteggio di {code} si sta indebolendo ({ev['final_score']}/10, FreqAI {ev['ai_prob'] * 100:.1f}%). Puoi chiudere anche scrivendo /close su Telegram."}
+            return {"badge": "⚠️ CONSIGLIO: VALUTA DI CHIUDERE ORA", "color": "#f59e0b", "bg": "rgba(245,158,11,0.15)",
+                    "instruction": f"La spinta su {code} si sta indebolendo ({ev['final_score']}/10, AI {ev['ai_prob'] * 100:.0f}%). Tocca '🛑 Chiudi Posizione' se vuoi incassare/proteggere."}
         if pnl >= SCALP_MIN_NET_PROFIT_PCT:
-            return {"badge": "💰 POSIZIONE IN ZONA SCALP PROFIT (GUARDIA CONTINUA ATTIVA)", "color": "#10b981", "bg": "rgba(16,185,129,0.14)",
-                    "instruction": f"La posizione su {code} e' in profitto netto ({pnl:+.2f}% / {curr_r:+.2f}R). Il Tick Guardian controlla il prezzo ogni {GUARDIAN_TICK_SEC}s per incassare al TP ({fmt_price(pos['tp_price'])}) o su inversione."}
-        return {"badge": "✅ MANTIENI POSIZIONE (HOLD · TICK GUARDIAN ATTIVO)", "color": "#38bdf8", "bg": "rgba(56,189,248,0.14)",
-                "instruction": f"Posizione aperta su {code} (PnL netto {pnl:+.2f}%). Protezione attiva con Stop-Loss a {fmt_price(pos['sl_price'])} e Take-Profit a {fmt_price(pos['tp_price'])}."}
+            return {"badge": f"💰 {code} IN PROFITTO ({pnl:+.2f}%) · GUARDIA ATTIVA", "color": "#10b981", "bg": "rgba(16,185,129,0.15)",
+                    "instruction": f"Posizione in guadagno ({curr_r:+.2f}R). Il bot controlla il prezzo ogni {GUARDIAN_TICK_SEC}s per incassare al Take-Profit ({fmt_price(pos['tp_price'])}) o al primo rallentamento."}
+        return {"badge": f"⏳ MANTIENI {code} (MONITORAGGIO OGNI {GUARDIAN_TICK_SEC}s)", "color": "#38bdf8", "bg": "rgba(56,189,248,0.15)",
+                "instruction": f"Posizione aperta su {code} ({pnl:+.2f}%). Stop-Loss attivo a {fmt_price(pos['sl_price'])} e Take-Profit a {fmt_price(pos['tp_price'])}."}
 
     if trade_status.get("action_state") in ("ENTRY_FAILED", "CLOSE_FAILED"):
-        return {"badge": "🚨 ERRORE ESECUZIONE ORDINE", "color": "#ef4444", "bg": "rgba(239,68,68,0.14)",
-                "instruction": "Controlla subito saldi e ordini su Pionex: " + trade_status["detail"]}
+        return {"badge": "🚨 ATTENZIONE: ORDINE PIONEX NON RIUSCITO", "color": "#ef4444", "bg": "rgba(239,68,68,0.15)",
+                "instruction": "Verifica l'app Pionex: " + trade_status["detail"]}
 
     score, raw_100, code = best_eval["final_score"], best_eval["raw_100"], best_eval["code"]
     rm, tm = best_eval["risk_manager"], best_eval["scanner_timer"]
     if entry_conditions(best_eval):
-        return {"badge": f"🚀 SEGNALE ATTIVO: APRI LONG SU {code}", "color": "#10b981", "bg": "rgba(16,185,129,0.15)",
-                "instruction": f"Tutti i semafori sono VERDI su {code} ({score}/10 - {raw_100}/100). Budget consigliato {rm['position_usdt']:.2f} USDT, SL {fmt_price(best_eval['sl_price'])} e TP {fmt_price(best_eval['tp_price'])}."}
+        return {"badge": f"🟢 SEGNALE FORTE: COMPRA {code} ORA", "color": "#10b981", "bg": "rgba(16,185,129,0.16)",
+                "instruction": f"Tutti i parametri sono positivi su {code} ({score}/10 · {raw_100}/100). Importo consigliato {rm['position_usdt']:.2f} USDT, SL {fmt_price(best_eval['sl_price'])}, TP {fmt_price(best_eval['tp_price'])}."}
     if raw_100 >= 54:
-        return {"badge": f"👀 QUASI PRONTO SU {code} ({raw_100}/100) - ATTENDI", "color": "#f59e0b", "bg": "rgba(245,158,11,0.14)",
-                "instruction": f"{code} e' vicino alla soglia di ingresso ({raw_100}/100), ma manca una conferma ({tm['summary']} | {rm['status_str']})."}
-    return {"badge": "🛡️ RESTA FLAT IN USDT (NON APRIRE ORA)", "color": "#94a3b8", "bg": "rgba(148,163,184,0.12)",
-            "instruction": f"Nessuna delle 10 coin offre un vantaggio sufficiente ora (Migliore: {code} con {raw_100}/100 | {BTC_REGIME['label']})."}
+        return {"badge": f"🟡 {code} QUASI PRONTA ({raw_100}/100) · ATTENDI", "color": "#f59e0b", "bg": "rgba(245,158,11,0.14)",
+                "instruction": f"{code} si sta preparando ({raw_100}/100), ma manca ancora un segnale ({tm['summary']})."}
+    return {"badge": "🛡️ RESTA FERMO IN USDT (MERCATO DEBOLE)", "color": "#94a3b8", "bg": "rgba(148,163,184,0.12)",
+            "instruction": f"Nessuna coin ha un'occasione sicura in questo momento. Migliore: {code} ({raw_100}/100) · {BTC_REGIME['label']}."}
 
 
 def generate_webapp_html(ranked_evals, state, trade_status, fng_val, fng_class, session_str, eur_usd=1.08, macro_events=None):
@@ -2347,7 +2386,8 @@ def generate_webapp_html(ranked_evals, state, trade_status, fng_val, fng_class, 
             "code": e["code"], "name": e["coin"]["name"], "ws": e["coin"]["ws"], "kraken": e["coin"]["kraken"],
             "price": e["price"], "sl_price": e["sl_price"], "tp_price": e["tp_price"],
             "final_score": e["final_score"], "raw_100": e["raw_100"], "ai_prob": round(e["ai_prob"] * 100),
-            "timer_summary": e["scanner_timer"]["summary"], "risk_ok": rm["passed"], "risk_status": rm["status_str"],
+            "timer_summary": e["scanner_timer"]["summary"], "triggers": e["scanner_timer"]["triggers"],
+            "risk_ok": rm["passed"], "risk_status": rm["status_str"],
             "rr_ratio": round(rm["rr_ratio"], 2), "pos_usdt": round(rm["position_usdt"], 2), "entry_ok": entry_conditions(e)})
 
     macro = [{"title": ev["title"], "impact": ev["impact"], "ts": ev["ts"]} for ev in (macro_events or []) if "ts" in ev]
@@ -2365,102 +2405,153 @@ def generate_webapp_html(ranked_evals, state, trade_status, fng_val, fng_class, 
 <html lang="it">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Pionex FreqAI v10 Bot</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Pionex Bot Console</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
 <style>
-      :root { --bg:#0b1220; --card:#121a2b; --line:#22304a; --text:#f1f5f9; --muted:#94a3b8; --green:#10b981; --red:#ef4444; --amber:#f59e0b; --blue:#38bdf8; }
-  * { box-sizing:border-box; margin:0; padding:0; font-family:system-ui,-apple-system,sans-serif; }
-  body { background:var(--bg); color:var(--text); padding:14px; max-width:960px; margin:0 auto; line-height:1.45; }
-  .top { display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:12px; }
-  .title { font-size:18px; font-weight:800; }
-  .sub { font-size:12px; color:var(--muted); }
-  .pill { font-size:11px; font-weight:700; padding:4px 9px; border-radius:999px; background:#1e293b; border:1px solid var(--line); }
-  .banner { padding:14px; border-radius:12px; border:1px solid var(--line); margin-bottom:12px; }
-  .banner-title { font-size:15px; font-weight:800; margin-bottom:4px; }
-  .banner-sub { font-size:13px; color:#cbd5e1; }
-  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px; margin-bottom:12px; }
-  .card-h { font-size:12px; font-weight:800; text-transform:uppercase; color:var(--muted); letter-spacing:0.6px; margin-bottom:10px; display:flex; justify-content:space-between; align-items:center; }
-  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:8px; }
-  .kv { background:#0f172a; padding:10px; border-radius:8px; border:1px solid #1e293b; }
+  :root { --bg:#090f1d; --card:#131c31; --card2:#192540; --line:#263554; --text:#f8fafc; --muted:#94a3b8; --green:#10b981; --red:#ef4444; --amber:#f59e0b; --blue:#38bdf8; }
+  * { box-sizing:border-box; margin:0; padding:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; -webkit-tap-highlight-color:transparent; }
+  body { background:var(--bg); color:var(--text); padding:12px; max-width:600px; margin:0 auto 80px; line-height:1.4; }
+  .header { display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; gap:8px; }
+  .h-title { font-size:18px; font-weight:900; letter-spacing:-0.3px; }
+  .h-sub { font-size:12px; color:var(--muted); margin-top:2px; }
+  .badge-pill { font-size:11px; font-weight:800; padding:5px 10px; border-radius:99px; background:var(--card2); border:1px solid var(--line); white-space:nowrap; }
+  .hero { padding:16px; border-radius:16px; border:2px solid var(--line); margin-bottom:14px; }
+  .hero-t { font-size:17px; font-weight:900; margin-bottom:6px; }
+  .hero-s { font-size:13px; color:#e2e8f0; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:16px; padding:14px; margin-bottom:14px; }
+  .sec-title { font-size:12px; font-weight:800; text-transform:uppercase; color:var(--muted); letter-spacing:0.5px; margin-bottom:12px; display:flex; justify-content:space-between; align-items:center; }
+  .big-actions { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .act-btn { border:none; border-radius:14px; padding:14px 12px; font-size:14px; font-weight:800; color:#fff; cursor:pointer; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:4px; text-align:center; transition:transform .1s; }
+  .act-btn:active { transform:scale(0.97); }
+  .act-btn small { font-size:11px; font-weight:600; opacity:0.85; }
+  .b-green { background:linear-gradient(135deg,#059669,#10b981); }
+  .b-red { background:linear-gradient(135deg,#dc2626,#ef4444); }
+  .b-blue { background:linear-gradient(135deg,#0284c7,#38bdf8); }
+  .b-amber { background:linear-gradient(135deg,#d97706,#f59e0b); }
+  .b-dark { background:var(--card2); border:1px solid var(--line); color:var(--text); }
+  .kv-grid { display:grid; grid-template-columns:repeat(2,1fr); gap:8px; }
+  .kv { background:#0c1426; padding:10px 12px; border-radius:12px; border:1px solid #1e2d4a; }
   .kv-l { font-size:11px; color:var(--muted); }
-  .kv-v { font-size:15px; font-weight:800; margin-top:2px; font-variant-numeric:tabular-nums; }
-  .tabs { display:flex; gap:6px; overflow-x:auto; padding-bottom:4px; margin-bottom:12px; }
-  .tab { background:#162033; border:1px solid var(--line); color:var(--text); padding:8px 11px; border-radius:9px; cursor:pointer; min-width:86px; text-align:left; }
-  .tab.active { border-color:var(--blue); background:#1a2b46; }
-  .tab-top { display:flex; justify-content:space-between; font-size:12px; font-weight:800; }
-  .tab-px { font-size:11px; color:var(--muted); margin-top:2px; font-variant-numeric:tabular-nums; }
-  .bar { height:8px; background:#0f172a; border-radius:99px; overflow:hidden; margin:8px 0 4px; position:relative; border:1px solid #1e293b; }
-  .bar > div { height:100%; transition:width .3s; }
-  table { width:100%; border-collapse:collapse; font-size:12px; }
-  th, td { padding:7px 6px; border-bottom:1px solid #1e293b; text-align:left; font-variant-numeric:tabular-nums; }
-  th { color:var(--muted); font-weight:700; font-size:11px; }
-  .btn { background:#1e293b; color:var(--text); border:1px solid #334155; padding:8px 12px; border-radius:8px; font-size:12px; font-weight:700; cursor:pointer; }
-  .btn:hover { filter:brightness(1.15); }
-  .btn-red { background:rgba(239,68,68,.18); border-color:#ef4444; color:#fca5a5; }
-  .btn-green { background:rgba(16,185,129,.18); border-color:#10b981; color:#6ee7b7; }
-  input, select { background:#0f172a; color:var(--text); border:1px solid #334155; padding:7px 9px; border-radius:8px; font-size:12px; }
-  .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
-  .muted { color:var(--muted); font-size:12px; }
+  .kv-v { font-size:16px; font-weight:900; margin-top:2px; font-variant-numeric:tabular-nums; }
+  .prog-bar { height:10px; background:#0c1426; border-radius:99px; overflow:hidden; margin:12px 0 6px; border:1px solid #1e2d4a; }
+  .prog-bar > div { height:100%; transition:width .3s; }
+  .coin-list { display:flex; flex-direction:column; gap:10px; }
+  .coin-item { background:#0d1629; border:1px solid var(--line); border-radius:14px; padding:12px; }
+  .coin-item.ready { border-color:var(--green); background:rgba(16,185,129,0.07); }
+  .coin-top { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; }
+  .coin-name { font-size:16px; font-weight:900; display:flex; align-items:center; gap:6px; }
+  .coin-px { font-size:16px; font-weight:900; font-variant-numeric:tabular-nums; }
+  .coin-meta { display:grid; grid-template-columns:repeat(3,1fr); gap:6px; font-size:12px; margin-bottom:10px; background:var(--card); padding:8px; border-radius:10px; }
+  .coin-meta div span { display:block; font-size:10px; color:var(--muted); }
+  .coin-foot { display:flex; justify-content:space-between; align-items:center; gap:8px; }
+  .mini-btn { padding:8px 12px; border-radius:10px; font-size:12px; font-weight:800; border:none; cursor:pointer; color:#fff; white-space:nowrap; }
+  input, select { width:100%; background:#0c1426; color:var(--text); border:1px solid var(--line); padding:11px 12px; border-radius:12px; font-size:14px; font-weight:600; }
+  .toast { position:fixed; bottom:16px; left:12px; right:12px; max-width:576px; margin:0 auto; background:#1e293b; border:2px solid var(--blue); color:#fff; padding:13px 16px; border-radius:14px; font-size:13px; font-weight:700; display:none; z-index:99; box-shadow:0 10px 25px rgba(0,0,0,.6); }
   .pos-green { color:var(--green); } .pos-red { color:var(--red); } .pos-amber { color:var(--amber); }
+  .muted { color:var(--muted); font-size:12px; }
 </style>
 </head>
 <body>
 
-<div class="top">
+<div class="header">
   <div>
-    <div class="title">⚡ Pionex Freqtrade + FreqAI v10 Engine</div>
-    <div class="sub" id="subline">Caricamento...</div>
+    <div class="h-title">⚡ Pionex AI Console</div>
+    <div class="h-sub" id="subline">Caricamento...</div>
   </div>
-  <div class="row">
-    <span class="pill" id="ws-pill">🔴 Prezzi Live...</span>
-    <span class="pill" id="btc-pill">⚪ BTC</span>
-    <span class="pill" id="mode-pill">MODO</span>
+  <div style="display:flex;gap:6px;align-items:center;">
+    <span class="badge-pill" id="ws-pill">🔴 Live</span>
+    <span class="badge-pill" id="mode-pill">MODO</span>
   </div>
 </div>
 
-<div class="banner" id="advisor">
-  <div class="banner-title" id="adv-title"></div>
-  <div class="banner-sub" id="adv-sub"></div>
+<!-- SEMAFORO PRINCIPALE -->
+<div class="hero" id="advisor">
+  <div class="hero-t" id="adv-title"></div>
+  <div class="hero-s" id="adv-sub"></div>
 </div>
 
+<!-- POSIZIONE ATTIVA (SE PRESENTE) -->
 <div class="card" id="pos-card"></div>
 
-<div class="tabs" id="coin-tabs"></div>
-
-<div class="card" id="coin-detail"></div>
-
+<!-- TELECOMANDO RAPIDO A 1 TOCCO -->
 <div class="card">
-  <div class="card-h"><span>🎛️ Controlli Manuali (GitHub Actions / Telegram)</span><button class="btn" onclick="toggleCfg()">⚙️ Token GitHub</button></div>
-  <div id="cfg-box" style="display:none; margin-bottom:10px;" class="row">
-    <input id="gh-token" type="password" placeholder="GitHub Personal Access Token (scope: workflow)" style="flex:1;min-width:220px;">
-    <button class="btn btn-green" onclick="saveToken()">Salva nel browser</button>
-    <span class="muted">oppure invia direttamente <code>/status</code>, <code>/close</code>, <code>/open SOL</code>, <code>/sellall SOL</code> al bot Telegram.</span>
+  <div class="sec-title">
+    <span>🎛️ Telecomando Rapido (1-Tap)</span>
+    <button class="badge-pill" onclick="toggleSetup()" id="key-btn" style="cursor:pointer;">🔑 Chiave GitHub</button>
   </div>
-  <div class="row">
-    <button class="btn" onclick="dispatchCmd('status','',0)">🔄 Aggiorna Stato Ora</button>
-    <button class="btn btn-red" onclick="dispatchCmd('close','',0)">🛑 Chiudi Posizione Registrata</button>
-    <select id="man-coin"></select>
-    <input id="man-usdt" type="number" step="1" placeholder="USDT (0 = auto)" style="width:120px;">
-    <button class="btn btn-green" onclick="manualOpen()">🚀 Apri Long Manuale</button>
-    <button class="btn btn-red" onclick="manualSellAll()">🧹 Vendi Tutto Saldo Coin</button>
+
+  <div id="setup-box" style="display:none; background:#0c1426; padding:12px; border-radius:12px; margin-bottom:12px; border:1px solid var(--amber);">
+    <div style="font-size:13px; font-weight:800; margin-bottom:6px; color:var(--amber);">Configurazione Rapida (solo la prima volta):</div>
+    <div class="muted" style="margin-bottom:8px;">
+      Per far eseguire i pulsanti istantaneamente, incolla un Token GitHub.
+      <a id="gh-create-link" href="https://github.com/settings/tokens/new?description=PionexTelegramConsole&scopes=repo,workflow" target="_blank" style="color:var(--blue);font-weight:800;display:block;margin-top:4px;">👉 1. Tocca qui per generare il Token su GitHub (spunta 'workflow' e premi Generate)</a>
+    </div>
+    <input id="gh-token" type="password" placeholder="2. Incolla qui il Token ghp_... e premi Salva" style="margin-bottom:8px;">
+    <button class="act-btn b-green" style="width:100%;padding:10px;" onclick="saveToken()">💾 Salva Chiave nel Telefono</button>
   </div>
-  <div id="cmd-msg" class="muted" style="margin-top:8px;"></div>
+
+  <div class="big-actions" style="margin-bottom:10px;">
+    <button class="act-btn b-blue" onclick="sendCmd('status','',0)">
+      🔄 Aggiorna Ora
+      <small>Ricalcola AI + Report</small>
+    </button>
+    <button class="act-btn b-red" onclick="confirmClose()">
+      🛑 Chiudi Posizione
+      <small>Vendi trade attivo</small>
+    </button>
+  </div>
+
+  <div style="background:#0c1426; padding:10px; border-radius:12px; border:1px solid #1e2d4a;">
+    <div class="muted" style="margin-bottom:6px; font-weight:700;">Operazione manuale su singola Coin:</div>
+    <div style="display:grid; grid-template-columns:1.2fr 1fr; gap:8px; margin-bottom:8px;">
+      <select id="man-coin"></select>
+      <input id="man-usdt" type="number" inputmode="decimal" placeholder="USDT (0 = Auto)">
+    </div>
+    <div class="big-actions">
+      <button class="act-btn b-green" style="padding:11px;" onclick="manualOpen()">🚀 Compra (Long)</button>
+      <button class="act-btn b-amber" style="padding:11px;" onclick="manualSellAll()">🧹 Vendi Tutto Saldo</button>
+    </div>
+  </div>
 </div>
 
+<!-- CLASSIFICA DELLE 10 COIN CON PULSANTE DIRETTO -->
 <div class="card">
-  <div class="card-h"><span>📊 Statistiche & Protezioni Giornaliere</span><span id="daily-tag"></span></div>
-  <div class="grid" id="stats-grid"></div>
+  <div class="sec-title">
+    <span>🏆 Classifica 10 Coin in Tempo Reale</span>
+    <span id="btc-pill" class="muted"></span>
+  </div>
+  <div class="coin-list" id="coin-list"></div>
 </div>
 
+<!-- STATISTICHE E STORICO -->
 <div class="card">
-  <div class="card-h"><span>📜 Storico Operazioni Recenti</span><span id="macro-tag"></span></div>
-  <div id="hist-box"></div>
+  <div class="sec-title"><span>📊 Rendimento & Sicurezza</span><span id="daily-tag" class="muted"></span></div>
+  <div class="kv-grid" id="stats-grid"></div>
+  <div id="hist-box" style="margin-top:12px;"></div>
 </div>
+
+<div class="toast" id="toast"></div>
 
 <script>
 const D = __PAYLOAD_JSON__;
 const livePx = {};
-let selected = (D.position && D.position.is_open) ? D.position.coin_code : (D.coins[0]?.code || 'SOL');
+
+try {
+  if (window.Telegram && window.Telegram.WebApp) {
+    window.Telegram.WebApp.ready();
+    window.Telegram.WebApp.expand();
+  }
+} catch(e){}
+
+function showToast(msg, border='#38bdf8'){
+  const t = document.getElementById('toast');
+  t.style.borderColor = border;
+  t.innerHTML = msg;
+  t.style.display = 'block';
+  clearTimeout(window._toastTimer);
+  window._toastTimer = setTimeout(()=>{ t.style.display='none'; }, 6000);
+}
 
 function fmtPx(p){
   p = Number(p||0);
@@ -2473,18 +2564,16 @@ function fmtPx(p){
 function ageStr(ts){
   const s = Math.max(0, Math.floor(Date.now()/1000 - ts));
   if(s<60) return s+'s fa';
-  if(s<3600) return Math.floor(s/60)+'m fa';
-  return (s/3600).toFixed(1)+'h fa';
+  if(s<3600) return Math.floor(s/60)+' min fa';
+  return (s/3600).toFixed(1)+' ore fa';
 }
 
-function renderTop(){
-  document.getElementById('subline').textContent =
-    `Ultimo calcolo AI: ${ageStr(D.updated_ts)} · ${D.session} · Fear&Greed: ${D.fng_val} (${D.fng_class})`;
+function renderHeader(){
+  document.getElementById('subline').textContent = `Aggiornato ${ageStr(D.updated_ts)} · ${D.session}`;
   const mp = document.getElementById('mode-pill');
-  mp.textContent = D.mode === 'LIVE' ? '🟢 LIVE PIONEX' : '🧪 SIMULAZIONE';
+  mp.textContent = D.mode === 'LIVE' ? '🟢 LIVE REALE' : '🧪 SIMULAZIONE';
   mp.style.borderColor = D.mode === 'LIVE' ? '#10b981' : '#f59e0b';
-  const bp = document.getElementById('btc-pill');
-  bp.textContent = D.btc_regime || '⚪ BTC';
+  document.getElementById('btc-pill').textContent = D.btc_regime || '';
 
   const adv = document.getElementById('advisor');
   adv.style.background = D.advisor.bg;
@@ -2492,15 +2581,20 @@ function renderTop(){
   const t = document.getElementById('adv-title');
   t.style.color = D.advisor.color;
   t.textContent = D.advisor.badge;
-  document.getElementById('adv-sub').textContent = D.advisor.instruction + (D.waiting ? ' — ' + D.waiting : '');
+  document.getElementById('adv-sub').textContent = D.advisor.instruction;
+
+  const hasKey = Boolean(localStorage.getItem('gh_pat'));
+  const kb = document.getElementById('key-btn');
+  kb.textContent = hasKey ? '🟢 Telecomando Attivo' : '🔑 Attiva Telecomando';
+  kb.style.borderColor = hasKey ? '#10b981' : '#f59e0b';
 }
 
 function renderPosition(){
   const box = document.getElementById('pos-card');
   const p = D.position;
   if(!p || !p.is_open){
-    box.innerHTML = `<div class="card-h"><span>💼 Posizione Attiva</span><span>FLAT (100% USDT)</span></div>
-      <div class="muted">${D.waiting || 'Nessuna posizione aperta. Il motore FreqAI v10 attende un setup ad alta probabilita\\'.'}</div>`;
+    box.innerHTML = `<div class="sec-title"><span>💼 Posizione Attiva</span><span>NESSUNA (100% USDT)</span></div>
+      <div class="muted">${D.waiting || 'Il capitale è al sicuro in USDT. Puoi aprire un trade toccando "🚀 Compra" su una delle coin qui sotto.'}</div>`;
     return;
   }
   const coin = D.coins.find(c=>c.code===p.coin_code) || {};
@@ -2509,96 +2603,125 @@ function renderPosition(){
   const partialPnl = Number(p.realized_partial_usdt || 0);
   const netPct = (((cur - p.entry_price) / p.entry_price) - fee) * 100;
   const netUsdt = p.invested_usdt * (netPct / 100) + partialPnl;
-  const oneR = p.one_r || Math.max(p.entry_price - p.initial_sl, p.entry_price*0.01);
-  const rMult = (cur - p.entry_price) / oneR;
   const span = Math.max(p.tp_price - p.sl_price, 1e-9);
   const prog = Math.max(0, Math.min(100, ((cur - p.sl_price) / span) * 100));
   const col = netUsdt >= 0 ? 'pos-green' : 'pos-red';
-  const scaleTag = p.partial_tp_done ? ` · 💰 Scale-Out 50% (+${partialPnl.toFixed(2)} USDT)` : '';
 
   box.innerHTML = `
-    <div class="card-h"><span>🔥 POSIZIONE APERTA: ${p.coin_code} (${p.mode}${scaleTag})</span><span>Aperta: ${p.opened_at}</span></div>
-    <div class="grid">
-      <div class="kv"><div class="kv-l">Prezzo Ingresso</div><div class="kv-v">${fmtPx(p.entry_price)}</div></div>
-      <div class="kv"><div class="kv-l">Prezzo Live</div><div class="kv-v">${fmtPx(cur)}</div></div>
-      <div class="kv"><div class="kv-l">PnL Netto Totale</div><div class="kv-v ${col}">${netPct>=0?'+':''}${netPct.toFixed(2)}% (${netUsdt>=0?'+':''}${netUsdt.toFixed(2)} $)</div></div>
-      <div class="kv"><div class="kv-l">Multiplo R</div><div class="kv-v ${col}">${rMult>=0?'+':''}${rMult.toFixed(2)}R</div></div>
+    <div class="sec-title"><span>🔥 POSIZIONE APERTA SU ${p.coin_code}</span><span>${p.opened_at}</span></div>
+    <div class="kv-grid">
+      <div class="kv"><div class="kv-l">Prezzo Acquisto</div><div class="kv-v">${fmtPx(p.entry_price)}</div></div>
+      <div class="kv"><div class="kv-l">Prezzo Attuale</div><div class="kv-v">${fmtPx(cur)}</div></div>
+      <div class="kv"><div class="kv-l">Guadagno / Perdita</div><div class="kv-v ${col}">${netPct>=0?'+':''}${netPct.toFixed(2)}% (${netUsdt>=0?'+':''}${netUsdt.toFixed(2)}$)</div></div>
+      <div class="kv"><div class="kv-l">Investito</div><div class="kv-v">${Number(p.invested_usdt).toFixed(2)} USDT</div></div>
       <div class="kv"><div class="kv-l">Stop-Loss ${p.breakeven_locked?'🔒':''}</div><div class="kv-v pos-red">${fmtPx(p.sl_price)}</div></div>
       <div class="kv"><div class="kv-l">Take-Profit 🎯</div><div class="kv-v pos-green">${fmtPx(p.tp_price)}</div></div>
     </div>
-    <div class="bar"><div style="width:${prog}%; background:${netUsdt>=0?'#10b981':'#ef4444'}"></div></div>
-    <div class="row" style="justify-content:space-between"><span class="muted">SL ${fmtPx(p.sl_price)}</span><span class="muted">Investito residuo: ${Number(p.invested_usdt).toFixed(2)} USDT (${p.amount_coin} ${p.coin_code})</span><span class="muted">TP ${fmtPx(p.tp_price)}</span></div>`;
+    <div class="prog-bar"><div style="width:${prog}%; background:${netUsdt>=0?'#10b981':'#ef4444'}"></div></div>
+    <button class="act-btn b-red" style="width:100%; margin-top:8px; padding:12px;" onclick="confirmClose()">🛑 CHIUDI SUBITO ${p.coin_code} A MERCATO</button>`;
 }
 
-function renderTabs(){
-  const t = document.getElementById('coin-tabs');
-  t.innerHTML = D.coins.map(c=>{
+function renderCoins(){
+  const box = document.getElementById('coin-list');
+  box.innerHTML = D.coins.map((c, idx) => {
     const px = livePx[c.code] || c.price;
-    const badge = c.entry_ok ? '🟢' : (c.raw_100>=54 ? '🟡' : '⚪');
-    return `<button class="tab ${c.code===selected?'active':''}" onclick="selCoin('${c.code}')">
-      <div class="tab-top"><span>${badge} ${c.code}</span><span>${c.raw_100}/100</span></div>
-      <div class="tab-px" id="tabpx-${c.code}">${fmtPx(px)}</div>
-    </button>`;
+    const icon = c.entry_ok ? '🟢' : (c.raw_100 >= 54 ? '🟡' : '⚪');
+    const barCol = c.entry_ok ? '#10b981' : (c.raw_100 >= 54 ? '#f59e0b' : '#38bdf8');
+    return `
+      <div class="coin-item ${c.entry_ok?'ready':''}">
+        <div class="coin-top">
+          <div class="coin-name">${icon} #${idx+1} ${c.name} (${c.code})</div>
+          <div class="coin-px" id="px-${c.code}">${fmtPx(px)}</div>
+        </div>
+        <div class="prog-bar" style="margin:6px 0 10px;height:7px;"><div style="width:${c.raw_100}%;background:${barCol}"></div></div>
+        <div class="coin-meta">
+          <div><span>Punteggio</span><b>${c.final_score}/10 (${c.raw_100}%)</b></div>
+          <div><span>Probabilità AI</span><b>${c.ai_prob}%</b></div>
+          <div><span>Trigger 15m</span><b>${c.triggers || 0}/4 attivi</b></div>
+          <div><span>Stop-Loss</span><b class="pos-red">${fmtPx(c.sl_price)}</b></div>
+          <div><span>Take-Profit</span><b class="pos-green">${fmtPx(c.tp_price)}</b></div>
+          <div><span>Size Auto</span><b>${c.pos_usdt.toFixed(1)} USDT</b></div>
+        </div>
+        <div class="coin-foot">
+          <span class="muted" style="font-size:11px;">${c.risk_ok ? '✅ Rischio OK' : c.risk_status}</span>
+          <button class="mini-btn b-green" onclick="quickBuy('${c.code}', ${c.pos_usdt.toFixed(2)})">🚀 Compra ${c.code}</button>
+        </div>
+      </div>`;
   }).join('');
-}
-
-function renderDetail(){
-  const c = D.coins.find(x=>x.code===selected) || D.coins[0];
-  if(!c) return;
-  const px = livePx[c.code] || c.price;
-  document.getElementById('coin-detail').innerHTML = `
-    <div class="card-h"><span>🔍 Dettaglio ${c.name} (${c.code}) — Score ${c.final_score}/10 (${c.raw_100}/100)</span><span>${c.entry_ok?'🟢 SEGNALE PRONTO':'⏳ IN ATTESA'}</span></div>
-    <div class="grid">
-      <div class="kv"><div class="kv-l">Prezzo Live</div><div class="kv-v">${fmtPx(px)}</div></div>
-      <div class="kv"><div class="kv-l">FreqAI Triple-Barrier</div><div class="kv-v">${c.ai_prob}%</div></div>
-      <div class="kv"><div class="kv-l">Stop-Loss Calcolato</div><div class="kv-v pos-red">${fmtPx(c.sl_price)}</div></div>
-      <div class="kv"><div class="kv-l">Take-Profit Calcolato</div><div class="kv-v pos-green">${fmtPx(c.tp_price)}</div></div>
-      <div class="kv"><div class="kv-l">Reward / Risk Netto</div><div class="kv-v">${c.rr_ratio}x</div></div>
-      <div class="kv"><div class="kv-l">Size Consigliata</div><div class="kv-v">${c.pos_usdt.toFixed(2)} USDT</div></div>
-    </div>
-    <div class="muted" style="margin-top:8px;">⏱️ <b>Timer 15m:</b> ${c.timer_summary} &nbsp;|&nbsp; 🛡️ <b>Rischio:</b> ${c.risk_status}</div>`;
 }
 
 function renderStats(){
   const s = D.stats || {};
-  const wr = s.total_trades ? ((s.wins/s.total_trades)*100).toFixed(0)+'%' : 'N/A';
-  document.getElementById('daily-tag').textContent = `Oggi: ${s.daily_trades||0}/${D.limits.max_trades} trade · PnL oggi: ${(s.daily_pnl_pct||0)>=0?'+':''}${(s.daily_pnl_pct||0).toFixed(2)}%`;
+  const wr = s.total_trades ? ((s.wins/s.total_trades)*100).toFixed(0)+'%' : '—';
+  document.getElementById('daily-tag').textContent = `Oggi: ${s.daily_trades||0}/${D.limits.max_trades} trade`;
   document.getElementById('stats-grid').innerHTML = `
-    <div class="kv"><div class="kv-l">Trade Totali (W/L)</div><div class="kv-v">${s.total_trades||0} (${s.wins||0}W / ${s.losses||0}L)</div></div>
-    <div class="kv"><div class="kv-l">Win Rate</div><div class="kv-v">${wr}</div></div>
-    <div class="kv"><div class="kv-l">PnL Cumulato USDT</div><div class="kv-v ${(s.total_pnl_usdt||0)>=0?'pos-green':'pos-red'}">${(s.total_pnl_usdt||0)>=0?'+':''}${(s.total_pnl_usdt||0).toFixed(2)} $</div></div>
-    <div class="kv"><div class="kv-l">Ultima Azione</div><div class="kv-v" style="font-size:12px;">${s.last_action||'—'}</div></div>`;
+    <div class="kv"><div class="kv-l">Operazioni Totali</div><div class="kv-v">${s.total_trades||0} (${s.wins||0} V / ${s.losses||0} P)</div></div>
+    <div class="kv"><div class="kv-l">Precisione (Win Rate)</div><div class="kv-v">${wr}</div></div>
+    <div class="kv"><div class="kv-l">Profitto Totale</div><div class="kv-v ${(s.total_pnl_usdt||0)>=0?'pos-green':'pos-red'}">${(s.total_pnl_usdt||0)>=0?'+':''}${(s.total_pnl_usdt||0).toFixed(2)} $</div></div>
+    <div class="kv"><div class="kv-l">Profitto Oggi</div><div class="kv-v ${(s.daily_pnl_pct||0)>=0?'pos-green':'pos-red'}">${(s.daily_pnl_pct||0)>=0?'+':''}${(s.daily_pnl_pct||0).toFixed(2)}%</div></div>`;
 
   const h = D.history || [];
-  document.getElementById('macro-tag').textContent = D.macro_ok ? `Calendario USD: ${(D.macro||[]).length} eventi` : 'Calendario USD offline';
-  document.getElementById('hist-box').innerHTML = h.length ? `<table><thead><tr><th>Coin</th><th>Ingresso</th><th>Uscita</th><th>PnL</th><th>Motivo</th><th>Data</th></tr></thead><tbody>` +
-    h.slice(0,10).map(r=>`<tr><td><b>${r.coin}</b></td><td>${fmtPx(r.entry)}</td><td>${fmtPx(r.exit)}</td><td class="${r.pnl_usdt>=0?'pos-green':'pos-red'}">${r.pnl_pct>=0?'+':''}${r.pnl_pct}% (${r.pnl_usdt>=0?'+':''}${r.pnl_usdt}$)</td><td>${r.reason}</td><td>${r.closed_at}</td></tr>`).join('') +
-    `</tbody></table>` : `<div class="muted">Nessun trade chiuso finora.</div>`;
+  document.getElementById('hist-box').innerHTML = h.length
+    ? `<div class="muted" style="margin-bottom:6px;font-weight:700;">Ultime chiusure:</div>` +
+      h.slice(0,6).map(r=>`<div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid #1e2d4a;font-size:12px;">
+        <span><b>${r.coin}</b> · ${r.closed_at}</span>
+        <span class="${r.pnl_usdt>=0?'pos-green':'pos-red'}"><b>${r.pnl_pct>=0?'+':''}${r.pnl_pct}% (${r.pnl_usdt>=0?'+':''}${r.pnl_usdt}$)</b></span>
+      </div>`).join('')
+    : `<div class="muted">Nessuna operazione chiusa finora.</div>`;
 }
 
-function selCoin(code){ selected = code; renderTabs(); renderDetail(); }
-function toggleCfg(){ const b=document.getElementById('cfg-box'); b.style.display=b.style.display==='none'?'flex':'none'; }
-function saveToken(){ localStorage.setItem('gh_pat', document.getElementById('gh-token').value.trim()); document.getElementById('cmd-msg').textContent='✅ Token salvato nel browser.'; }
+function toggleSetup(){
+  const b = document.getElementById('setup-box');
+  b.style.display = b.style.display === 'none' ? 'block' : 'none';
+}
+function saveToken(){
+  const v = document.getElementById('gh-token').value.trim();
+  if(!v){ showToast('⚠️ Incolla prima il Token GitHub (inizia con ghp_ o github_pat_)', '#f59e0b'); return; }
+  localStorage.setItem('gh_pat', v);
+  document.getElementById('setup-box').style.display = 'none';
+  renderHeader();
+  showToast('✅ Telecomando attivato! Ora puoi usare tutti i pulsanti con 1 tocco.', '#10b981');
+}
 
-async function dispatchCmd(command, coin, amount_usdt){
+async function sendCmd(command, coin, amount_usdt){
   const tok = localStorage.getItem('gh_pat') || document.getElementById('gh-token').value.trim();
-  const msg = document.getElementById('cmd-msg');
-  if(!tok){ toggleCfg(); msg.textContent='⚠️ Inserisci prima un GitHub Personal Access Token (scope: workflow) oppure invia il comando su Telegram.'; return; }
-  if(!D.repo){ msg.textContent='⚠️ Repository GitHub non rilevato.'; return; }
-  msg.textContent = `⏳ Invio comando '${command}' a GitHub Actions...`;
+  if(!tok){
+    document.getElementById('setup-box').style.display = 'block';
+    window.scrollTo({top: 180, behavior: 'smooth'});
+    showToast('🔑 Attiva prima il Telecomando incollando il Token GitHub nel riquadro giallo.', '#f59e0b');
+    return;
+  }
+  showToast(`⏳ Invio comando <b>${command.toUpperCase()} ${coin}</b> al bot...`, '#38bdf8');
   try{
     const r = await fetch(`https://api.github.com/repos/${D.repo}/actions/workflows/${D.workflow}/dispatches`, {
       method:'POST',
       headers:{'Authorization':`Bearer ${tok}`,'Accept':'application/vnd.github+json','Content-Type':'application/json'},
       body: JSON.stringify({ref: D.ref || 'main', inputs:{command, coin: String(coin||''), amount_usdt: String(amount_usdt||0)}})
     });
-    msg.textContent = r.status===204 ? `✅ Comando '${command}' avviato! Riceverai conferma su Telegram tra ~40s.` : `❌ Errore GitHub API HTTP ${r.status}`;
-  }catch(e){ msg.textContent = '❌ Errore rete: '+e; }
+    if(r.status === 204){
+      showToast(`✅ Comando <b>${command.toUpperCase()} ${coin}</b> avviato! Riceverai conferma su Telegram tra ~35 secondi.`, '#10b981');
+    } else {
+      showToast(`❌ GitHub ha rifiutato il comando (HTTP ${r.status}). Verifica che il Token abbia il permesso 'workflow'.`, '#ef4444');
+    }
+  }catch(e){
+    showToast('❌ Errore di connessione: '+e, '#ef4444');
+  }
 }
-function manualOpen(){ dispatchCmd('open', document.getElementById('man-coin').value, document.getElementById('man-usdt').value||0); }
+
+function confirmClose(){
+  if(confirm('Vuoi chiudere subito la posizione aperta a prezzo di mercato?')) sendCmd('close','',0);
+}
+function quickBuy(code, usdt){
+  if(confirm(`Vuoi aprire subito un LONG su ${code} (circa ${usdt} USDT)?`)) sendCmd('open', code, usdt);
+}
+function manualOpen(){
+  const c = document.getElementById('man-coin').value;
+  const u = document.getElementById('man-usdt').value || 0;
+  if(confirm(`Confermi apertura LONG su ${c}?`)) sendCmd('open', c, u);
+}
 function manualSellAll(){
   const c = document.getElementById('man-coin').value;
-  if(confirm(`Confermi la vendita immediata a mercato di TUTTO il saldo ${c} su Pionex?`)) dispatchCmd('sell_all', c, 0);
+  if(confirm(`Confermi la vendita immediata di TUTTO il saldo ${c} su Pionex?`)) sendCmd('sell_all', c, 0);
 }
 
 function connectWS(){
@@ -2607,7 +2730,7 @@ function connectWS(){
     const pairToCode = {};
     D.coins.forEach(c => { pairToCode[c.ws] = c.code; });
     ws.onopen = () => {
-      document.getElementById('ws-pill').textContent = '🟢 Live Kraken WS';
+      document.getElementById('ws-pill').textContent = '🟢 Prezzi Live';
       ws.send(JSON.stringify({event:'subscribe', pair: D.coins.map(c=>c.ws), subscription:{name:'ticker'}}));
     };
     ws.onmessage = (ev) => {
@@ -2617,23 +2740,22 @@ function connectWS(){
         const px = parseFloat(m[1].c[0]);
         if(code && px>0){
           livePx[code] = px;
-          const el = document.getElementById('tabpx-'+code);
+          const el = document.getElementById('px-'+code);
           if(el) el.textContent = fmtPx(px);
-          if(code===selected) renderDetail();
           if(D.position && D.position.is_open && D.position.coin_code===code) renderPosition();
         }
       }
     };
-    ws.onclose = () => { document.getElementById('ws-pill').textContent = '🟡 Riconnessione WS...'; setTimeout(connectWS, 4000); };
+    ws.onclose = () => { document.getElementById('ws-pill').textContent = '🟡 Riconnessione...'; setTimeout(connectWS, 4000); };
   }catch(e){}
 }
 
 (function init(){
   document.getElementById('gh-token').value = localStorage.getItem('gh_pat') || '';
   const sel = document.getElementById('man-coin');
-  sel.innerHTML = D.coins.map(c=>`<option value="${c.code}">${c.code}</option>`).join('');
-  renderTop(); renderPosition(); renderTabs(); renderDetail(); renderStats();
-  setInterval(renderTop, 10000);
+  sel.innerHTML = D.coins.map(c=>`<option value="${c.code}">${c.name} (${c.code})</option>`).join('');
+  renderHeader(); renderPosition(); renderCoins(); renderStats();
+  setInterval(renderHeader, 10000);
   connectWS();
 })();
 </script>
@@ -2650,28 +2772,99 @@ function connectWS(){
 
 
 # ==============================================================================
-# 12. REPORTISTICA E NOTIFICHE ISTANTANEE TELEGRAM
+# 12. REPORTISTICA + PULSANTI INTERATTIVI NATIVI TELEGRAM
 # ==============================================================================
-def send_telegram_message(text):
+_TG_MENU_SET = [False]
+
+
+def ensure_telegram_commands_menu():
+    """Configura il pulsante 'Menu' nativo di Telegram con comandi cliccabili."""
+    if _TG_MENU_SET[0] or not TELEGRAM_TOKEN:
+        return
+    _TG_MENU_SET[0] = True
+    commands = [
+        {"command": "status", "description": "🔄 Aggiorna stato e classifica"},
+        {"command": "close", "description": "🛑 Chiudi subito la posizione aperta"},
+        {"command": "open_sol", "description": "🚀 Apri Long su SOL"},
+        {"command": "open_btc", "description": "🚀 Apri Long su BTC"},
+        {"command": "open_eth", "description": "🚀 Apri Long su ETH"},
+        {"command": "open_sui", "description": "🚀 Apri Long su SUI"},
+        {"command": "open_xrp", "description": "🚀 Apri Long su XRP"},
+    ]
+    try:
+        SESSION.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/setMyCommands", json={"commands": commands}, timeout=5)
+    except Exception:
+        pass
+
+
+def build_telegram_inline_keyboard(ranked_evals, state):
+    """Costruisce i pulsanti cliccabili da mostrare sotto ogni messaggio Telegram."""
+    pos = state["position"]
+    rows = []
+
+    webapp_url = get_public_webapp_url()
+    top_row = []
+    if webapp_url:
+        top_row.append({"text": "📱 Apri Web Console Interattiva", "url": webapp_url})
+    if GITHUB_REPO:
+        top_row.append({"text": "⚡ Avvia Workflow GitHub", "url": f"https://github.com/{GITHUB_REPO}/actions/workflows/bot.yml"})
+    if top_row:
+        rows.append(top_row)
+
+    if pos["is_open"]:
+        c = pos["coin_code"]
+        rows.append([
+            {"text": f"🛑 CHIUDI ORA {c}", "callback_data": f"cmd:close:{c}"},
+            {"text": "🔄 Aggiorna Stato", "callback_data": "cmd:status"},
+        ])
+        rows.append([
+            {"text": f"🧹 Vendi Tutto Saldo {c}", "callback_data": f"cmd:sell_all:{c}"},
+        ])
+    else:
+        top3 = ranked_evals[:3]
+        if top3:
+            rows.append([
+                {"text": f"🚀 Compra {e['code']} ({e['raw_100']}%)", "callback_data": f"cmd:open:{e['code']}"}
+                for e in top3
+            ])
+        rows.append([
+            {"text": "🔄 Aggiorna Stato", "callback_data": "cmd:status"},
+            {"text": "🛑 Chiudi Posizione", "callback_data": "cmd:close"},
+        ])
+
+    return {"inline_keyboard": rows}
+
+
+def send_telegram_message(text, reply_markup=None):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
         log("WARN", "Credenziali Telegram non configurate: salto invio messaggio.")
         return
+    ensure_telegram_commands_menu()
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML", "disable_web_page_preview": True}
+    if reply_markup:
+        payload["reply_markup"] = reply_markup
     try:
-        r = SESSION.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML", "disable_web_page_preview": True}, timeout=HTTP_TIMEOUT)
+        r = SESSION.post(url, json=payload, timeout=HTTP_TIMEOUT)
         if r.status_code != 200:
-            log("WARN", f"Telegram API HTTP {r.status_code}: {r.text[:160]}")
+            log("WARN", f"Telegram HTML HTTP {r.status_code} ({r.text[:120]}), riprovo in testo semplice...")
+            plain = re.sub(r"<[^>]+>", "", text)
+            fallback = {"chat_id": TELEGRAM_CHAT_ID, "text": plain, "disable_web_page_preview": True}
+            if reply_markup:
+                fallback["reply_markup"] = reply_markup
+            SESSION.post(url, json=fallback, timeout=HTTP_TIMEOUT)
+        else:
+            log("INFO", "Messaggio Telegram con pulsanti inviato con successo.")
     except Exception as e:
         log("WARN", f"Errore invio Telegram: {e}")
 
 
 def build_telegram_report(ranked_evals, state, trade_status, fng_val, fng_class, session_str, eur_usd):
     pos, stats = state["position"], state["stats"]
-    best = ranked_evals[0]
     mode_str = "🟢 LIVE PIONEX" if pionex_live_enabled() else "🧪 SIMULAZIONE"
     lines = [
-        f"🤖 <b>PIONEX FREQTRADE + FREQAI v10</b> ({mode_str})",
-        f"🌍 {html_lib.escape(session_str)} | {html_lib.escape(BTC_REGIME['label'])} | F&G: <b>{fng_val}</b> ({html_lib.escape(fng_class)})",
+        f"🤖 <b>PIONEX FREQAI v10</b> ({mode_str})",
+        f"🌍 {html_lib.escape(session_str)} | {html_lib.escape(BTC_REGIME['label'])} | F&G: <b>{fng_val}</b>",
         "",
         f"<b>{html_lib.escape(trade_status['headline'])}</b>",
         f"{html_lib.escape(trade_status['detail'])}",
@@ -2685,29 +2878,28 @@ def build_telegram_report(ranked_evals, state, trade_status, fng_val, fng_class,
         lines.extend([
             "",
             f"📌 <b>POSIZIONE ATTIVA: {pos['coin_code']}</b> ({pos['mode']}{scale_info})",
-            f"• Entry: <code>{fmt_price(pos['entry_price'])}</code> | SL: <code>{fmt_price(pos['sl_price'])}</code> | TP: <code>{fmt_price(pos['tp_price'])}</code>",
-            f"• Size residua: <code>{pos['amount_coin']} {pos['coin_code']}</code> ({pos['invested_usdt']:.2f} USDT)",
+            f"• Ingresso: <code>{fmt_price(pos['entry_price'])}</code> | SL: <code>{fmt_price(pos['sl_price'])}</code> | TP: <code>{fmt_price(pos['tp_price'])}</code>",
+            f"• Quantità: <code>{pos['amount_coin']} {pos['coin_code']}</code> ({pos['invested_usdt']:.2f} USDT)",
         ])
 
     lines.extend([
         "",
-        "🏆 <b>TOP 5 CLASSIFICA FREQAI TRIPLE-BARRIER (10 COIN):</b>",
+        "🏆 <b>TOP 5 COIN DEL MOMENTO:</b>",
     ])
     for i, ev in enumerate(ranked_evals[:5], 1):
         flag = "🟢" if entry_conditions(ev) else ("🟡" if ev["raw_100"] >= 54 else "⚪")
-        di_tag = "OK" if ev.get("do_predict", 1) == 1 else "OUTLIER"
         lines.append(
             f"{i}. {flag} <b>{ev['code']}</b> ({fmt_price(ev['price'])}) — "
-            f"Score: <b>{ev['final_score']}/10</b> ({ev['raw_100']}/100) | "
-            f"AI: <b>{ev['ai_prob']*100:.0f}%</b> (DI:{di_tag}) | 15m: {ev['scanner_timer']['triggers']}/4"
+            f"Forza: <b>{ev['raw_100']}%</b> ({ev['final_score']}/10) | "
+            f"AI: <b>{ev['ai_prob']*100:.0f}%</b> | 15m: {ev['scanner_timer']['triggers']}/4"
         )
 
     wr = (stats["wins"] / stats["total_trades"] * 100.0) if stats["total_trades"] > 0 else 0.0
     lines.extend([
         "",
-        f"📊 <b>Statistiche:</b> {stats['total_trades']} trade ({stats['wins']}W/{stats['losses']}L, WR {wr:.0f}%) | "
-        f"PnL Tot: <b>{stats['total_pnl_usdt']:+.2f} USDT</b> | Oggi: <b>{stats.get('daily_pnl_pct', 0.0):+.2f}%</b>",
-        f"💬 <i>Comandi rapidi chat: /status · /close · /open {best['code']} · /sellall {best['code']}</i>",
+        f"📊 <b>Bilancio:</b> {stats['total_trades']} trade ({stats['wins']}V/{stats['losses']}P, WR {wr:.0f}%) | "
+        f"Tot: <b>{stats['total_pnl_usdt']:+.2f} $</b> | Oggi: <b>{stats.get('daily_pnl_pct', 0.0):+.2f}%</b>",
+        "👇 <i>Usa i pulsanti qui sotto o apri la Web Console:</i>",
     ])
     return "\n".join(lines)
 
@@ -2743,7 +2935,6 @@ def run_full_cycle(state, manual_override=None):
 
     ranked_evals = sorted(all_evals.values(), key=lambda x: (x["raw_100"], x["ai_prob"]), reverse=True)
 
-    # Controlla se c'e' un comando manuale da GitHub Actions o da Telegram
     tg_cmd = poll_telegram_commands(state)
     cmd_obj = manual_override or tg_cmd
 
@@ -2756,7 +2947,8 @@ def run_full_cycle(state, manual_override=None):
 
     generate_webapp_html(ranked_evals, state, trade_status, fng_val, fng_class, session_str, eur_usd, macro_events)
     report = build_telegram_report(ranked_evals, state, trade_status, fng_val, fng_class, session_str, eur_usd)
-    send_telegram_message(report)
+    kb = build_telegram_inline_keyboard(ranked_evals, state)
+    send_telegram_message(report, reply_markup=kb)
 
     return {
         "ranked_evals": ranked_evals,
@@ -2771,13 +2963,6 @@ def run_full_cycle(state, manual_override=None):
 
 
 def run_continuous_guardian(state, ctx):
-    """
-    Tick Guardian Real-Time:
-    - Se c'e' una posizione aperta, monitora i prezzi live Pionex e i comandi Telegram ogni `GUARDIAN_TICK_SEC` (15s)
-      per applicare all'istante Break-Even, Scale-Out 50%, Trailing Stop e Take-Profit.
-    - Se una coin e' 'HOT' (raw_100 >= 54), monitora ogni 15s e ricalcola le candele ogni 5 min per cogliere il breakout.
-    - In DAEMON_MODE=true gira all'infinito 24/7.
-    """
     pos = state["position"]
     best = ctx["ranked_evals"][0] if ctx["ranked_evals"] else None
     is_hot = bool(best and best["raw_100"] >= 54 and best["risk_manager"]["passed"])
@@ -2802,45 +2987,45 @@ def run_continuous_guardian(state, ctx):
         now_dt = datetime.now(timezone.utc)
         now_str, now_ts = now_dt.strftime("%d/%m %H:%M UTC"), int(now_dt.timestamp())
 
-        # 1. Aggiorna i ticker istantanei Pionex (1 chiamata leggera)
         px_now = fetch_pionex_prices()
         if px_now:
             LIVE_PX.update(px_now)
 
-        # 2. Controlla comandi diretti inviati su Telegram (/status, /close, /open, /sellall)
         tg_cmd = poll_telegram_commands(state)
         if tg_cmd:
             c_type = tg_cmd["command"]
             log("INFO", f"Comando Telegram ricevuto nel Tick Guardian: {tg_cmd}")
+            kb = build_telegram_inline_keyboard(ctx["ranked_evals"], state)
             if c_type == "status":
                 rep = build_telegram_report(ctx["ranked_evals"], state, ctx["trade_status"], ctx["fng_val"], ctx["fng_class"], ctx["session_str"], ctx["eur_usd"])
-                send_telegram_message(rep)
+                send_telegram_message(rep, reply_markup=kb)
             else:
                 st = run_manual_command(state, ctx["all_evals"], ctx["eur_usd"], c_type, tg_cmd.get("coin", ""), tg_cmd.get("usdt", 0.0))
                 ctx["trade_status"] = st
-                send_telegram_message(f"<b>{html_lib.escape(st['headline'])}</b>\n{html_lib.escape(st['detail'])}")
+                kb = build_telegram_inline_keyboard(ctx["ranked_evals"], state)
+                send_telegram_message(f"<b>{html_lib.escape(st['headline'])}</b>\n{html_lib.escape(st['detail'])}", reply_markup=kb)
                 generate_webapp_html(ctx["ranked_evals"], state, st, ctx["fng_val"], ctx["fng_class"], ctx["session_str"], ctx["eur_usd"], ctx["macro_events"])
                 if not state["position"]["is_open"] and not DAEMON_MODE:
                     break
 
-        # 3. Se c'e' una posizione aperta, verifica ogni 15s SL / TP / Scale-Out 50% / Break-Even / Trailing
         if state["position"]["is_open"]:
             capital_usdt = INVEST_EUR * ctx["eur_usd"]
             st = _manage_open_position(state, ctx["all_evals"], capital_usdt, now_str, now_ts)
             ctx["trade_status"] = st
 
             if st.get("alerts_fired"):
+                kb = build_telegram_inline_keyboard(ctx["ranked_evals"], state)
                 for al in st["alerts_fired"]:
-                    send_telegram_message(f"⚡ <b>TICK GUARDIAN ({state['position']['coin_code']})</b>\n{html_lib.escape(al)}")
+                    send_telegram_message(f"⚡ <b>TICK GUARDIAN ({state['position']['coin_code']})</b>\n{html_lib.escape(al)}", reply_markup=kb)
 
             if st["action_state"] in ("CLOSED_NOW", "CLOSE_FAILED"):
-                send_telegram_message(f"<b>{html_lib.escape(st['headline'])}</b>\n{html_lib.escape(st['detail'])}")
+                kb = build_telegram_inline_keyboard(ctx["ranked_evals"], state)
+                send_telegram_message(f"<b>{html_lib.escape(st['headline'])}</b>\n{html_lib.escape(st['detail'])}", reply_markup=kb)
                 generate_webapp_html(ctx["ranked_evals"], state, st, ctx["fng_val"], ctx["fng_class"], ctx["session_str"], ctx["eur_usd"], ctx["macro_events"])
                 if st["action_state"] == "CLOSED_NOW" and not DAEMON_MODE:
                     log("INFO", "Posizione chiusa durante il Tick Guardian: termino il job per salvare subito lo stato.")
                     break
 
-        # 4. Ogni GUARDIAN_RESCAN_SEC (es. 5 minuti), rianalizza candele 15m/1h e FreqAI
         if time.monotonic() - last_rescan >= GUARDIAN_RESCAN_SEC:
             last_rescan = time.monotonic()
             log("INFO", "Tick Guardian: avvio rianalisi periodica 15m/1h + FreqAI...")
@@ -2848,7 +3033,6 @@ def run_continuous_guardian(state, ctx):
             if new_ctx:
                 ctx = new_ctx
                 if state["position"]["is_open"] and not DAEMON_MODE:
-                    # Estende la guardia se si e' appena aperta una posizione
                     max_seconds = max(max_seconds, int(GUARDIAN_MINUTES_OPEN * 60))
 
 
@@ -2864,11 +3048,9 @@ def main():
     if not ctx:
         return
 
-    # Avvia il Tick Guardian continuo (se trade aperto, coin hot o DAEMON_MODE=true)
     if MANUAL_COMMAND not in ("close", "sell_all"):
         run_continuous_guardian(state, ctx)
 
-    # Se a fine ciclo la posizione e' ancora aperta su GitHub Actions, rilancia il workflow per guardia senza buchi
     if state["position"]["is_open"] and not DAEMON_MODE:
         trigger_self_chain_dispatch()
 
