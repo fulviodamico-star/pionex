@@ -1,4 +1,3 @@
-import os
 import re
 import json
 import time
@@ -20,7 +19,6 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-# Rilevamento automatico dello stack Freqtrade / FreqAI (Pandas + Scikit-Learn)
 try:
     import pandas as pd
     HAS_PANDAS = True
@@ -53,8 +51,10 @@ TELEGRAM_CHAT_ID = (
 ).strip()
 PIONEX_API_KEY = (os.getenv("PIONEX_API_KEY") or os.getenv("API_KEY") or "").strip()
 PIONEX_API_SECRET = (os.getenv("PIONEX_API_SECRET") or os.getenv("API_SECRET") or "").strip()
+GITHUB_TOKEN = (os.getenv("GH_PAT") or os.getenv("GITHUB_TOKEN") or "").strip()
+GITHUB_REPO = _env("GITHUB_REPOSITORY", "")
 GITHUB_EVENT_NAME = _env("GITHUB_EVENT_NAME", "manual")
-# Comandi manuali (da console HTML / workflow_dispatch): status | close | sell_all | open
+
 MANUAL_COMMAND = _env("MANUAL_COMMAND", "").lower()
 MANUAL_COIN = _env("MANUAL_COIN", "").upper()
 try:
@@ -63,27 +63,34 @@ except ValueError:
     MANUAL_USDT = 0.0
 
 INVEST_EUR = float(_env("INVEST_EUR", 50.0))
-# SICUREZZA: default FALSE. Il trading reale parte solo con AUTO_TRADE_ENABLED=true esplicito.
 AUTO_TRADE_ENABLED = _env("AUTO_TRADE_ENABLED", "false").lower() == "true"
 
+# Modalita' Continua / Tick Guardian
+DAEMON_MODE = _env("DAEMON_MODE", "false").lower() == "true"  # True per server/PC 24/7 infinito
+GUARDIAN_MINUTES_OPEN = float(_env("GUARDIAN_MINUTES_OPEN", 18.0))  # Minuti di guardia continua con trade aperto
+GUARDIAN_MINUTES_HOT = float(_env("GUARDIAN_MINUTES_HOT", 6.0))     # Minuti di guardia se una coin e' quasi pronta (>=54/100)
+GUARDIAN_TICK_SEC = int(_env("GUARDIAN_TICK_SEC", 15))              # Controllo prezzi Pionex + Telegram ogni 15s
+GUARDIAN_RESCAN_SEC = int(_env("GUARDIAN_RESCAN_SEC", 300))         # Rianalisi candele 15m/AI ogni 5 min
+SELF_CHAIN_WHEN_OPEN = _env("SELF_CHAIN_WHEN_OPEN", "true").lower() == "true"
+PARTIAL_TP_ENABLED = _env("PARTIAL_TP_ENABLED", "true").lower() == "true"
+
 # Ingressi / rischio
-Entry_Score_Min = 6
-Entry_Raw_100_Min = 58
-RISK_PER_TRADE_PCT = float(_env("RISK_PER_TRADE_PCT", 1.5))   # % del capitale rischiato per trade
-DAILY_MAX_LOSS_PCT = float(_env("DAILY_MAX_LOSS_PCT", 4.0))   # % del CAPITALE (MaxDrawdown protection)
+Entry_Score_Min = int(_env("ENTRY_SCORE_MIN", 6))
+Entry_Raw_100_Min = int(_env("ENTRY_RAW_100_MIN", 58))
+RISK_PER_TRADE_PCT = float(_env("RISK_PER_TRADE_PCT", 1.5))
+DAILY_MAX_LOSS_PCT = float(_env("DAILY_MAX_LOSS_PCT", 4.0))
 MAX_TRADES_PER_DAY = int(_env("MAX_TRADES_PER_DAY", 5))
-MAX_CONSEC_LOSSES = int(_env("MAX_CONSEC_LOSSES", 3))         # StoplossGuard protection
-MIN_REWARD_RISK_R = 1.15          # R:R NETTO di commissioni (~1.25 lordo)
+MAX_CONSEC_LOSSES = int(_env("MAX_CONSEC_LOSSES", 3))
+MIN_REWARD_RISK_R = 1.15
 CASH_BUFFER_PCT = 5.0
 MIN_ORDER_USDT = float(_env("MIN_ORDER_USDT", 10.5))
-MAX_SPREAD_BPS = float(_env("MAX_SPREAD_BPS", 22.0))          # max spread Bid-Ask consentito (0.22%)
-FEE_PCT_PER_SIDE = float(_env("FEE_PCT_PER_SIDE", 0.05))      # fee Pionex (0.05% per lato)
+FEE_PCT_PER_SIDE = float(_env("FEE_PCT_PER_SIDE", 0.05))
 PIONEX_FEE_ROUNDTRIP_PCT = 2.0 * FEE_PCT_PER_SIDE
 SCALP_MIN_NET_PROFIT_PCT = 0.65
 TIME_STOP_PROFIT_HOURS = 4.5
 TIME_STOP_STALE_HOURS = 6.0
 
-# Finestra operativa (UTC): nuovi ingressi solo qui. Copre Londra + Wall Street (ora legale e solare).
+# Finestra operativa (UTC)
 ENTRY_START_UTC = int(_env("ENTRY_START_UTC", 7))
 ENTRY_END_UTC = int(_env("ENTRY_END_UTC", 21))
 MIN_MINUTES_BETWEEN_TRADES = int(_env("MIN_MINUTES_BETWEEN_TRADES", 60))
@@ -109,8 +116,8 @@ COINS = [
     {"code": "DOT",  "name": "Polkadot",  "kraken": "DOTUSD",  "ws": "DOT/USD",  "futures": "PF_DOTUSD",  "pionex": "DOT_USDT",  "prec": 2},
 ]
 COIN_MAP = {c["code"]: c for c in COINS}
-LIVE_PX = {}  # prezzi live Pionex (symbol -> last)
-BTC_REGIME = {"state": "NEUTRAL", "ret_1h_pct": 0.0, "rsi_1h": 50.0, "above_ema50": True, "dump_guard": False}
+LIVE_PX = {}
+BTC_REGIME = {"state": "NEUTRAL", "rsi_15m": 50.0, "ret_1h_pct": 0.0, "allow_alts": True, "label": "⚪ BTC Neutrale"}
 
 FREQTRADE_CONFIG = {
     "stake_currency": "USDT",
@@ -121,12 +128,12 @@ FREQTRADE_CONFIG = {
         "conv_width": 1,
         "train_period_candles": 320,
         "backtest_period_candles": 80,
-        "identifier": "pionex_fastscalp_v10",
+        "identifier": "pionex_triple_barrier_v10",
         "feature_parameters": {
             "include_timeframes": ["15m", "1h", "4h"],
             "indicator_periods_candles": [14, 20, 50],
-            "label_period_candles": 4,
-            "DI_threshold": 2.35,
+            "label_period_candles": 5,
+            "DI_threshold": 2.2,
             "weight_factor": 0.9,
         },
     },
@@ -134,9 +141,9 @@ FREQTRADE_CONFIG = {
 
 
 # ==============================================================================
-# 1. UTILITA' (log con redazione segreti, sessione HTTP con retry, throttle Kraken)
+# 1. UTILITA'
 # ==============================================================================
-_SECRETS = [s for s in (TELEGRAM_TOKEN, PIONEX_API_KEY, PIONEX_API_SECRET) if s]
+_SECRETS = [s for s in (TELEGRAM_TOKEN, PIONEX_API_KEY, PIONEX_API_SECRET, GITHUB_TOKEN) if s]
 
 
 def redact(text):
@@ -147,7 +154,8 @@ def redact(text):
 
 
 def log(level, msg):
-    print(f"[{level}] {redact(msg)}", flush=True)
+    ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
+    print(f"[{ts}][{level}] {redact(msg)}", flush=True)
 
 
 def _build_session():
@@ -237,7 +245,8 @@ def load_state():
             "entry_price": 0.0, "amount_coin": 0.0, "invested_usdt": 0.0,
             "sl_price": 0.0, "tp_price": 0.0, "initial_sl": 0.0, "one_r": 0.0,
             "highest_price": 0.0, "breakeven_locked": False, "tp1_locked": False,
-            "tp2_locked": False, "alerts_triggered": [], "opened_at": "", "opened_ts": 0,
+            "tp2_locked": False, "partial_tp_done": False, "realized_partial_usdt": 0.0,
+            "alerts_triggered": [], "opened_at": "", "opened_ts": 0,
             "last_check_ts": 0, "close_fail_count": 0, "mode": "SIMULATION", "order_id": "",
             "enter_tag": "freqai_fastscalp"
         },
@@ -245,7 +254,7 @@ def load_state():
             "total_trades": 0, "wins": 0, "losses": 0, "total_pnl_pct": 0.0, "total_pnl_usdt": 0.0,
             "daily_date": "", "daily_pnl_pct": 0.0, "daily_pnl_usdt": 0.0, "daily_trades": 0,
             "consec_losses": 0, "last_close_ts": 0, "last_loss_ts": 0, "coin_last_close": {},
-            "last_action": "Nessuna operazione recente"
+            "last_tg_update_id": 0, "last_action": "Nessuna operazione recente"
         },
         "history": []
     }
@@ -269,20 +278,19 @@ def save_state(state):
         tmp = STATE_FILE + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(state, f, indent=2, ensure_ascii=False)
-        os.replace(tmp, STATE_FILE)  # scrittura atomica
+        os.replace(tmp, STATE_FILE)
     except Exception as e:
         log("ERROR", f"Salvataggio {STATE_FILE} fallito: {e}")
 
 
 # ==============================================================================
-# 3. CLIENT PIONEX (firma HMAC-SHA256 con query ordinata, saldi, regole simbolo)
+# 3. CLIENT PIONEX (con supporto vendita parziale Scale-Out)
 # ==============================================================================
 def pionex_live_enabled():
     return bool(PIONEX_API_KEY and PIONEX_API_SECRET and AUTO_TRADE_ENABLED)
 
 
 def pionex_request(method, path, params=None, body=None, timeout=HTTP_TIMEOUT):
-    """Richiesta firmata: METHOD + PATH + '?' + query ordinata (con timestamp) + body JSON compatto."""
     params = {k: v for k, v in (params or {}).items() if v is not None}
     params["timestamp"] = int(time.time() * 1000)
     query = urlencode(sorted(params.items()))
@@ -367,7 +375,6 @@ def pionex_place_market_order(symbol, side, size=None, amount=None):
 
 
 def live_buy(coin_cfg, usdt, price):
-    """Acquisto con riconciliazione dei saldi: entry/quantita' REALI, non stimate."""
     sym, base = coin_cfg["pionex"], coin_cfg["code"]
     if not pionex_live_enabled():
         amount = floor_to_scale(usdt / price * (1 - FEE_PCT_PER_SIDE / 100.0), max(coin_cfg["prec"], 2))
@@ -414,22 +421,28 @@ def live_buy(coin_cfg, usdt, price):
             "msg": f"{res['msg']} | fill reale {amount} {base} per {spent:.2f} USDT"}
 
 
-def live_sell(pos, coin_cfg, price):
-    """Vendita con quantita' limitata al saldo reale. Se fallisce NON si chiude la posizione nello stato."""
+def live_sell(pos, coin_cfg, price, fraction=1.0):
+    """Vendita totale (fraction=1.0) o parziale Scale-Out (es. fraction=0.5) con riconciliazione."""
     base, sym = coin_cfg["code"], coin_cfg["pionex"]
-    invested = pos["invested_usdt"]
+    fraction = clamp(fraction, 0.1, 1.0)
+    target_coin = pos["amount_coin"] * fraction
+    invested_slice = pos["invested_usdt"] * fraction
+
     if pos.get("mode") != "LIVE_PIONEX" or not pionex_live_enabled():
-        proceeds = pos["amount_coin"] * price * (1 - FEE_PCT_PER_SIDE / 100.0)
-        return {"ok": True, "exit_price": price, "pnl_usdt": proceeds - invested, "msg": "Chiusura simulata"}
+        scale = max(coin_cfg["prec"], 2)
+        sold_qty = floor_to_scale(target_coin, scale) if fraction < 1.0 else pos["amount_coin"]
+        proceeds = sold_qty * price * (1 - FEE_PCT_PER_SIDE / 100.0)
+        return {"ok": True, "exit_price": price, "sold_qty": sold_qty, "proceeds_usdt": proceeds,
+                "pnl_usdt": proceeds - invested_slice, "msg": "Vendita simulata"}
 
     rules = pionex_symbol_rules(sym)
     bal0 = pionex_get_balances()
     if bal0 is None:
         return {"ok": False, "msg": "Impossibile leggere i saldi: vendita non inviata (riprovo al prossimo giro)"}
     free = bal0.get(base, {}).get("free", 0.0)
-    size = floor_to_scale(min(pos["amount_coin"], free), rules["base_scale"])
+    size = floor_to_scale(min(target_coin, free), rules["base_scale"])
     if size <= 0 or size * price < rules["min_amount"] * 0.98:
-        return {"ok": False, "msg": f"Quantita' vendibile {size} {base} sotto il minimo: chiudi a mano su Pionex"}
+        return {"ok": False, "msg": f"Quantita' vendibile {size} {base} sotto il minimo ordine Pionex"}
 
     res = pionex_place_market_order(sym, "SELL", size=fmt_qty(size, rules["base_scale"]))
     usdt0 = bal0.get("USDT", {}).get("free", 0.0)
@@ -447,12 +460,68 @@ def live_sell(pos, coin_cfg, price):
     if not sold:
         return {"ok": False, "msg": res["msg"] if not res["ok"] else "Vendita non risulta eseguita"}
     exit_price = proceeds / (size * (1 - FEE_PCT_PER_SIDE / 100.0)) if size > 0 and proceeds > 0 else price
-    return {"ok": True, "exit_price": exit_price, "pnl_usdt": proceeds - invested, "msg": res["msg"]}
+    return {"ok": True, "exit_price": exit_price, "sold_qty": size, "proceeds_usdt": proceeds,
+            "pnl_usdt": proceeds - invested_slice, "msg": res["msg"]}
 
 
 # ==============================================================================
-# 4. ACQUISIZIONE DATI (DataProvider Multi-Venue: Pionex L2 + Kraken OHLCV)
+# 4. ACQUISIZIONE DATI E COMANDI TELEGRAM DIRETTI
 # ==============================================================================
+def poll_telegram_commands(state):
+    """Legge comandi inviati direttamente nella chat Telegram (/status, /close, /open SOL, /sellall SOL)."""
+    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
+        return None
+    offset = int(state["stats"].get("last_tg_update_id", 0)) + 1
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
+    try:
+        r = SESSION.get(url, params={"offset": offset, "limit": 10, "timeout": 1}, timeout=5)
+        if r.status_code != 200:
+            return None
+        j = r.json()
+        if not j.get("ok"):
+            return None
+    except Exception:
+        return None
+
+    cmd_found = None
+    for upd in j.get("result", []):
+        uid = int(upd.get("update_id", 0))
+        if uid > state["stats"].get("last_tg_update_id", 0):
+            state["stats"]["last_tg_update_id"] = uid
+        msg = upd.get("message") or upd.get("edited_message") or {}
+        chat_id = str((msg.get("chat") or {}).get("id", ""))
+        if chat_id != str(TELEGRAM_CHAT_ID):
+            continue
+        # Ignora comandi piu' vecchi di 15 minuti
+        if time.time() - int(msg.get("date", 0)) > 900:
+            continue
+        text = (msg.get("text") or "").strip()
+        if not text.startswith("/"):
+            continue
+        parts = text.split()
+        cmd_raw = parts[0].lstrip("/").split("@")[0].lower()
+        coin_arg = parts[1].upper() if len(parts) >= 2 else ""
+        amt_arg = 0.0
+        if len(parts) >= 3:
+            try:
+                amt_arg = float(parts[2])
+            except ValueError:
+                amt_arg = 0.0
+
+        if cmd_raw in ("close", "chiudi", "panic", "stop"):
+            cmd_found = {"command": "close", "coin": coin_arg, "usdt": 0.0}
+        elif cmd_raw in ("sellall", "sell_all", "venditutto"):
+            cmd_found = {"command": "sell_all", "coin": coin_arg, "usdt": 0.0}
+        elif cmd_raw in ("open", "buy", "apri", "long"):
+            cmd_found = {"command": "open", "coin": coin_arg, "usdt": amt_arg}
+        elif cmd_raw in ("status", "stato", "report"):
+            cmd_found = {"command": "status", "coin": "", "usdt": 0.0}
+
+    if cmd_found:
+        save_state(state)
+    return cmd_found
+
+
 def fetch_eur_usd_rate():
     data = safe_get_json("https://api.kraken.com/0/public/Ticker", params={"pair": "EURUSD"})
     try:
@@ -487,7 +556,6 @@ def fetch_kraken_ohlc(pair="SOLUSD", interval=60):
 
 
 def drop_unfinished(candles, interval_sec):
-    """Scarta l'ultima candela ancora aperta (process_only_new_candles=True)."""
     if candles and candles[-1]["time"] + interval_sec > time.time():
         return candles[:-1]
     return candles
@@ -515,54 +583,33 @@ def build_4h_from_1h(candles_1h):
     return out
 
 
-def _compute_ob_metrics(bids, asks, source="PIONEX"):
-    best_bid, best_ask = float(bids[0][0]), float(asks[0][0])
-    mid = (best_bid + best_ask) / 2.0
-    spread_bps = ((best_ask - best_bid) / mid) * 10000.0 if mid > 0 else 5.0
-    bid_w = 0.0
-    for b in bids:
-        p, v = float(b[0]), float(b[1])
-        bid_w += p * v * math.exp(-max(0.0001, (mid - p) / mid) * 100.0)
-    ask_w = 0.0
-    for a in asks:
-        p, v = float(a[0]), float(a[1])
-        ask_w += p * v * math.exp(-max(0.0001, (p - mid) / mid) * 100.0)
-    total = bid_w + ask_w
-    return {
-        "imbalance": (bid_w - ask_w) / total if total > 0 else 0.0,
-        "spread_bps": spread_bps,
-        "bid_ask_ratio": bid_w / ask_w if ask_w > 0 else 1.0,
-        "source": source,
-    }
-
-
-def fetch_orderbook(coin_cfg, count=50):
-    """Legge l'Orderbook L2 direttamente da Pionex (venue di esecuzione) con fallback automatico su Kraken."""
-    default = {"imbalance": 0.0, "spread_bps": 5.0, "bid_ask_ratio": 1.0, "source": "DEFAULT"}
-    # 1. Tentativo nativo Pionex Depth API
-    pdata = safe_get_json(f"{PIONEX_BASE}/api/v1/market/depth", params={"symbol": coin_cfg["pionex"], "limit": count}, retries=1)
-    try:
-        if pdata and pdata.get("result") is not False and "data" in pdata:
-            bids = pdata["data"].get("bids", [])
-            asks = pdata["data"].get("asks", [])
-            if bids and asks:
-                return _compute_ob_metrics(bids, asks, source="PIONEX")
-    except Exception:
-        pass
-
-    # 2. Fallback Kraken Depth API
-    kdata = safe_get_json("https://api.kraken.com/0/public/Depth", params={"pair": coin_cfg["kraken"], "count": count})
-    if not kdata or kdata.get("error"):
+def fetch_kraken_orderbook(pair="SOLUSD", count=50):
+    data = safe_get_json("https://api.kraken.com/0/public/Depth", params={"pair": pair, "count": count})
+    default = {"imbalance": 0.0, "spread_bps": 5.0, "bid_ask_ratio": 1.0}
+    if not data or data.get("error"):
         return default
     try:
-        res = kdata.get("result", {})
+        res = data.get("result", {})
         key = list(res.keys())[0]
         bids, asks = res[key].get("bids", []), res[key].get("asks", [])
-        if bids and asks:
-            return _compute_ob_metrics(bids, asks, source="KRAKEN")
+        if not bids or not asks:
+            return default
+        best_bid, best_ask = float(bids[0][0]), float(asks[0][0])
+        mid = (best_bid + best_ask) / 2.0
+        spread_bps = ((best_ask - best_bid) / mid) * 10000.0 if mid > 0 else 5.0
+        bid_w = 0.0
+        for b in bids:
+            p, v = float(b[0]), float(b[1])
+            bid_w += p * v * math.exp(-max(0.0001, (mid - p) / mid) * 100.0)
+        ask_w = 0.0
+        for a in asks:
+            p, v = float(a[0]), float(a[1])
+            ask_w += p * v * math.exp(-max(0.0001, (p - mid) / mid) * 100.0)
+        total = bid_w + ask_w
+        return {"imbalance": (bid_w - ask_w) / total if total > 0 else 0.0, "spread_bps": spread_bps,
+                "bid_ask_ratio": bid_w / ask_w if ask_w > 0 else 1.0}
     except Exception:
-        pass
-    return default
+        return default
 
 
 def fetch_all_kraken_futures():
@@ -653,7 +700,7 @@ def fetch_macro_calendar():
 
 
 # ==============================================================================
-# 5. INDICATORI TECNICI + EMULATORE `ta` (TA-Lib) & `qtpylib` PER FREQTRADE
+# 5. INDICATORI TECNICI + EMULATORE `ta` & `qtpylib`
 # ==============================================================================
 def calc_ema_series(values, period):
     if not values:
@@ -718,21 +765,6 @@ def calc_macd_hist_series(closes, fast=12, slow=26, signal=9):
     macd_line = [f - s for f, s in zip(ema_f, ema_s)]
     sig_line = calc_ema_series(macd_line, signal)
     return [m - s for m, s in zip(macd_line, sig_line)]
-
-
-def calc_bollinger_series(closes, period=20, mult=2.0):
-    n = len(closes)
-    pct_b_s = [0.5] * n
-    bw_s = [0.0] * n
-    for i in range(period - 1, n):
-        w = closes[i - period + 1:i + 1]
-        mid = sum(w) / period
-        std = statistics.pstdev(w)
-        upper, lower = mid + mult * std, mid - mult * std
-        c = closes[i]
-        pct_b_s[i] = (c - lower) / (upper - lower) if (upper - lower) > 0 else 0.5
-        bw_s[i] = (upper - lower) / mid if mid > 0 else 0.0
-    return pct_b_s, bw_s
 
 
 def calc_adx_series(candles, period=14):
@@ -916,8 +948,6 @@ def _to_series(df, values):
 
 
 class _TaLibEmulator:
-    """Emula `import talib.abstract as ta` di Freqtrade senza dipendenze C."""
-
     @staticmethod
     def RSI(df, timeperiod=14):
         return _to_series(df, calc_rsi_series(_df_col(df, "close"), timeperiod))
@@ -942,16 +972,6 @@ class _TaLibEmulator:
         return _to_series(df, adx_s)
 
     @staticmethod
-    def PLUS_DI(df, timeperiod=14):
-        _, pdi_s, _ = calc_adx_series(_df_candles(df), timeperiod)
-        return _to_series(df, pdi_s)
-
-    @staticmethod
-    def MINUS_DI(df, timeperiod=14):
-        _, _, mdi_s = calc_adx_series(_df_candles(df), timeperiod)
-        return _to_series(df, mdi_s)
-
-    @staticmethod
     def MACD(df, fastperiod=12, slowperiod=26, signalperiod=9):
         closes = _df_col(df, "close")
         ema_f = calc_ema_series(closes, fastperiod)
@@ -972,8 +992,6 @@ class _TaLibEmulator:
 
 
 class _QtpylibEmulator:
-    """Emula `import freqtrade.vendor.qtpylib.indicators as qtpylib`."""
-
     @staticmethod
     def crossed_above(series1, series2):
         if HAS_PANDAS and isinstance(series1, pd.Series):
@@ -1002,23 +1020,18 @@ qtpylib = _QtpylibEmulator()
 
 
 # ==============================================================================
-# 6. FREQAI ENGINE (10-Feature Matrix, Dissimilarity Index, Walk-Forward Ensemble)
+# 6. FREQAI v10 (Triple-Barrier Labeling + Dissimilarity Index + 4-Model Ensemble)
 # ==============================================================================
 def build_feature_matrix(candles_1h):
-    """Costruisce 10 feature normalizzate in stile FreqAI (RSI, EMA dist, MACD, Mom, Vol Z, Bar Pos,BB %B, ADX, DI diff, EMA50 dist)."""
     closes = [c["close"] for c in candles_1h]
     rsis = calc_rsi_series(closes, 14)
     ema20s = calc_ema_series(closes, 20)
-    ema50s = calc_ema_series(closes, 50)
     macds = calc_macd_hist_series(closes, 12, 26, 9)
     atrs = calc_atr_series(candles_1h, 14)
-    pct_bs, _ = calc_bollinger_series(closes, 20, 2.0)
-    adxs, pdis, mdis = calc_adx_series(candles_1h, 14)
-
     features = []
     for i in range(len(candles_1h)):
-        if i < 35:
-            features.append([0.0] * 10)
+        if i < 30:
+            features.append([0.0] * 6)
             continue
         c = closes[i]
         atr = max(atrs[i], c * 0.001)
@@ -1031,29 +1044,51 @@ def build_feature_matrix(candles_1h):
         mv, sv = sum(v_win) / len(v_win), statistics.pstdev(v_win)
         f5 = clamp((candles_1h[i]["volume"] - mv) / sv if sv > 0 else 0.0, -2.5, 2.5)
         rng = max(candles_1h[i]["high"] - candles_1h[i]["low"], 1e-8)
-        f6 = ((c - candles_1h[i]["low"]) / rng) * 2.0 - 1.0
-        f7 = clamp((pct_bs[i] - 0.5) * 2.0, -2.5, 2.5)
-        f8 = clamp((adxs[i] - 25.0) / 20.0, -2.0, 2.5)
-        f9 = clamp((pdis[i] - mdis[i]) / 30.0, -2.5, 2.5)
-        f10 = clamp((c - ema50s[i]) / (3.0 * atr), -2.5, 2.5)
-        features.append([f1, f2, f3, f4, f5, f6, f7, f8, f9, f10])
+        f6 = ((c - candles[i - 1]) / atr) if i > 0 else (((c - candles_1h[i]["low"]) / rng) * 2.0 - 1.0)
+        features.append([f1, f2, f3, f4, f5, clamp(f6, -2.5, 2.5)])
     return features
 
 
-def lorentzian_knn_predict(candles_1h, features, horizon=4, k=18):
+def build_triple_barrier_labels(candles_1h, horizon=5, tp_atr_mult=1.35, sl_atr_mult=1.0):
+    """
+    Triple-Barrier Labeling (Marcos López de Prado):
+    Etichetta 1.0 se nei successivi `horizon` periodi il prezzo tocca il Take-Profit
+    prima dello Stop-Loss; 0.0 se tocca prima lo Stop-Loss.
+    """
+    n = len(candles_1h)
+    closes = [c["close"] for c in candles_1h]
+    highs = [c["high"] for c in candles_1h]
+    lows = [c["low"] for c in candles_1h]
+    atrs = calc_atr_series(candles_1h, 14)
+    labels = [0.5] * n
+    for i in range(30, n - horizon - 1):
+        entry = closes[i]
+        risk = max(atrs[i] * 1.10, entry * 0.009)
+        tp = entry + tp_atr_mult * risk
+        sl = entry - sl_atr_mult * risk
+        outcome = None
+        for h in range(1, horizon + 1):
+            if lows[i + h] <= sl:
+                outcome = 0.0
+                break
+            if highs[i + h] >= tp:
+                outcome = 1.0
+                break
+        if outcome is None:
+            outcome = 1.0 if closes[i + horizon] > entry + 0.15 * risk else 0.0
+        labels[i] = outcome
+    return labels
+
+
+def lorentzian_knn_predict(candles_1h, features, tb_labels, horizon=5, k=18):
     n = len(candles_1h)
     if n < 120:
         return 0.50
-    closes = [c["close"] for c in candles_1h]
-    atrs = calc_atr_series(candles_1h, 14)
     curr_x = features[-1]
     candidates = []
     for i in range(35, n - horizon - 1):
         dist = sum(math.log(1.0 + abs(a - b)) for a, b in zip(curr_x, features[i]))
-        future_ret = closes[i + horizon] - closes[i]
-        threshold = 0.15 * atrs[i]
-        label = 1.0 if future_ret > threshold else (0.0 if future_ret < -threshold else 0.5)
-        candidates.append((dist, label))
+        candidates.append((dist, tb_labels[i]))
     candidates.sort(key=lambda x: x[0])
     nearest = candidates[:k]
     if not nearest:
@@ -1066,15 +1101,11 @@ def lorentzian_knn_predict(candles_1h, features, horizon=4, k=18):
     return clamp(ws / wt if wt > 0 else 0.50, 0.05, 0.95)
 
 
-def online_mlp_neural_net(candles_1h, features, horizon=4, epochs=35, lr=0.045):
-    """Ritorna (prob, holdout_acc) con shrinkage verso 0.5 se il modello non batte il baseline sul 25% piu' recente."""
+def online_mlp_neural_net(candles_1h, features, tb_labels, horizon=5, epochs=35, lr=0.045):
     n = len(candles_1h)
     if n < 120:
         return 0.50, 0.50
-    closes = [c["close"] for c in candles_1h]
-    dataset = []
-    for i in range(max(35, n - 320), n - horizon - 1):
-        dataset.append((features[i], 1.0 if closes[i + horizon] > closes[i] else 0.0))
+    dataset = [(features[i], tb_labels[i]) for i in range(max(35, n - 320), n - horizon - 1)]
     if len(dataset) < 60:
         return 0.50, 0.50
 
@@ -1105,49 +1136,13 @@ def online_mlp_neural_net(candles_1h, features, horizon=4, epochs=35, lr=0.045):
                     W1[j][i] -= step_lr * (dh * x[i] + 0.001 * W1[j][i])
             b2 -= step_lr * dz2
 
-    hits = sum(1 for x, y in hold if (forward(x)[0] > 0.5) == (y == 1.0))
+    hits = sum(1 for x, y in hold if (forward(x)[0] > 0.5) == (y >= 0.5))
     acc = hits / len(hold)
-    up_rate = sum(y for _, y in hold) / len(hold)
+    up_rate = sum(1.0 for _, y in hold if y >= 0.5) / len(hold)
     edge = acc - max(up_rate, 1.0 - up_rate)
-    shrink = clamp(edge / 0.06, 0.0, 1.0)
+    shrink = clamp(edge / 0.06, 0.15, 1.0)
     raw = forward(features[-1])[0]
     return clamp(0.5 + (raw - 0.5) * shrink, 0.05, 0.95), acc
-
-
-def walk_forward_gbdt_predict(candles_1h, features, horizon=4):
-    """HistGradientBoostingClassifier con Walk-Forward Validation (75% train / 25% holdout) e shrinkage anti-overfitting."""
-    if not HAS_SKLEARN or len(candles_1h) < 140:
-        return None, 0.50
-    try:
-        closes = [c["close"] for c in candles_1h]
-        start_idx = max(35, len(candles_1h) - 360)
-        end_idx = len(candles_1h) - horizon - 1
-        X_all = features[start_idx:end_idx]
-        y_all = [1 if closes[i + horizon] > closes[i] else 0 for i in range(start_idx, end_idx)]
-        if len(X_all) < 80:
-            return None, 0.50
-
-        split = int(len(X_all) * 0.75)
-        X_tr, y_tr = np.array(X_all[:split]), np.array(y_all[:split])
-        X_ho, y_ho = np.array(X_all[split:]), np.array(y_all[split:])
-        if len( set(y_tr) ) < 2:
-            return None, 0.50
-
-        clf_val = HistGradientBoostingClassifier(max_depth=3, max_iter=45, min_samples_leaf=15, l2_regularization=1.5, random_state=42)
-        clf_val.fit(X_tr, y_tr)
-        preds_ho = clf_val.predict(X_ho)
-        acc = float(np.mean(preds_ho == y_ho))
-        up_rate = float(np.mean(y_ho))
-        edge = acc - max(up_rate, 1.0 - up_rate)
-        shrink = clamp(edge / 0.06, 0.15, 1.0)
-
-        # Ri-addestra su tutta la finestra walk-forward per la predizione live
-        clf_full = HistGradientBoostingClassifier(max_depth=3, max_iter=45, min_samples_leaf=15, l2_regularization=1.5, random_state=42)
-        clf_full.fit(np.array(X_all), np.array(y_all))
-        raw_prob = float(clf_full.predict_proba(np.array([features[-1]]))[0][1])
-        return clamp(0.5 + (raw_prob - 0.5) * shrink, 0.05, 0.95), acc
-    except Exception:
-        return None, 0.50
 
 
 def monte_carlo_Barrier_sim(candles_1h, curr_price, tp_price, sl_price, paths=350, horizon_bars=10):
@@ -1177,18 +1172,12 @@ def monte_carlo_Barrier_sim(candles_1h, curr_price, tp_price, sl_price, paths=35
 
 
 class FreqAIEngine:
-    """
-    Motore FreqAI: esegue feature engineering, calcola il Dissimilarity Index (DI_values),
-    addestra l'ensemble Walk-Forward (MLP + GradientBoosting + Lorentzian k-NN + Monte Carlo)
-    e popola le colonne predittive (`do_predict`, `&-up_prob`).
-    """
-
     def __init__(self, config):
         self.config = config
         self.freqai_cfg = config.get("freqai", {})
         self.fp = self.freqai_cfg.get("feature_parameters", {})
-        self.di_threshold = float(self.fp.get("DI_threshold", 2.35))
-        self.horizon = int(self.fp.get("label_period_candles", 4))
+        self.di_threshold = float(self.fp.get("DI_threshold", 2.2))
+        self.horizon = int(self.fp.get("label_period_candles", 5))
 
     def start(self, dataframe, metadata, strategy):
         candles_1h = metadata["candles_1h"]
@@ -1199,6 +1188,8 @@ class FreqAIEngine:
         dataframe = strategy.set_freqai_targets(dataframe, metadata=metadata)
 
         features = build_feature_matrix(candles_1h)
+        tb_labels = build_triple_barrier_labels(candles_1h, horizon=self.horizon)
+
         curr_x = features[-1]
         hist_x = features[max(35, len(features) - 160):-1]
         if hist_x:
@@ -1208,13 +1199,20 @@ class FreqAIEngine:
             di_val = 0.5
         do_predict = 1 if di_val <= self.di_threshold else 0
 
-        prob_knn = lorentzian_knn_predict(candles_1h, features, horizon=self.horizon, k=18)
-        prob_mlp, mlp_acc = online_mlp_neural_net(candles_1h, features, horizon=self.horizon, epochs=35, lr=0.045)
-        prob_gbdt, gbdt_acc = walk_forward_gbdt_predict(candles_1h, features, horizon=self.horizon)
+        prob_knn = lorentzian_knn_predict(candles_1h, features, tb_labels, horizon=self.horizon, k=18)
+        prob_mlp, mlp_acc = online_mlp_neural_net(candles_1h, features, tb_labels, horizon=self.horizon, epochs=35, lr=0.045)
 
-        if prob_gbdt is not None:
-            prob_mlp = 0.55 * prob_mlp + 0.45 * prob_gbdt
-            mlp_acc = max(mlp_acc, gbdt_acc)
+        if HAS_SKLEARN and len(candles_1h) >= 140:
+            try:
+                X_all = np.array(features[35:-self.horizon - 1])
+                y_all = np.array([1 if tb_labels[i] >= 0.5 else 0 for i in range(35, len(candles_1h) - self.horizon - 1)])
+                if len(set(y_all)) > 1:
+                    clf = HistGradientBoostingClassifier(max_depth=3, max_iter=55, random_state=42)
+                    clf.fit(X_all, y_all)
+                    prob_sk = float(clf.predict_proba(np.array([curr_x]))[0][1])
+                    prob_mlp = 0.60 * prob_mlp + 0.40 * prob_sk
+            except Exception:
+                pass
 
         prob_mc = monte_carlo_Barrier_sim(
             candles_1h, metadata["price"], metadata["tp_price"], metadata["sl_price"], paths=300, horizon_bars=10
@@ -1237,18 +1235,37 @@ class FreqAIEngine:
 
         metadata["freqai_result"] = {
             "ai_prob": ai_ensemble_prob, "prob_mlp": prob_mlp, "prob_knn": prob_knn,
-            "prob_mc": prob_mc, "mlp_holdout_acc": mlp_acc, "di_values": round(di_val, 2),
+            "prob_mc": prob_mc, "mlp_holdout_acc": mlp_acc, "di_values": di_val,
             "do_predict": do_predict, "tm_stats": tm_stats,
         }
         return dataframe
 
 
 # ==============================================================================
-# 7. ARCHITETTURA FREQTRADE: `Trade`, `Protections`, `IStrategy`
+# 7. PARAMETRI HYPEROPT E INTERFACCIA FREQTRADE `IStrategy` v3
 # ==============================================================================
+class IntParameter:
+    """Compatibile con `freqtrade.strategy.IntParameter` per Hyperopt."""
+    def __init__(self, low: int, high: int, default: int, space: str = "buy", optimize: bool = True):
+        self.low = low
+        self.high = high
+        self.value = default
+        self.space = space
+        self.optimize = optimize
+
+
+class DecimalParameter:
+    """Compatibile con `freqtrade.strategy.DecimalParameter` per Hyperopt."""
+    def __init__(self, low: float, high: float, default: float, decimals: int = 2, space: str = "buy", optimize: bool = True):
+        self.low = low
+        self.high = high
+        self.value = round(default, decimals)
+        self.space = space
+        self.optimize = optimize
+
+
 @dataclass
 class Trade:
-    """Oggetto `Trade` compatibile con i callback `custom_stoploss` e `custom_exit` di Freqtrade."""
     pair: str
     coin_code: str
     open_rate: float
@@ -1265,6 +1282,7 @@ class Trade:
     breakeven_locked: bool = False
     tp1_locked: bool = False
     tp2_locked: bool = False
+    partial_tp_done: bool = False
     alerts_triggered: list = field(default_factory=list)
 
     def calc_profit_ratio(self, rate: float) -> float:
@@ -1275,29 +1293,22 @@ class Trade:
 
 
 class IStrategy:
-    """Classe base compatibile con `freqtrade.strategy.IStrategy` (INTERFACE_VERSION = 3)."""
     INTERFACE_VERSION: int = 3
     timeframe: str = "1h"
     informative_timeframe: str = "4h"
     detail_timeframe: str = "15m"
-
-    minimal_roi: dict = {
-        "0": 0.025,
-        "270": 0.0035,
-    }
+    minimal_roi: dict = {"0": 0.025, "270": 0.0035}
     stoploss: float = -0.020
     trailing_stop: bool = True
     use_custom_stoploss: bool = True
     use_exit_signal: bool = True
+    position_adjustment_enable: bool = True
     process_only_new_candles: bool = True
     startup_candle_count: int = 60
 
     def __init__(self, config: dict):
         self.config = config
         self.freqai = FreqAIEngine(config)
-
-    def informative_pairs(self):
-        return [(c["pionex"], self.informative_timeframe) for c in COINS]
 
     def feature_engineering_expand_all(self, dataframe, period: int, metadata: dict, **kwargs):
         return dataframe
@@ -1328,6 +1339,10 @@ class IStrategy:
                     current_rate: float, current_profit: float, **kwargs):
         return None
 
+    def adjust_trade_position(self, trade: Trade, current_time: datetime, current_rate: float,
+                              current_profit: float, min_stake: float, max_stake: float, **kwargs):
+        return None
+
     def custom_stake_amount(self, pair: str, current_time: datetime, current_rate: float,
                             proposed_stake: float, min_stake: float, max_stake: float,
                             leverage: float, entry_tag: str, side: str, **kwargs) -> float:
@@ -1347,16 +1362,18 @@ class IStrategy:
 
 
 class PionexFreqAIStrategy(IStrategy):
-    """Strategia Fast-Scalp v10.0 con FreqAI Walk-Forward, BTC Regime Filter e Anti-Slippage Guard."""
     INTERFACE_VERSION = 3
     timeframe = "1h"
-    minimal_roi = {
-        "0": 0.025,
-        "270": 0.0035,
-    }
+    minimal_roi = {"0": 0.025, "270": 0.0035}
     stoploss = -0.020
     trailing_stop = True
     use_custom_stoploss = True
+    position_adjustment_enable = True
+
+    # Hyperopt Parameters (Freqtrade Standard)
+    buy_score_min = IntParameter(50, 72, default=Entry_Raw_100_Min, space="buy")
+    buy_ai_prob_min = DecimalParameter(0.48, 0.65, default=0.50, decimals=2, space="buy")
+    sell_score_defensive = IntParameter(2, 4, default=3, space="sell")
 
     @property
     def protections(self):
@@ -1367,13 +1384,11 @@ class PionexFreqAIStrategy(IStrategy):
             {"method": "MaxDrawdown", "lookback_period": 1440, "max_allowed_drawdown": DAILY_MAX_LOSS_PCT / 100.0},
         ]
 
-    # 1. FREQAI FEATURE ENGINEERING
     def feature_engineering_expand_all(self, dataframe, period: int, metadata: dict, **kwargs):
         if HAS_PANDAS and isinstance(dataframe, pd.DataFrame):
             dataframe[f"%-rsi-period_{period}"] = ta.RSI(dataframe, timeperiod=period)
             dataframe[f"%-ema-period_{period}"] = ta.EMA(dataframe, timeperiod=period)
             dataframe[f"%-atr-period_{period}"] = ta.ATR(dataframe, timeperiod=period)
-            dataframe[f"%-adx-period_{period}"] = ta.ADX(dataframe, timeperiod=period)
         return dataframe
 
     def feature_engineering_expand_basic(self, dataframe, metadata: dict, **kwargs):
@@ -1397,7 +1412,6 @@ class PionexFreqAIStrategy(IStrategy):
             dataframe["&-s_close"] = (dataframe["close"].shift(-horizon) - dataframe["close"]) / dataframe["close"]
         return dataframe
 
-    # 2. POPULATE INDICATORS
     def populate_indicators(self, dataframe, metadata: dict):
         candles_1h = metadata["candles_1h"]
         candles_4h = metadata["candles_4h"]
@@ -1447,7 +1461,6 @@ class PionexFreqAIStrategy(IStrategy):
         metadata["sl_price"] = sl_price
         metadata["tp_price"] = tp_price
 
-        # Esecuzione motore FreqAI
         dataframe = self.freqai.start(dataframe, metadata, self)
         fai = metadata["freqai_result"]
         ai_ensemble_prob = fai["ai_prob"]
@@ -1455,7 +1468,21 @@ class PionexFreqAIStrategy(IStrategy):
 
         scanner_timer = skill_chart_scanner_entry_timer(candles_15m, vol_z, ob["imbalance"])
 
-        # A. Trend Multi-Timeframe (max 25)
+        # Aggiorna il Regime Globale di BTC quando viene analizzato BTC
+        if metadata["code"] == "BTC":
+            ret_1h = ((closes_15m[-1] - closes_15m[-4]) / closes_15m[-4] * 100.0) if len(closes_15m) >= 5 else 0.0
+            vwap_btc = scanner_timer["vwap_15m"]
+            is_dump = (rsi_15m < 32.0 and ret_1h < -1.1) or (vwap_btc > 0 and price < vwap_btc * 0.987 and ob["imbalance"] < -0.10)
+            is_bull = price >= ema20_1h and rsi_15m >= 52.0 and ret_1h >= 0.0
+            BTC_REGIME.update({
+                "state": "BTC_DUMP_GUARD" if is_dump else ("BULL_IMPULSE" if is_bull else "NEUTRAL"),
+                "rsi_15m": round(rsi_15m, 1),
+                "ret_1h_pct": round(ret_1h, 2),
+                "allow_alts": not is_dump,
+                "label": "🚨 BTC Dump Guard (Altcoin Bloccate)" if is_dump else ("🟢 BTC Bull Impulse" if is_bull else "⚪ BTC Neutrale / Range"),
+            })
+
+        # A. Trend (max 25)
         score_trend = 0
         if price > ema50_4h:
             score_trend += 8
@@ -1469,7 +1496,7 @@ class PionexFreqAIStrategy(IStrategy):
             score_trend += 8
         score_trend = clamp(score_trend, 0, 25)
 
-        # B. FreqAI + Time Machine (max 25)
+        # B. FreqAI Triple-Barrier + Time Machine (max 25)
         ai_pts = round(clamp((ai_ensemble_prob - 0.35) / 0.35, 0.0, 1.0) * 18.0)
         tm_pts = 7 if (tm_stats["win_rate"] >= 52.0 and tm_stats["expectancy_r"] > 0.05) else (4 if tm_stats["win_rate"] >= 46.0 else 2)
         score_ai = clamp(ai_pts + tm_pts, 0, 25)
@@ -1490,7 +1517,7 @@ class PionexFreqAIStrategy(IStrategy):
             score_mom += 4
         score_mom = clamp(score_mom, 0, 20)
 
-        # D. Microstruttura Orderbook L2 & POC (max 15)
+        # D. Microstruttura (max 15)
         score_micro = 0
         imb = ob["imbalance"]
         if imb > 0.12:
@@ -1523,9 +1550,6 @@ class PionexFreqAIStrategy(IStrategy):
         raw_100 = score_trend + score_ai + score_mom + score_micro + score_macro
         final_score = clamp(int(round(raw_100 / 10.0)), 1, 10)
 
-        # Check estensione anti-FOMO (distanza da EMA20 1h in multipli di ATR)
-        overextended = (price - ema20_1h) > (2.2 * atr_1h) if atr_1h > 0 else False
-
         if HAS_PANDAS and isinstance(dataframe, pd.DataFrame):
             dataframe["rsi"] = rsi_1h_series
             dataframe["ema20"] = calc_ema_series(closes_1h, 20)
@@ -1537,12 +1561,11 @@ class PionexFreqAIStrategy(IStrategy):
 
         metadata["eval"] = {
             "coin": metadata["coin_cfg"], "code": metadata["code"], "price": price,
-            "sl_price": sl_price, "tp_price": tp_price, "atr_1h": atr_1h, "atr_pct": atr_pct,
-            "ema20_1h": ema20_1h, "ema50_1h": ema50_1h, "overextended": overextended,
-            "raw_100": raw_100, "final_score": final_score, "score_trend": score_trend,
-            "score_ai": score_ai, "score_mom": score_mom, "score_micro": score_micro,
-            "score_macro": score_macro, "ai_prob": ai_ensemble_prob, "prob_mlp": fai["prob_mlp"],
-            "prob_knn": fai["prob_knn"], "prob_mc": fai["prob_mc"],
+            "ref_close_15m": closes_15m[-1], "sl_price": sl_price, "tp_price": tp_price,
+            "atr_1h": atr_1h, "atr_pct": atr_pct, "raw_100": raw_100, "final_score": final_score,
+            "score_trend": score_trend, "score_ai": score_ai, "score_mom": score_mom,
+            "score_micro": score_micro, "score_macro": score_macro, "ai_prob": ai_ensemble_prob,
+            "prob_mlp": fai["prob_mlp"], "prob_knn": fai["prob_knn"], "prob_mc": fai["prob_mc"],
             "mlp_holdout_acc": fai["mlp_holdout_acc"], "di_values": fai["di_values"],
             "do_predict": fai["do_predict"], "rsi_1h": rsi_1h, "rsi_4h": rsi_4h,
             "rsi_15m": rsi_15m, "rsi_15m_prev": rsi_15m_prev, "adx_1h": adx_1h,
@@ -1553,17 +1576,17 @@ class PionexFreqAIStrategy(IStrategy):
         }
         return dataframe
 
-    # 3. POPULATE ENTRY TREND
     def populate_entry_trend(self, dataframe, metadata: dict):
         ev = metadata["eval"]
+        btc_ok = True if ev["code"] == "BTC" else BTC_REGIME.get("allow_alts", True)
         cond = (
-            ev["final_score"] >= Entry_Score_Min
-            and ev["raw_100"] >= Entry_Raw_100_Min
-            and ev["ai_prob"] >= 0.50
+            btc_ok
+            and ev["final_score"] >= Entry_Score_Min
+            and ev["raw_100"] >= self.buy_score_min.value
+            and ev["ai_prob"] >= self.buy_ai_prob_min.value
             and ev["scanner_timer"]["triggered"]
-            and ev.get("do_predict", 1) == 1
         )
-        tag = f"freqai_s{ev['raw_100']}_ai{int(ev['ai_prob'] * 100)}"
+        tag = f"freqai_tb_{ev['raw_100']}_ai_{int(ev['ai_prob'] * 100)}"
         if HAS_PANDAS and isinstance(dataframe, pd.DataFrame):
             dataframe["enter_long"] = 0
             dataframe["enter_tag"] = ""
@@ -1574,10 +1597,9 @@ class PionexFreqAIStrategy(IStrategy):
         ev["enter_tag"] = tag if cond else ""
         return dataframe
 
-    # 4. POPULATE EXIT TREND
     def populate_exit_trend(self, dataframe, metadata: dict):
         ev = metadata["eval"]
-        cond = ev["final_score"] <= 3 and ev["ai_prob"] < 0.40
+        cond = ev["final_score"] <= self.sell_score_defensive.value and ev["ai_prob"] < 0.40
         tag = f"⚠️ USCITA DIFENSIVA AI (Score {ev['code']} sceso a {ev['final_score']}/10)"
         if HAS_PANDAS and isinstance(dataframe, pd.DataFrame):
             dataframe["exit_long"] = 0
@@ -1589,21 +1611,48 @@ class PionexFreqAIStrategy(IStrategy):
         ev["exit_tag"] = tag if cond else ""
         return dataframe
 
-    # 5. CONFIRM TRADE ENTRY (Protezione Anti-Slippage e Anti-FOMO prima dell'ordine Market)
+    def custom_stake_amount(self, pair: str, current_time: datetime, current_rate: float,
+                            proposed_stake: float, min_stake: float, max_stake: float,
+                            leverage: float, entry_tag: str, side: str, **kwargs) -> float:
+        """Dynamic Kelly / Confidence Scaling entro i limiti di sicurezza."""
+        ev = kwargs.get("ev", {})
+        ai_prob = ev.get("ai_prob", 0.55)
+        do_predict = ev.get("do_predict", 1)
+        mult = clamp(0.85 + (ai_prob - 0.50) * 1.0, 0.80, 1.05)
+        if not do_predict:
+            mult *= 0.85
+        stake = min(proposed_stake * mult, max_stake)
+        return max(stake, min_stake) if max_stake >= min_stake else max_stake
+
     def confirm_trade_entry(self, pair: str, order_type: str, amount: float, rate: float,
                             time_in_force: str, current_time: datetime, entry_tag: str,
                             side: str, **kwargs) -> bool:
+        """Filtro Anti-Slippage e Spread prima dell'invio dell'ordine Market."""
         ev = kwargs.get("ev", {})
         spread_bps = ev.get("ob", {}).get("spread_bps", 5.0)
-        if spread_bps > MAX_SPREAD_BPS:
-            log("WARN", f"confirm_trade_entry rifiutato su {pair}: spread troppo alto ({spread_bps:.1f} bps > {MAX_SPREAD_BPS})")
+        ref_close = ev.get("ref_close_15m", rate)
+        if spread_bps > 25.0:
+            log("WARN", f"confirm_trade_entry rifiutato su {pair}: spread troppo alto ({spread_bps:.1f} bps)")
             return False
-        if ev.get("overextended", False):
-            log("WARN", f"confirm_trade_entry rifiutato su {pair}: prezzo iper-esteso (> 2.2x ATR sopra EMA20)")
+        if ref_close > 0 and (rate - ref_close) / ref_close > 0.015:
+            log("WARN", f"confirm_trade_entry rifiutato su {pair}: spike improvviso +{(rate/ref_close - 1)*100:.2f}% sopra close 15m")
             return False
         return True
 
-    # 6. CUSTOM STOPLOSS (Trailing R-Multiple + Protezione Anomalia FreqAI DI_values)
+    def adjust_trade_position(self, trade: Trade, current_time: datetime, current_rate: float,
+                              current_profit: float, min_stake: float, max_stake: float, **kwargs):
+        """
+        Scale-Out Parziale Freqtrade: a +1.15R incassa il 50% della posizione se ambedue le meta'
+        superano il minimo ordine di Pionex (~10.5 USDT).
+        """
+        if not PARTIAL_TP_ENABLED or trade.partial_tp_done:
+            return None
+        current_r = (current_rate - trade.open_rate) / trade.one_r if trade.one_r > 0 else 0.0
+        current_val_usdt = trade.amount * current_rate
+        if current_r >= 1.15 and current_val_usdt >= 2.25 * min_stake:
+            return -(trade.stake_amount * 0.50)  # Negativo in Freqtrade = riduzione parziale (Scale-Out 50%)
+        return None
+
     def custom_stoploss(self, pair: str, trade: Trade, current_time: datetime,
                         current_rate: float, current_profit: float, after_fill: bool = False, **kwargs) -> float:
         open_eval = kwargs.get("open_eval", {})
@@ -1614,14 +1663,10 @@ class PionexFreqAIStrategy(IStrategy):
         be_fee_price = round(entry * (1.0 + (PIONEX_FEE_ROUNDTRIP_PCT + 0.05) / 100.0), 6)
         trail_msg = ""
 
-        # Se FreqAI rileva un'anomalia (do_predict == 0) e siamo in profitto, blinda subito a Break-Even
-        freqai_anomaly_lock = (open_eval.get("do_predict", 1) == 0 and current_r >= 0.35)
+        # Se BTC entra in Dump Guard e siamo in leggero profitto su un'altcoin, blinda subito il Break-Even
+        btc_dump_lock = (trade.coin_code != "BTC" and not BTC_REGIME.get("allow_alts", True) and current_r >= 0.35)
 
-        if not trade.breakeven_locked and (
-            current_r >= 0.65
-            or (current_rate >= entry * 1.0055 and open_eval.get("rsi_15m", 50.0) >= 66.0)
-            or freqai_anomaly_lock
-        ):
+        if not trade.breakeven_locked and (current_r >= 0.65 or btc_dump_lock or (current_rate >= entry * 1.0055 and open_eval.get("rsi_15m", 50.0) >= 66.0)):
             if sl < be_fee_price:
                 sl = be_fee_price
             trade.breakeven_locked = True
@@ -1655,7 +1700,6 @@ class PionexFreqAIStrategy(IStrategy):
         trade.trail_msg = trail_msg
         return sl
 
-    # 7. CUSTOM EXIT
     def custom_exit(self, pair: str, trade: Trade, current_time: datetime,
                     current_rate: float, current_profit: float, **kwargs):
         open_eval = kwargs.get("open_eval", {})
@@ -1686,28 +1730,8 @@ STRATEGY = PionexFreqAIStrategy(FREQTRADE_CONFIG)
 
 
 # ==============================================================================
-# 8. SKILL OPERATIVE, BTC REGIME GUARD E PROTECTIONS
+# 8. SKILL OPERATIVE E PROTECTIONS
 # ==============================================================================
-def update_btc_market_regime(all_evals):
-    """Valuta BTC_USDT come informative pair globale: blocca acquisti altcoin durante dump violenti di BTC."""
-    btc_ev = all_evals.get("BTC")
-    if not btc_ev or btc_ev.get("fallback"):
-        return
-    p = btc_ev["price"]
-    ema50 = btc_ev.get("ema50_1h", p)
-    rsi_1h = btc_ev.get("rsi_1h", 50.0)
-    rsi_15m = btc_ev.get("rsi_15m", 50.0)
-    above_ema50 = p >= ema50 * 0.995
-    dump_guard = (not above_ema50 and rsi_1h < 39.0 and rsi_15m < 35.0) or (btc_ev["final_score"] <= 3 and btc_ev["ai_prob"] < 0.42)
-    state_lbl = "BEARISH_DUMP" if dump_guard else ("BULLISH" if (above_ema50 and rsi_1h >= 50.0) else "NEUTRAL")
-    BTC_REGIME.update({
-        "state": state_lbl,
-        "rsi_1h": round(rsi_1h, 1),
-        "above_ema50": above_ema50,
-        "dump_guard": dump_guard,
-    })
-
-
 def skill_time_machine_backtest(candles_1h, features, horizon_bars=6):
     if len(candles_1h) < 120:
         return {"win_rate": 55.0, "expectancy_r": 0.25, "matches": 12}
@@ -1780,11 +1804,7 @@ def skill_chart_scanner_entry_timer(candles_15m, vol_z_1h, ob_imbalance):
 
 
 def skill_budget_and_risk_manager(invest_eur, eur_usd, entry_price, sl_price, tp_price, state, macro_high_soon, code=None, ev=None):
-    """Wallets + Freqtrade Protections + BTC Regime Guard + Confirm Trade Entry Checks."""
-    base_usdt = invest_eur * eur_usd
-    # Auto-compounding prudente sui profitti accumulati nello stato (fino a max 1.5x del capitale iniziale)
-    compounded_usdt = clamp(base_usdt + max(0.0, state["stats"].get("total_pnl_usdt", 0.0)), base_usdt, base_usdt * 1.5)
-    total_usdt = compounded_usdt
+    total_usdt = invest_eur * eur_usd
     cash_buffer_usdt = total_usdt * (CASH_BUFFER_PCT / 100.0)
     usable_usdt = total_usdt - cash_buffer_usdt
 
@@ -1794,14 +1814,16 @@ def skill_budget_and_risk_manager(invest_eur, eur_usd, entry_price, sl_price, tp
     rr_ratio = (tp_dist_pct - fee_rt) / (sl_dist_pct + fee_rt) if sl_dist_pct > 0 else 0.0
 
     risk_usdt = total_usdt * (RISK_PER_TRADE_PCT / 100.0)
-    position_usdt = risk_usdt / ((sl_dist_pct + fee_rt) / 100.0) if sl_dist_pct > 0 else usable_usdt
-    position_usdt = min(position_usdt, usable_usdt)
-    if usable_usdt >= MIN_ORDER_USDT:
-        position_usdt = max(position_usdt, MIN_ORDER_USDT)
+    proposed_usdt = risk_usdt / ((sl_dist_pct + fee_rt) / 100.0) if sl_dist_pct > 0 else usable_usdt
+    now = datetime.now(timezone.utc)
+    position_usdt = STRATEGY.custom_stake_amount(
+        pair=f"{code}_USDT" if code else "SOL_USDT", current_time=now, current_rate=entry_price,
+        proposed_stake=proposed_usdt, min_stake=MIN_ORDER_USDT, max_stake=usable_usdt,
+        leverage=1.0, entry_tag="", side="long", ev=ev or {}
+    )
     max_loss_usdt = position_usdt * ((sl_dist_pct + fee_rt) / 100.0)
     expected_gain_usdt = position_usdt * ((tp_dist_pct - fee_rt) / 100.0)
 
-    now = datetime.now(timezone.utc)
     now_ts = int(now.timestamp())
     stats = state["stats"]
     today_str = now.strftime("%Y-%m-%d")
@@ -1814,6 +1836,8 @@ def skill_budget_and_risk_manager(invest_eur, eur_usd, entry_price, sl_price, tp
         reasons.append(f"Capitale utilizzabile {usable_usdt:.2f} USDT < minimo ordine")
     if rr_ratio < MIN_REWARD_RISK_R:
         reasons.append(f"R:R netto basso ({rr_ratio:.2f}x < {MIN_REWARD_RISK_R}x)")
+    if code and code != "BTC" and not BTC_REGIME.get("allow_alts", True):
+        reasons.append("BTC Dump Guard attivo (protezione crollo BTC 15m)")
     if stats.get("daily_pnl_pct", 0.0) <= -DAILY_MAX_LOSS_PCT:
         reasons.append(f"Circuit Breaker Giornaliero ({stats['daily_pnl_pct']:+.2f}% del capitale)")
     if stats.get("daily_trades", 0) >= MAX_TRADES_PER_DAY:
@@ -1822,15 +1846,6 @@ def skill_budget_and_risk_manager(invest_eur, eur_usd, entry_price, sl_price, tp
         reasons.append(f"{MAX_CONSEC_LOSSES} stop consecutivi: stop per oggi")
     if macro_high_soon:
         reasons.append("News Macro USD High Impact imminente (<2h)")
-    if code and code != "BTC" and BTC_REGIME.get("dump_guard", False):
-        reasons.append(f"BTC in Dump Guard (RSI 1h={BTC_REGIME['rsi_1h']})")
-    if ev is not None:
-        if ev.get("do_predict", 1) == 0:
-            reasons.append(f"FreqAI Outlier (DI={ev.get('di_values', 0):.2f} > {STRATEGY.freqai.di_threshold})")
-        if ev.get("ob", {}).get("spread_bps", 0.0) > MAX_SPREAD_BPS:
-            reasons.append(f"Spread elevato ({ev['ob']['spread_bps']:.1f} bps)")
-        if ev.get("overextended", False):
-            reasons.append("Prezzo iper-esteso (>2.2x ATR da EMA20)")
     if not (ENTRY_START_UTC <= now.hour < ENTRY_END_UTC):
         reasons.append(f"Fuori finestra operativa {ENTRY_START_UTC:02d}-{ENTRY_END_UTC:02d} UTC")
     last_close = stats.get("last_close_ts", 0)
@@ -1879,7 +1894,7 @@ def skill_nyse_bell_and_session():
 
 
 # ==============================================================================
-# 9. VALUTAZIONE SINGOLA COIN TRAMITE `IStrategy` + `FreqAI`
+# 9. VALUTAZIONE COIN (BTC Analizzato per Primo per il Regime Filter)
 # ==============================================================================
 def evaluate_coin(coin_cfg, futures_map, fng_val, macro_events):
     code, pair = coin_cfg["code"], coin_cfg["kraken"]
@@ -1887,7 +1902,7 @@ def evaluate_coin(coin_cfg, futures_map, fng_val, macro_events):
     candles_1h = drop_unfinished(fetch_kraken_ohlc(pair, interval=60), 3600)
     candles_15m = drop_unfinished(fetch_kraken_ohlc(pair, interval=15), 900)
     candles_4h = build_4h_from_1h(candles_1h)
-    ob = fetch_orderbook(coin_cfg, count=50)
+    ob = fetch_kraken_orderbook(pair, count=50)
 
     if len(candles_1h) < 60 or len(candles_4h) < 30 or len(candles_15m) < 30:
         return None
@@ -1899,17 +1914,9 @@ def evaluate_coin(coin_cfg, futures_map, fng_val, macro_events):
 
     dataframe = candles_to_dataframe(candles_1h)
     metadata = {
-        "pair": coin_cfg["pionex"],
-        "code": code,
-        "coin_cfg": coin_cfg,
-        "price": price,
-        "candles_1h": candles_1h,
-        "candles_4h": candles_4h,
-        "candles_15m": candles_15m,
-        "ob": ob,
-        "fut": fut,
-        "fng_val": fng_val,
-        "macro_events": macro_events,
+        "pair": coin_cfg["pionex"], "code": code, "coin_cfg": coin_cfg, "price": price,
+        "candles_1h": candles_1h, "candles_4h": candles_4h, "candles_15m": candles_15m,
+        "ob": ob, "fut": fut, "fng_val": fng_val, "macro_events": macro_events,
     }
 
     dataframe = STRATEGY.populate_indicators(dataframe, metadata)
@@ -1922,13 +1929,12 @@ def make_fallback_eval(coin_cfg, pos):
     px = LIVE_PX.get(coin_cfg["pionex"])
     price = px or pos.get("entry_price", 0.0)
     return {
-        "coin": coin_cfg, "code": coin_cfg["code"], "price": price,
+        "coin": coin_cfg, "code": coin_cfg["code"], "price": price, "ref_close_15m": price,
         "sl_price": pos.get("sl_price", 0.0), "tp_price": pos.get("tp_price", 0.0),
         "atr_1h": 0.0, "atr_pct": 0.0, "raw_100": 0, "final_score": 5, "ai_prob": 0.5,
         "prob_mlp": 0.5, "prob_knn": 0.5, "prob_mc": 0.5, "mlp_holdout_acc": 0.5,
-        "di_values": 0.5, "do_predict": 1, "overextended": False,
         "rsi_1h": 50.0, "rsi_4h": 50.0, "rsi_15m": 50.0, "rsi_15m_prev": 50.0,
-        "ob": {"imbalance": 0.0, "spread_bps": 0.0, "bid_ask_ratio": 1.0, "source": "FALLBACK"},
+        "ob": {"imbalance": 0.0, "spread_bps": 0.0, "bid_ask_ratio": 1.0},
         "tm_stats": {"win_rate": 50.0, "expectancy_r": 0.0, "matches": 0},
         "scanner_timer": {"triggered": False, "triggers": 0, "vwap_15m": 0.0, "summary": "Dati non disponibili"},
         "high_soon": False, "c15_recent": [], "stale": not bool(px), "fallback": True,
@@ -1938,21 +1944,33 @@ def make_fallback_eval(coin_cfg, pos):
 
 def scan_all_coins(coins, futures_map, fng_val, macro_events):
     results = {}
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        future_to_code = {executor.submit(evaluate_coin, cfg, futures_map, fng_val, macro_events): cfg["code"] for cfg in coins}
-        for future in as_completed(future_to_code):
-            code = future_to_code[future]
-            try:
-                res = future.result()
-                if res:
-                    results[code] = res
-            except Exception as e:
-                log("WARN", f"Errore analisi {code}: {e}")
+    # Analizza sempre BTC per primo per popolare BTC_REGIME prima di valutare le altcoin
+    btc_cfg = COIN_MAP.get("BTC")
+    if btc_cfg and any(c["code"] == "BTC" for c in coins):
+        try:
+            btc_res = evaluate_coin(btc_cfg, futures_map, fng_val, macro_events)
+            if btc_res:
+                results["BTC"] = btc_res
+        except Exception as e:
+            log("WARN", f"Errore analisi BTC: {e}")
+
+    rem_coins = [c for c in coins if c["code"] not in results]
+    if rem_coins:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            future_to_code = {executor.submit(evaluate_coin, cfg, futures_map, fng_val, macro_events): cfg["code"] for cfg in rem_coins}
+            for future in as_completed(future_to_code):
+                code = future_to_code[future]
+                try:
+                    res = future.result()
+                    if res:
+                        results[code] = res
+                except Exception as e:
+                    log("WARN", f"Errore analisi {code}: {e}")
     return results
 
 
 # ==============================================================================
-# 10. MOTORE AUTONOMO (FreqtradeBot Execution Loop)
+# 10. MOTORE AUTONOMO + SCALE-OUT + TICK GUARDIAN REAL-TIME
 # ==============================================================================
 def entry_conditions(ev):
     rm = ev.get("risk_manager")
@@ -1967,15 +1985,14 @@ def entry_conditions(ev):
 def _finalize_close(state, open_code, coin_cfg, curr_price, close_reason, close, alerts_fired, now_str, now_ts, capital_usdt):
     pos, stats = state["position"], state["stats"]
     entry = pos["entry_price"]
-    invested = pos["invested_usdt"]
-    pnl_usdt = close["pnl_usdt"]
-    net_pnl_pct = (pnl_usdt / invested) * 100.0 if invested > 0 else 0.0
+    partial_pnl = float(pos.get("realized_partial_usdt", 0.0))
+    total_pnl_usdt = close["pnl_usdt"] + partial_pnl
+    orig_invested = pos["invested_usdt"] * (2.0 if pos.get("partial_tp_done") else 1.0)
+    net_pnl_pct = (total_pnl_usdt / orig_invested) * 100.0 if orig_invested > 0 else 0.0
     exit_price = close.get("exit_price", curr_price)
-    max_rate = max(pos.get("highest_price", entry), exit_price)
-    mfe_pct = ((max_rate - entry) / entry) * 100.0 if entry > 0 else 0.0
 
     stats["total_trades"] += 1
-    if pnl_usdt >= 0:
+    if total_pnl_usdt >= 0:
         stats["wins"] += 1
         stats["consec_losses"] = 0
     else:
@@ -1983,24 +2000,25 @@ def _finalize_close(state, open_code, coin_cfg, curr_price, close_reason, close,
         stats["consec_losses"] = stats.get("consec_losses", 0) + 1
         stats["last_loss_ts"] = now_ts
     stats["total_pnl_pct"] = round(stats["total_pnl_pct"] + net_pnl_pct, 2)
-    stats["total_pnl_usdt"] = round(stats["total_pnl_usdt"] + pnl_usdt, 2)
-    stats["daily_pnl_usdt"] = round(stats.get("daily_pnl_usdt", 0.0) + pnl_usdt, 2)
-    stats["daily_pnl_pct"] = round(stats.get("daily_pnl_pct", 0.0) + (pnl_usdt / capital_usdt) * 100.0, 2)
+    stats["total_pnl_usdt"] = round(stats["total_pnl_usdt"] + total_pnl_usdt, 2)
+    stats["daily_pnl_usdt"] = round(stats.get("daily_pnl_usdt", 0.0) + total_pnl_usdt, 2)
+    stats["daily_pnl_pct"] = round(stats.get("daily_pnl_pct", 0.0) + (total_pnl_usdt / capital_usdt) * 100.0, 2)
     stats["last_close_ts"] = now_ts
     stats.setdefault("coin_last_close", {})[open_code] = now_ts
     stats["last_action"] = f"CHIUSO {open_code} ({net_pnl_pct:+.2f}%) il {now_str}"
 
     state.setdefault("history", []).insert(0, {
         "coin": open_code, "entry": entry, "exit": exit_price, "pnl_pct": round(net_pnl_pct, 2),
-        "pnl_usdt": round(pnl_usdt, 2), "mfe_pct": round(mfe_pct, 2),
-        "reason": close_reason, "closed_at": now_str, "mode": pos.get("mode", "SIMULATION")})
+        "pnl_usdt": round(total_pnl_usdt, 2), "reason": close_reason, "closed_at": now_str, "mode": pos.get("mode", "SIMULATION")})
     state["history"] = state["history"][:25]
     pos["is_open"] = False
     pos["close_fail_count"] = 0
+    pos["partial_tp_done"] = False
+    pos["realized_partial_usdt"] = 0.0
     save_state(state)
     return {"action_state": "CLOSED_NOW", "headline": f"🔔 POSIZIONE {open_code} CHIUSA AUTOMATICAMENTE",
-            "detail": f"{close_reason} | PnL Netto: {net_pnl_pct:+.2f}% ({pnl_usdt:+.2f} USDT) | Picco MFE: +{mfe_pct:.2f}% | {close['msg']}",
-            "pnl_pct": net_pnl_pct, "pnl_usdt": pnl_usdt, "current_r": 0.0, "alerts_fired": alerts_fired}
+            "detail": f"{close_reason} | PnL Netto Totale: {net_pnl_pct:+.2f}% ({total_pnl_usdt:+.2f} USDT) | {close['msg']}",
+            "pnl_pct": net_pnl_pct, "pnl_usdt": total_pnl_usdt, "current_r": 0.0, "alerts_fired": alerts_fired}
 
 
 def _manage_open_position(state, all_evals, capital_usdt, now_str, now_ts):
@@ -2008,7 +2026,8 @@ def _manage_open_position(state, all_evals, capital_usdt, now_str, now_ts):
     open_code = pos.get("coin_code", "SOL")
     coin_cfg = COIN_MAP.get(open_code, COINS[0])
     open_eval = all_evals[open_code]
-    curr_price = open_eval["price"]
+    curr_price = LIVE_PX.get(coin_cfg["pionex"]) or open_eval["price"]
+    open_eval["price"] = curr_price
     entry, sl, tp = pos["entry_price"], pos["sl_price"], pos["tp_price"]
     one_r = pos.get("one_r") or max(entry - pos.get("initial_sl", sl), entry * 0.009)
     opened_ts = pos.get("opened_ts") or now_ts
@@ -2024,7 +2043,7 @@ def _manage_open_position(state, all_evals, capital_usdt, now_str, now_ts):
                 return _finalize_close(state, open_code, coin_cfg, curr_price, "🧾 CHIUSA ESTERNAMENTE (saldo coin assente)",
                                        close, alerts_fired, now_str, now_ts, capital_usdt)
 
-    if open_eval.get("stale"):
+    if open_eval.get("stale") and not LIVE_PX.get(coin_cfg["pionex"]):
         save_state(state)
         return {"action_state": "HOLDING", "headline": f"⚠️ {open_code}: PREZZO NON DISPONIBILE",
                 "detail": "Analisi e ticker non raggiungibili: gestione SL/TP sospesa fino al prossimo giro.",
@@ -2041,29 +2060,39 @@ def _manage_open_position(state, all_evals, capital_usdt, now_str, now_ts):
     sl_at_start = sl
 
     est_proceeds = pos["amount_coin"] * curr_price * (1 - FEE_PCT_PER_SIDE / 100.0)
-    pnl_usdt_live = est_proceeds - pos["invested_usdt"]
-    net_pnl_pct = (pnl_usdt_live / pos["invested_usdt"]) * 100.0 if pos["invested_usdt"] > 0 else 0.0
+    pnl_usdt_live = est_proceeds - pos["invested_usdt"] + float(pos.get("realized_partial_usdt", 0.0))
+    orig_inv = pos["invested_usdt"] * (2.0 if pos.get("partial_tp_done") else 1.0)
+    net_pnl_pct = (pnl_usdt_live / orig_inv) * 100.0 if orig_inv > 0 else 0.0
     current_r = (curr_price - entry) / one_r if one_r > 0 else 0.0
 
     now_dt = datetime.fromtimestamp(now_ts, tz=timezone.utc)
     trade = Trade(
-        pair=coin_cfg["pionex"],
-        coin_code=open_code,
-        open_rate=entry,
-        amount=pos["amount_coin"],
-        stake_amount=pos["invested_usdt"],
+        pair=coin_cfg["pionex"], coin_code=open_code, open_rate=entry,
+        amount=pos["amount_coin"], stake_amount=pos["invested_usdt"],
         open_date_utc=datetime.fromtimestamp(opened_ts, tz=timezone.utc),
-        stop_loss=sl,
-        initial_stop_loss=pos.get("initial_sl", sl),
-        take_profit=tp,
-        one_r=one_r,
-        max_rate=highest,
+        stop_loss=sl, initial_stop_loss=pos.get("initial_sl", sl),
+        take_profit=tp, one_r=one_r, max_rate=highest,
         enter_tag=pos.get("enter_tag", "freqai_fastscalp"),
         breakeven_locked=pos.get("breakeven_locked", False),
         tp1_locked=pos.get("tp1_locked", False),
         tp2_locked=pos.get("tp2_locked", False),
+        partial_tp_done=pos.get("partial_tp_done", False),
         alerts_triggered=list(pos.get("alerts_triggered", [])),
     )
+
+    # Check Scale-Out Parziale (`adjust_trade_position`)
+    adj = STRATEGY.adjust_trade_position(
+        trade=trade, current_time=now_dt, current_rate=curr_price,
+        current_profit=net_pnl_pct / 100.0, min_stake=MIN_ORDER_USDT, max_stake=capital_usdt
+    )
+    if adj is not None and adj < 0 and not pos.get("partial_tp_done"):
+        part = live_sell(pos, coin_cfg, curr_price, fraction=0.5)
+        if part["ok"]:
+            pos["amount_coin"] = max(0.0, pos["amount_coin"] - part["sold_qty"])
+            pos["invested_usdt"] = pos["invested_usdt"] * 0.5
+            pos["partial_tp_done"] = True
+            pos["realized_partial_usdt"] = round(float(pos.get("realized_partial_usdt", 0.0)) + part["pnl_usdt"], 4)
+            alerts_fired.append(f"💰 Scale-Out 50% eseguito a {fmt_price(curr_price)} ({part['pnl_usdt']:+.2f} USDT incassati)")
 
     prev_alerts_len = len(trade.alerts_triggered)
     sl = STRATEGY.custom_stoploss(
@@ -2075,7 +2104,7 @@ def _manage_open_position(state, all_evals, capital_usdt, now_str, now_ts):
     pos["tp1_locked"] = trade.tp1_locked
     pos["tp2_locked"] = trade.tp2_locked
     pos["alerts_triggered"] = [a for a in trade.alerts_triggered if a == "R190"]
-    alerts_fired = [a for a in trade.alerts_triggered[prev_alerts_len:] if a != "R190"]
+    alerts_fired.extend([a for a in trade.alerts_triggered[prev_alerts_len:] if a != "R190"])
     trail_msg = getattr(trade, "trail_msg", "")
 
     close_reason = None
@@ -2092,7 +2121,7 @@ def _manage_open_position(state, all_evals, capital_usdt, now_str, now_ts):
         )
 
     if close_reason:
-        close = live_sell(pos, coin_cfg, curr_price)
+        close = live_sell(pos, coin_cfg, curr_price, fraction=1.0)
         if not close["ok"]:
             pos["close_fail_count"] = pos.get("close_fail_count", 0) + 1
             pos["last_check_ts"] = now_ts
@@ -2113,15 +2142,7 @@ def _manage_open_position(state, all_evals, capital_usdt, now_str, now_ts):
 
 
 def _try_open_position(state, ranked_evals, now_str, now_ts):
-    now_dt = datetime.fromtimestamp(now_ts, tz=timezone.utc)
-    candidates = [
-        ev for ev in ranked_evals
-        if entry_conditions(ev) and STRATEGY.confirm_trade_entry(
-            pair=ev["coin"]["pionex"], order_type="market", amount=ev["risk_manager"]["position_usdt"],
-            rate=ev["price"], time_in_force="GTC", current_time=now_dt,
-            entry_tag=ev.get("enter_tag", ""), side="long", ev=ev
-        )
-    ]
+    candidates = [ev for ev in ranked_evals if entry_conditions(ev)]
 
     if not candidates:
         save_state(state)
@@ -2141,7 +2162,18 @@ def _try_open_position(state, ranked_evals, now_str, now_ts):
                 "pnl_pct": 0.0, "pnl_usdt": 0.0, "current_r": 0.0, "alerts_fired": []}
 
     best = candidates[0]
-    return _execute_open(state, best, round(best["risk_manager"]["position_usdt"], 2), now_str, now_ts)
+    now_dt = datetime.fromtimestamp(now_ts, tz=timezone.utc)
+    usdt = round(best["risk_manager"]["position_usdt"], 2)
+    if not STRATEGY.confirm_trade_entry(
+        pair=best["coin"]["pionex"], order_type="market", amount=usdt / max(best["price"], 1e-8),
+        rate=best["price"], time_in_force="GTC", current_time=now_dt,
+        entry_tag=best.get("enter_tag", ""), side="long", ev=best
+    ):
+        return {"action_state": "WAITING", "headline": f"🛡️ INGRESSO {best['code']} SOSPESO (Filtro Anti-Slippage)",
+                "detail": f"Segnale su {best['code']} presente ma spread/spike eccessivo negli ultimi secondi. Riprovo al prossimo tick.",
+                "pnl_pct": 0.0, "pnl_usdt": 0.0, "current_r": 0.0, "alerts_fired": []}
+
+    return _execute_open(state, best, usdt, now_str, now_ts)
 
 
 def _execute_open(state, ev, usdt, now_str, now_ts, label="FAST-SCALP"):
@@ -2163,7 +2195,8 @@ def _execute_open(state, ev, usdt, now_str, now_ts, label="FAST-SCALP"):
         "is_open": True, "coin_code": code, "symbol": coin_cfg["pionex"], "entry_price": entry,
         "amount_coin": buy["amount_coin"], "invested_usdt": buy["invested_usdt"], "sl_price": sl_price,
         "tp_price": tp_price, "initial_sl": sl_price, "one_r": one_r, "highest_price": entry,
-        "breakeven_locked": False, "tp1_locked": False, "tp2_locked": False, "alerts_triggered": [],
+        "breakeven_locked": False, "tp1_locked": False, "tp2_locked": False,
+        "partial_tp_done": False, "realized_partial_usdt": 0.0, "alerts_triggered": [],
         "opened_at": now_str, "opened_ts": now_ts, "last_check_ts": now_ts, "close_fail_count": 0,
         "mode": buy["mode"], "order_id": buy.get("order_id", "SIM"),
         "enter_tag": ev.get("enter_tag") or f"freqai_{label.lower()}"})
@@ -2177,7 +2210,6 @@ def _execute_open(state, ev, usdt, now_str, now_ts, label="FAST-SCALP"):
 
 
 def run_manual_command(state, all_evals, eur_usd, command, coin, usdt_req):
-    """Comandi d'emergenza: ignorano filtri, finestra oraria, cooldown e circuit breaker."""
     pos = state["position"]
     now_dt = datetime.now(timezone.utc)
     now_str, now_ts = now_dt.strftime("%d/%m %H:%M UTC"), int(now_dt.timestamp())
@@ -2190,8 +2222,8 @@ def run_manual_command(state, all_evals, eur_usd, command, coin, usdt_req):
     def close_registered():
         code = pos["coin_code"]
         cfg = COIN_MAP.get(code, COINS[0])
-        price = all_evals[code]["price"]
-        close = live_sell(pos, cfg, price)
+        price = LIVE_PX.get(cfg["pionex"]) or all_evals[code]["price"]
+        close = live_sell(pos, cfg, price, fraction=1.0)
         if not close["ok"]:
             pos["close_fail_count"] = pos.get("close_fail_count", 0) + 1
             save_state(state)
@@ -2202,7 +2234,7 @@ def run_manual_command(state, all_evals, eur_usd, command, coin, usdt_req):
 
     if command == "close":
         if not pos["is_open"]:
-            return noop("Nessuna posizione registrata nel bot. Se hai coin sul conto usa 'sell_all' indicando la coin, oppure chiudi dall'app Pionex.")
+            return noop("Nessuna posizione registrata nel bot. Se hai coin sul conto usa '/sellall COIN' su Telegram o dalla Console.")
         return close_registered()
 
     if command == "sell_all":
@@ -2214,7 +2246,7 @@ def run_manual_command(state, all_evals, eur_usd, command, coin, usdt_req):
         if not pionex_live_enabled():
             return noop("Vendita totale possibile solo in modalita' LIVE (AUTO_TRADE_ENABLED=true e chiavi presenti).")
         price = LIVE_PX.get(cfg["pionex"]) or (all_evals.get(coin) or {}).get("price", 0.0)
-        close = live_sell({"mode": "LIVE_PIONEX", "amount_coin": 1e12, "invested_usdt": 0.0}, cfg, price)
+        close = live_sell({"mode": "LIVE_PIONEX", "amount_coin": 1e12, "invested_usdt": 0.0}, cfg, price, fraction=1.0)
         if not close["ok"]:
             return {"action_state": "CLOSE_FAILED", "headline": f"🚨 VENDITA TOTALE {coin} FALLITA",
                     "detail": f"{close['msg']} | Vendi a mano dall'app Pionex!", "pnl_pct": 0.0, "pnl_usdt": 0.0,
@@ -2230,8 +2262,11 @@ def run_manual_command(state, all_evals, eur_usd, command, coin, usdt_req):
             return noop(f"C'e' gia' una posizione aperta su {pos['coin_code']}: chiudila prima.")
         ev = all_evals.get(coin)
         if not ev or ev.get("fallback"):
+            ev = evaluate_coin(COIN_MAP[coin], {}, 50, []) if coin in COIN_MAP else None
+        if not ev:
             return noop(f"Analisi di '{coin}' non disponibile: impossibile calcolare SL/TP. Riprova.")
-        usdt = usdt_req if usdt_req > 0 else ev["risk_manager"]["position_usdt"]
+        rm = ev.get("risk_manager") or skill_budget_and_risk_manager(INVEST_EUR, eur_usd, ev["price"], ev["sl_price"], ev["tp_price"], state, False, coin, ev)
+        usdt = usdt_req if usdt_req > 0 else rm["position_usdt"]
         usdt = min(usdt, capital_usdt * (1 - CASH_BUFFER_PCT / 100.0))
         if usdt < MIN_ORDER_USDT:
             return noop(f"Importo {usdt:.2f} USDT sotto il minimo ordine ({MIN_ORDER_USDT}).")
@@ -2249,6 +2284,22 @@ def manage_autonomous_trading(state, ranked_evals, all_evals, eur_usd):
     return _try_open_position(state, ranked_evals, now_str, now_ts)
 
 
+def trigger_self_chain_dispatch():
+    """Se una posizione resta aperta a fine job, riavvia automaticamente il workflow GitHub per guardia continua."""
+    if not SELF_CHAIN_WHEN_OPEN or not GITHUB_TOKEN or not GITHUB_REPO:
+        return
+    try:
+        r = SESSION.post(
+            f"https://api.github.com/repos/{GITHUB_REPO}/dispatches",
+            headers={"Authorization": f"Bearer {GITHUB_TOKEN}", "Accept": "application/vnd.github+json"},
+            json={"event_type": "tick"}, timeout=8
+        )
+        if r.status_code == 204:
+            log("INFO", "Self-Chain Dispatch inviato: il prossimo ciclo partira' automaticamente per presidiare la posizione aperta.")
+    except Exception as e:
+        log("WARN", f"Self-Chain Dispatch non inviato: {e}")
+
+
 # ==============================================================================
 # 11. WEB CONSOLE (index.html)
 # ==============================================================================
@@ -2260,12 +2311,12 @@ def build_manual_action_advisor(state, best_eval, all_evals, trade_status):
         pnl, curr_r = trade_status["pnl_pct"], trade_status["current_r"]
         if ev["final_score"] <= 4 or ev["ai_prob"] < 0.44:
             return {"badge": "⚠️ CONSIGLIO MANUALE: VALUTA CHIUSURA ANTICIPATA", "color": "#f59e0b", "bg": "rgba(245,158,11,0.14)",
-                    "instruction": f"Il punteggio di {code} si sta indebolendo ({ev['final_score']}/10, FreqAI {ev['ai_prob'] * 100:.1f}%). Se operi manualmente su Pionex, valuta di chiudere o stringere lo Stop-Loss."}
+                    "instruction": f"Il punteggio di {code} si sta indebolendo ({ev['final_score']}/10, FreqAI {ev['ai_prob'] * 100:.1f}%). Puoi chiudere anche scrivendo /close su Telegram."}
         if pnl >= SCALP_MIN_NET_PROFIT_PCT:
-            return {"badge": "💰 POSIZIONE IN ZONA SCALP PROFIT", "color": "#10b981", "bg": "rgba(16,185,129,0.14)",
-                    "instruction": f"La posizione su {code} e' in profitto netto ({pnl:+.2f}% / {curr_r:+.2f}R). Il bot incassera' automaticamente al primo segnale di inversione 15m o al raggiungimento del TP ({fmt_price(pos['tp_price'])})."}
-        return {"badge": "✅ MANTIENI POSIZIONE (HOLD)", "color": "#38bdf8", "bg": "rgba(56,189,248,0.14)",
-                "instruction": f"Posizione aperta su {code} (PnL netto {pnl:+.2f}%). Mantieni attiva la protezione con Stop-Loss a {fmt_price(pos['sl_price'])} e Take-Profit a {fmt_price(pos['tp_price'])}."}
+            return {"badge": "💰 POSIZIONE IN ZONA SCALP PROFIT (GUARDIA CONTINUA ATTIVA)", "color": "#10b981", "bg": "rgba(16,185,129,0.14)",
+                    "instruction": f"La posizione su {code} e' in profitto netto ({pnl:+.2f}% / {curr_r:+.2f}R). Il Tick Guardian controlla il prezzo ogni {GUARDIAN_TICK_SEC}s per incassare al TP ({fmt_price(pos['tp_price'])}) o su inversione."}
+        return {"badge": "✅ MANTIENI POSIZIONE (HOLD · TICK GUARDIAN ATTIVO)", "color": "#38bdf8", "bg": "rgba(56,189,248,0.14)",
+                "instruction": f"Posizione aperta su {code} (PnL netto {pnl:+.2f}%). Protezione attiva con Stop-Loss a {fmt_price(pos['sl_price'])} e Take-Profit a {fmt_price(pos['tp_price'])}."}
 
     if trade_status.get("action_state") in ("ENTRY_FAILED", "CLOSE_FAILED"):
         return {"badge": "🚨 ERRORE ESECUZIONE ORDINE", "color": "#ef4444", "bg": "rgba(239,68,68,0.14)",
@@ -2275,12 +2326,12 @@ def build_manual_action_advisor(state, best_eval, all_evals, trade_status):
     rm, tm = best_eval["risk_manager"], best_eval["scanner_timer"]
     if entry_conditions(best_eval):
         return {"badge": f"🚀 SEGNALE ATTIVO: APRI LONG SU {code}", "color": "#10b981", "bg": "rgba(16,185,129,0.15)",
-                "instruction": f"Tutti i semafori sono VERDI su {code} ({score}/10 - {raw_100}/100). Se operi manualmente su Pionex: Apri LONG Spot su {best_eval['coin']['pionex']} con {rm['position_usdt']:.2f} USDT, SL {fmt_price(best_eval['sl_price'])} e TP {fmt_price(best_eval['tp_price'])}."}
+                "instruction": f"Tutti i semafori sono VERDI su {code} ({score}/10 - {raw_100}/100). Budget consigliato {rm['position_usdt']:.2f} USDT, SL {fmt_price(best_eval['sl_price'])} e TP {fmt_price(best_eval['tp_price'])}."}
     if raw_100 >= 54:
         return {"badge": f"👀 QUASI PRONTO SU {code} ({raw_100}/100) - ATTENDI", "color": "#f59e0b", "bg": "rgba(245,158,11,0.14)",
-                "instruction": f"{code} e' vicino alla soglia di ingresso ({raw_100}/100), ma manca una conferma ({tm['summary']} | {rm['status_str']}). Attendi il prossimo segnale prima di entrare."}
+                "instruction": f"{code} e' vicino alla soglia di ingresso ({raw_100}/100), ma manca una conferma ({tm['summary']} | {rm['status_str']})."}
     return {"badge": "🛡️ RESTA FLAT IN USDT (NON APRIRE ORA)", "color": "#94a3b8", "bg": "rgba(148,163,184,0.12)",
-            "instruction": f"Nessuna delle 10 coin offre un vantaggio sufficiente in questo momento (Migliore: {code} con {raw_100}/100). Non aprire posizioni manuali."}
+            "instruction": f"Nessuna delle 10 coin offre un vantaggio sufficiente ora (Migliore: {code} con {raw_100}/100 | {BTC_REGIME['label']})."}
 
 
 def generate_webapp_html(ranked_evals, state, trade_status, fng_val, fng_class, session_str, eur_usd=1.08, macro_events=None):
@@ -2290,23 +2341,22 @@ def generate_webapp_html(ranked_evals, state, trade_status, fng_val, fng_class, 
 
     coins_payload = []
     for e in ranked_evals:
-        rm = e.get("risk_manager") or skill_budget_and_risk_manager(INVEST_EUR, eur_usd, e["price"], e["sl_price"], e["tp_price"], state, e["high_soon"], e["code"], ev=e)
+        rm = e.get("risk_manager") or skill_budget_and_risk_manager(INVEST_EUR, eur_usd, e["price"], e["sl_price"], e["tp_price"], state, e["high_soon"], e["code"], e)
         coins_payload.append({
             "code": e["code"], "name": e["coin"]["name"], "ws": e["coin"]["ws"], "kraken": e["coin"]["kraken"],
             "price": e["price"], "sl_price": e["sl_price"], "tp_price": e["tp_price"],
             "final_score": e["final_score"], "raw_100": e["raw_100"], "ai_prob": round(e["ai_prob"] * 100),
-            "di_val": e.get("di_values", 0.5), "spread_bps": round(e.get("ob", {}).get("spread_bps", 5.0), 1),
             "timer_summary": e["scanner_timer"]["summary"], "risk_ok": rm["passed"], "risk_status": rm["status_str"],
             "rr_ratio": round(rm["rr_ratio"], 2), "pos_usdt": round(rm["position_usdt"], 2), "entry_ok": entry_conditions(e)})
 
     macro = [{"title": ev["title"], "impact": ev["impact"], "ts": ev["ts"]} for ev in (macro_events or []) if "ts" in ev]
     payload = {
-        "updated_ts": int(now.timestamp()), "session": session_str, "fng_val": fng_val, "fng_class": fng_class,
-        "btc_regime": BTC_REGIME, "mode": "LIVE" if pionex_live_enabled() else "SIMULAZIONE", "advisor": advisor,
-        "waiting": trade_status["detail"] if trade_status.get("action_state") == "WAITING" else "",
+        "updated_ts": int(now.timestamp()), "session": session_str, "btc_regime": BTC_REGIME["label"],
+        "fng_val": fng_val, "fng_class": fng_class, "mode": "LIVE" if pionex_live_enabled() else "SIMULAZIONE",
+        "advisor": advisor, "waiting": trade_status["detail"] if trade_status.get("action_state") == "WAITING" else "",
         "position": state["position"], "stats": state["stats"], "history": state.get("history", []),
         "coins": coins_payload, "macro": macro, "macro_ok": bool(MACRO_STATUS.get("ok")),
-        "repo": os.getenv("GITHUB_REPOSITORY", ""), "workflow": "bot.yml", "ref": os.getenv("GITHUB_REF_NAME") or "main",
+        "repo": GITHUB_REPO, "workflow": "bot.yml", "ref": os.getenv("GITHUB_REF_NAME") or "main",
         "limits": {"max_trades": MAX_TRADES_PER_DAY, "daily_max_loss": DAILY_MAX_LOSS_PCT, "fee_rt": PIONEX_FEE_ROUNDTRIP_PCT}}
     payload_json = json.dumps(payload, ensure_ascii=False).replace("</", "<\\/")
 
@@ -2315,535 +2365,511 @@ def generate_webapp_html(ranked_evals, state, trade_status, fng_val, fng_class, 
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Pionex FreqAI Bot v10</title>
+<title>Pionex FreqAI v10 Bot</title>
 <style>
-  :root { --bg:#0b1220; --card:#121a2b; --line:#22304a; --text:#f1f5f9; --muted:#8fa0b8; --green:#22c55e; --red:#ef4444; --amber:#f59e0b; --blue:#38bdf8; }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); padding: 12px; max-width: 720px; margin: 0 auto; font-size: 15px; line-height: 1.4; }
-  h2 { font-size: 13px; letter-spacing: .6px; text-transform: uppercase; color: var(--muted); margin-bottom: 12px; font-weight: 700; }
-  .card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 16px; margin-bottom: 14px; }
-  .head { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
-  .title { font-size: 19px; font-weight: 800; }
-  .chips { display: flex; gap: 6px; flex-wrap: wrap; }
-  .chip { display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; white-space: nowrap; }
-  .g { background: rgba(34,197,94,.15); color: #4ade80; } .r { background: rgba(239,68,68,.15); color: #f87171; }
-  .a { background: rgba(245,158,11,.15); color: #fbbf24; } .b { background: rgba(56,189,248,.15); color: #7dd3fc; }
-  .n { background: rgba(143,160,184,.15); color: var(--muted); }
-  .banner { border-radius: 14px; padding: 12px 14px; margin-bottom: 14px; font-size: 15px; font-weight: 700; }
-  .warn { display: none; background: rgba(245,158,11,.15); border: 1px solid var(--amber); color: #fbbf24; border-radius: 12px; padding: 10px 12px; margin-bottom: 14px; font-size: 13.5px; font-weight: 600; }
-  .sub { color: var(--muted); font-size: 12.5px; font-weight: 400; }
-  .big { font-size: 38px; font-weight: 800; line-height: 1.05; }
-  .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin: 14px 0; }
-  .stat { background: #0d1626; border-radius: 12px; padding: 10px 12px; }
-  .stat small { display: block; color: var(--muted); font-size: 12px; }
-  .stat b { font-size: 16px; }
-  .bar { position: relative; height: 12px; border-radius: 8px; background: #1b2740; margin: 16px 0 6px; }
-  .fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 8px; transition: width .4s; }
-  .tick { position: absolute; top: -4px; bottom: -4px; width: 2px; background: #fff; opacity: .85; }
-  .scale { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); }
-  .btn { border: 1px solid var(--line); background: #16213a; color: var(--text); padding: 10px 14px; border-radius: 10px; font-size: 14px; font-weight: 700; cursor: pointer; text-decoration: none; display: inline-block; }
-  .btn.danger { background: rgba(239,68,68,.18); border-color: rgba(239,68,68,.6); color: #fca5a5; width: 100%; padding: 14px; font-size: 15px; margin-top: 4px; }
-  .empty { text-align: center; padding: 14px 4px; }
-  .empty b { display: block; font-size: 17px; margin: 6px 0; }
-  .sumrow { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 12px; }
-  .sumrow div { background: #0d1626; border-radius: 10px; padding: 8px; text-align: center; }
-  .sumrow small { display: block; color: var(--muted); font-size: 11px; }
-  .sumrow b { font-size: 14px; }
-  .h { padding: 11px 0; border-bottom: 1px solid var(--line); }
-  .h:last-child { border-bottom: none; }
-  .h-top { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
-  .h-res { text-align: right; font-weight: 800; }
-  .h-res small { display: block; font-weight: 500; font-size: 12px; }
-  .why { color: var(--muted); font-size: 12.5px; margin-top: 3px; }
-  .ev { display: flex; gap: 12px; align-items: center; padding: 9px 0; border-bottom: 1px solid var(--line); }
-  .ev:last-child { border-bottom: none; }
-  .evt { font-weight: 800; min-width: 46px; font-size: 15px; }
-  .evn { flex: 1; font-size: 14px; }
-  .day { font-size: 12px; color: var(--muted); text-transform: uppercase; margin: 12px 0 2px; font-weight: 700; }
-  table { width: 100%; border-collapse: collapse; font-size: 14px; }
-  th { text-align: left; color: var(--muted); font-size: 11px; text-transform: uppercase; padding: 6px 4px; }
-  td { padding: 9px 4px; border-top: 1px solid var(--line); }
-  tr.row { cursor: pointer; }
-  tr.drow { display: none; } tr.drow.open { display: table-row; }
-  tr.drow td { color: var(--muted); font-size: 12.5px; background: #0d1626; border-radius: 8px; }
-  details summary { cursor: pointer; font-weight: 700; font-size: 14px; }
-  .inp { background: #0b1220; color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 9px 10px; font-size: 14px; width: 100%; }
-  .flex { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
-  .flex > * { flex: 1; min-width: 120px; }
-  .note { font-size: 12px; color: var(--muted); margin-top: 10px; }
+      :root { --bg:#0b1220; --card:#121a2b; --line:#22304a; --text:#f1f5f9; --muted:#94a3b8; --green:#10b981; --red:#ef4444; --amber:#f59e0b; --blue:#38bdf8; }
+  * { box-sizing:border-box; margin:0; padding:0; font-family:system-ui,-apple-system,sans-serif; }
+  body { background:var(--bg); color:var(--text); padding:14px; max-width:960px; margin:0 auto; line-height:1.45; }
+  .top { display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:12px; }
+  .title { font-size:18px; font-weight:800; }
+  .sub { font-size:12px; color:var(--muted); }
+  .pill { font-size:11px; font-weight:700; padding:4px 9px; border-radius:999px; background:#1e293b; border:1px solid var(--line); }
+  .banner { padding:14px; border-radius:12px; border:1px solid var(--line); margin-bottom:12px; }
+  .banner-title { font-size:15px; font-weight:800; margin-bottom:4px; }
+  .banner-sub { font-size:13px; color:#cbd5e1; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px; margin-bottom:12px; }
+  .card-h { font-size:12px; font-weight:800; text-transform:uppercase; color:var(--muted); letter-spacing:0.6px; margin-bottom:10px; display:flex; justify-content:space-between; align-items:center; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:8px; }
+  .kv { background:#0f172a; padding:10px; border-radius:8px; border:1px solid #1e293b; }
+  .kv-l { font-size:11px; color:var(--muted); }
+  .kv-v { font-size:15px; font-weight:800; margin-top:2px; font-variant-numeric:tabular-nums; }
+  .tabs { display:flex; gap:6px; overflow-x:auto; padding-bottom:4px; margin-bottom:12px; }
+  .tab { background:#162033; border:1px solid var(--line); color:var(--text); padding:8px 11px; border-radius:9px; cursor:pointer; min-width:86px; text-align:left; }
+  .tab.active { border-color:var(--blue); background:#1a2b46; }
+  .tab-top { display:flex; justify-content:space-between; font-size:12px; font-weight:800; }
+  .tab-px { font-size:11px; color:var(--muted); margin-top:2px; font-variant-numeric:tabular-nums; }
+  .bar { height:8px; background:#0f172a; border-radius:99px; overflow:hidden; margin:8px 0 4px; position:relative; border:1px solid #1e293b; }
+  .bar > div { height:100%; transition:width .3s; }
+  table { width:100%; border-collapse:collapse; font-size:12px; }
+  th, td { padding:7px 6px; border-bottom:1px solid #1e293b; text-align:left; font-variant-numeric:tabular-nums; }
+  th { color:var(--muted); font-weight:700; font-size:11px; }
+  .btn { background:#1e293b; color:var(--text); border:1px solid #334155; padding:8px 12px; border-radius:8px; font-size:12px; font-weight:700; cursor:pointer; }
+  .btn:hover { filter:brightness(1.15); }
+  .btn-red { background:rgba(239,68,68,.18); border-color:#ef4444; color:#fca5a5; }
+  .btn-green { background:rgba(16,185,129,.18); border-color:#10b981; color:#6ee7b7; }
+  input, select { background:#0f172a; color:var(--text); border:1px solid #334155; padding:7px 9px; border-radius:8px; font-size:12px; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .muted { color:var(--muted); font-size:12px; }
+  .pos-green { color:var(--green); } .pos-red { color:var(--red); } .pos-amber { color:var(--amber); }
 </style>
 </head>
 <body>
 
-<div class="head">
-  <div class="title">🤖 Pionex FreqAI v10</div>
-  <div class="chips"><span id="mode" class="chip"></span><span id="btc-chip" class="chip"></span><span id="upd" class="chip"></span></div>
-</div>
-<div id="stale" class="warn">⚠️ Dati vecchi: il bot non risulta in esecuzione da piu' di 90 minuti. Controlla GitHub Actions.</div>
-<div id="banner" class="banner"></div>
-
-<div class="card" id="pos"></div>
-
-<div class="card">
-  <h2>📜 Storico posizioni chiuse</h2>
-  <div id="sum" class="sumrow"></div>
-  <div id="hist"></div>
+<div class="top">
+  <div>
+    <div class="title">⚡ Pionex Freqtrade + FreqAI v10 Engine</div>
+    <div class="sub" id="subline">Caricamento...</div>
+  </div>
+  <div class="row">
+    <span class="pill" id="ws-pill">🔴 Prezzi Live...</span>
+    <span class="pill" id="btc-pill">⚪ BTC</span>
+    <span class="pill" id="mode-pill">MODO</span>
+  </div>
 </div>
 
+<div class="banner" id="advisor">
+  <div class="banner-title" id="adv-title"></div>
+  <div class="banner-sub" id="adv-sub"></div>
+</div>
+
+<div class="card" id="pos-card"></div>
+
+<div class="tabs" id="coin-tabs"></div>
+
+<div class="card" id="coin-detail"></div>
+
 <div class="card">
-  <h2>📅 News e calendario (cosa valuta il bot)</h2>
-  <div id="macro-banner" class="banner" style="margin-bottom:10px;"></div>
-  <div id="macro-list"></div>
-  <div id="fng" class="sub" style="margin-top:12px;"></div>
-  <div class="note">Il bot non legge i titoli dei giornali: considera solo il calendario macro USD (impatto Alto e Medio) e l'indice Fear &amp; Greed. Con un evento ad impatto Alto sospende i nuovi acquisti da 2 ore prima a 30 minuti dopo.</div>
+  <div class="card-h"><span>🎛️ Controlli Manuali (GitHub Actions / Telegram)</span><button class="btn" onclick="toggleCfg()">⚙️ Token GitHub</button></div>
+  <div id="cfg-box" style="display:none; margin-bottom:10px;" class="row">
+    <input id="gh-token" type="password" placeholder="GitHub Personal Access Token (scope: workflow)" style="flex:1;min-width:220px;">
+    <button class="btn btn-green" onclick="saveToken()">Salva nel browser</button>
+    <span class="muted">oppure invia direttamente <code>/status</code>, <code>/close</code>, <code>/open SOL</code>, <code>/sellall SOL</code> al bot Telegram.</span>
+  </div>
+  <div class="row">
+    <button class="btn" onclick="dispatchCmd('status','',0)">🔄 Aggiorna Stato Ora</button>
+    <button class="btn btn-red" onclick="dispatchCmd('close','',0)">🛑 Chiudi Posizione Registrata</button>
+    <select id="man-coin"></select>
+    <input id="man-usdt" type="number" step="1" placeholder="USDT (0 = auto)" style="width:120px;">
+    <button class="btn btn-green" onclick="manualOpen()">🚀 Apri Long Manuale</button>
+    <button class="btn btn-red" onclick="manualSellAll()">🧹 Vendi Tutto Saldo Coin</button>
+  </div>
+  <div id="cmd-msg" class="muted" style="margin-top:8px;"></div>
 </div>
 
 <div class="card">
-  <h2>📡 Mercato: le 10 coin controllate (FreqAI + Pionex L2)</h2>
-  <table>
-    <thead><tr><th>Coin</th><th>Prezzo</th><th>Punteggio</th><th>Stato</th></tr></thead>
-    <tbody id="scan"></tbody>
-  </table>
-  <div class="note">Tocca una riga per i dettagli (DI_values FreqAI, Spread Pionex in bps, Stop/Target).</div>
+  <div class="card-h"><span>📊 Statistiche & Protezioni Giornaliere</span><span id="daily-tag"></span></div>
+  <div class="grid" id="stats-grid"></div>
 </div>
 
 <div class="card">
-  <details>
-    <summary>🚨 Controlli manuali / emergenza</summary>
-    <div class="note" style="margin-top:8px;">I comandi avviano il bot su GitHub (30-90 secondi) e ti arriva conferma su Telegram. Le chiavi Pionex restano nei Secrets.</div>
-    <div class="flex">
-      <select id="m-coin" class="inp"></select>
-      <input id="m-amt" class="inp" type="number" min="10" step="1" placeholder="USDT (vuoto = auto)">
-    </div>
-    <div class="flex">
-      <button class="btn" onclick="cmdOpen()">🚀 Apri long manuale</button>
-      <button class="btn" onclick="cmdSellAll()">💥 Vendi tutto il saldo della coin</button>
-    </div>
-    <div class="flex">
-      <button class="btn" onclick="setToken()">🔑 Imposta token GitHub</button>
-      <a class="btn" id="actions-link" target="_blank" rel="noopener">⚙️ GitHub Actions</a>
-      <a class="btn" href="https://www.pionex.com/" target="_blank" rel="noopener">📱 Pionex</a>
-    </div>
-    <div class="sub" style="margin-top:10px;">Token: <span id="tok-state"></span></div>
-    <div id="cmd-log" style="font-size:13px; margin-top:8px;"></div>
-  </details>
+  <div class="card-h"><span>📜 Storico Operazioni Recenti</span><span id="macro-tag"></span></div>
+  <div id="hist-box"></div>
 </div>
 
 <script>
-const DATA = __CONSOLE_PAYLOAD__;
-const live = {}; const wsMap = {};
-DATA.coins.forEach(c => { live[c.code] = c.price; wsMap[c.ws] = c.code; });
-const $ = id => document.getElementById(id);
+const D = __PAYLOAD_JSON__;
+const livePx = {};
+let selected = (D.position && D.position.is_open) ? D.position.coin_code : (D.coins[0]?.code || 'SOL');
 
-function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, m => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m])); }
-function fp(p) {
-  p = Number(p || 0);
-  if (p <= 0) return "$0.00";
-  if (p >= 1000) return "$" + p.toLocaleString("en-US", {minimumFractionDigits: 2, maximumFractionDigits: 2});
-  if (p >= 10) return "$" + p.toFixed(2);
-  if (p >= 1) return "$" + p.toFixed(3);
-  return "$" + p.toFixed(4);
+function fmtPx(p){
+  p = Number(p||0);
+  if(p<=0) return '$0.00';
+  if(p>=1000) return '$'+p.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+  if(p>=10) return '$'+p.toFixed(2);
+  if(p>=1) return '$'+p.toFixed(3);
+  return '$'+p.toFixed(4);
 }
-function sg(x) { return (x >= 0 ? "+" : "") + x.toFixed(2); }
-function ago(ts) {
-  const m = Math.max(0, Math.round((Date.now() / 1000 - ts) / 60));
-  if (m < 60) return m + " min fa";
-  return Math.floor(m / 60) + "h " + (m % 60) + "m fa";
-}
-function dur(ts) {
-  const m = Math.max(0, Math.round((Date.now() / 1000 - ts) / 60));
-  return m < 60 ? m + " min" : Math.floor(m / 60) + "h " + (m % 60) + "m";
-}
-function hm(ts) { return new Date(ts * 1000).toLocaleTimeString("it-IT", {hour: "2-digit", minute: "2-digit"}); }
-function dayLabel(ts) {
-  const d = new Date(ts * 1000), t = new Date(), tm = new Date(t.getTime() + 86400000);
-  if (d.toDateString() === t.toDateString()) return "Oggi";
-  if (d.toDateString() === tm.toDateString()) return "Domani";
-  return d.toLocaleDateString("it-IT", {weekday: "long", day: "numeric", month: "long"});
+function ageStr(ts){
+  const s = Math.max(0, Math.floor(Date.now()/1000 - ts));
+  if(s<60) return s+'s fa';
+  if(s<3600) return Math.floor(s/60)+'m fa';
+  return (s/3600).toFixed(1)+'h fa';
 }
 
-function renderHead() {
-  const age = (Date.now() / 1000 - DATA.updated_ts) / 60;
-  $("mode").className = "chip " + (DATA.mode === "LIVE" ? "r" : "b");
-  $("mode").textContent = DATA.mode === "LIVE" ? "LIVE · soldi reali" : "SIMULAZIONE";
-  const br = DATA.btc_regime || {state: "NEUTRAL"};
-  $("btc-chip").className = "chip " + (br.state === "BULLISH" ? "g" : (br.state === "BEARISH_DUMP" ? "r" : "n"));
-  $("btc-chip").textContent = "BTC: " + br.state;
-  $("upd").className = "chip " + (age > 90 ? "a" : "n");
-  $("upd").textContent = "Aggiornato " + ago(DATA.updated_ts);
-  $("stale").style.display = age > 90 ? "block" : "none";
-  const a = DATA.advisor, b = $("banner");
-  b.style.background = a.bg;
-  b.style.border = "1px solid " + a.color;
-  b.innerHTML = `<div style="color:${a.color}">${esc(a.badge)}</div><div class="sub" style="margin-top:4px;color:#cbd5e1;">${esc(a.instruction)}</div>`;
+function renderTop(){
+  document.getElementById('subline').textContent =
+    `Ultimo calcolo AI: ${ageStr(D.updated_ts)} · ${D.session} · Fear&Greed: ${D.fng_val} (${D.fng_class})`;
+  const mp = document.getElementById('mode-pill');
+  mp.textContent = D.mode === 'LIVE' ? '🟢 LIVE PIONEX' : '🧪 SIMULAZIONE';
+  mp.style.borderColor = D.mode === 'LIVE' ? '#10b981' : '#f59e0b';
+  const bp = document.getElementById('btc-pill');
+  bp.textContent = D.btc_regime || '⚪ BTC';
+
+  const adv = document.getElementById('advisor');
+  adv.style.background = D.advisor.bg;
+  adv.style.borderColor = D.advisor.color;
+  const t = document.getElementById('adv-title');
+  t.style.color = D.advisor.color;
+  t.textContent = D.advisor.badge;
+  document.getElementById('adv-sub').textContent = D.advisor.instruction + (D.waiting ? ' — ' + D.waiting : '');
 }
 
-function renderPosition() {
-  const p = DATA.position, el = $("pos");
-  if (!p.is_open) {
-    el.innerHTML = `<h2>📌 Posizione aperta</h2><div class="empty"><div style="font-size:30px;">⚪</div><b>Nessuna posizione aperta</b><div class="sub">Il capitale e' in USDT, il bot attende un segnale.</div>${DATA.waiting ? `<div class="sub" style="margin-top:8px;">${esc(DATA.waiting)}</div>` : ""}</div>`;
+function renderPosition(){
+  const box = document.getElementById('pos-card');
+  const p = D.position;
+  if(!p || !p.is_open){
+    box.innerHTML = `<div class="card-h"><span>💼 Posizione Attiva</span><span>FLAT (100% USDT)</span></div>
+      <div class="muted">${D.waiting || 'Nessuna posizione aperta. Il motore FreqAI v10 attende un setup ad alta probabilita\\'.'}</div>`;
     return;
   }
-  const prot = p.tp2_locked ? "Profitto blindato +1.45R" : (p.tp1_locked ? "Profitto blindato +1R" : (p.breakeven_locked ? "Break-even (non puoi perdere)" : "Stop iniziale"));
-  el.innerHTML = `
-    <h2>📌 Posizione aperta · ${esc(p.coin_code)} <span class="chip ${p.mode === "LIVE_PIONEX" ? "r" : "b"}">${p.mode === "LIVE_PIONEX" ? "REALE" : "SIM"}</span></h2>
-    <div id="pos-pnl" class="big">—</div>
-    <div id="pos-usdt" class="sub" style="font-size:14px;"></div>
-    <div class="bar"><div id="pos-fill" class="fill"></div><div id="pos-tick" class="tick"></div></div>
-    <div class="scale"><span>🛑 Stop ${fp(p.sl_price)}</span><span id="pos-now"></span><span>🎯 Target ${fp(p.tp_price)}</span></div>
-    <div class="grid">
-      <div class="stat"><small>Prezzo di ingresso</small><b>${fp(p.entry_price)}</b></div>
-      <div class="stat"><small>Investito</small><b>${p.invested_usdt.toFixed(2)} USDT</b></div>
-      <div class="stat"><small>Aperta da</small><b>${dur(p.opened_ts)}</b></div>
-      <div class="stat"><small>Protezione</small><b style="font-size:13px;">${prot}</b></div>
-    </div>
-    <button class="btn danger" onclick="cmdClose()">🛑 CHIUDI ORA A MERCATO</button>`;
-  updatePosLive();
-}
-
-function updatePosLive() {
-  const p = DATA.position;
-  if (!p.is_open || !$("pos-pnl")) return;
-  const cur = live[p.coin_code] || p.entry_price, entry = p.entry_price;
-  const net = ((cur - entry) / entry) * 100 - DATA.limits.fee_rt;
-  const usdt = p.invested_usdt * net / 100;
-  const oneR = p.one_r || Math.max(entry - p.initial_sl, entry * 0.009);
-  const r = (cur - entry) / oneR;
-  const col = net >= 0 ? "var(--green)" : "var(--red)";
-  $("pos-pnl").style.color = col;
-  $("pos-pnl").textContent = sg(net) + "%";
-  $("pos-usdt").textContent = sg(usdt) + " USDT · " + sg(r) + "R (al netto delle commissioni)";
+  const coin = D.coins.find(c=>c.code===p.coin_code) || {};
+  const cur = livePx[p.coin_code] || coin.price || p.entry_price;
+  const fee = (D.limits.fee_rt || 0.10) / 100;
+  const partialPnl = Number(p.realized_partial_usdt || 0);
+  const netPct = (((cur - p.entry_price) / p.entry_price) - fee) * 100;
+  const netUsdt = p.invested_usdt * (netPct / 100) + partialPnl;
+  const oneR = p.one_r || Math.max(p.entry_price - p.initial_sl, p.entry_price*0.01);
+  const rMult = (cur - p.entry_price) / oneR;
   const span = Math.max(p.tp_price - p.sl_price, 1e-9);
-  const pc = x => Math.max(0, Math.min(100, (x - p.sl_price) / span * 100));
-  $("pos-fill").style.width = pc(cur) + "%";
-  $("pos-fill").style.background = col;
-  $("pos-tick").style.left = pc(entry) + "%";
-  $("pos-now").textContent = "Ora " + fp(cur);
+  const prog = Math.max(0, Math.min(100, ((cur - p.sl_price) / span) * 100));
+  const col = netUsdt >= 0 ? 'pos-green' : 'pos-red';
+  const scaleTag = p.partial_tp_done ? ` · 💰 Scale-Out 50% (+${partialPnl.toFixed(2)} USDT)` : '';
+
+  box.innerHTML = `
+    <div class="card-h"><span>🔥 POSIZIONE APERTA: ${p.coin_code} (${p.mode}${scaleTag})</span><span>Aperta: ${p.opened_at}</span></div>
+    <div class="grid">
+      <div class="kv"><div class="kv-l">Prezzo Ingresso</div><div class="kv-v">${fmtPx(p.entry_price)}</div></div>
+      <div class="kv"><div class="kv-l">Prezzo Live</div><div class="kv-v">${fmtPx(cur)}</div></div>
+      <div class="kv"><div class="kv-l">PnL Netto Totale</div><div class="kv-v ${col}">${netPct>=0?'+':''}${netPct.toFixed(2)}% (${netUsdt>=0?'+':''}${netUsdt.toFixed(2)} $)</div></div>
+      <div class="kv"><div class="kv-l">Multiplo R</div><div class="kv-v ${col}">${rMult>=0?'+':''}${rMult.toFixed(2)}R</div></div>
+      <div class="kv"><div class="kv-l">Stop-Loss ${p.breakeven_locked?'🔒':''}</div><div class="kv-v pos-red">${fmtPx(p.sl_price)}</div></div>
+      <div class="kv"><div class="kv-l">Take-Profit 🎯</div><div class="kv-v pos-green">${fmtPx(p.tp_price)}</div></div>
+    </div>
+    <div class="bar"><div style="width:${prog}%; background:${netUsdt>=0?'#10b981':'#ef4444'}"></div></div>
+    <div class="row" style="justify-content:space-between"><span class="muted">SL ${fmtPx(p.sl_price)}</span><span class="muted">Investito residuo: ${Number(p.invested_usdt).toFixed(2)} USDT (${p.amount_coin} ${p.coin_code})</span><span class="muted">TP ${fmtPx(p.tp_price)}</span></div>`;
 }
 
-function renderHistory() {
-  const s = DATA.stats, h = DATA.history || [];
-  const wr = s.total_trades > 0 ? Math.round(s.wins / s.total_trades * 100) + "%" : "—";
-  const tc = s.total_pnl_usdt >= 0 ? "var(--green)" : "var(--red)";
-  const dc = (s.daily_pnl_usdt || 0) >= 0 ? "var(--green)" : "var(--red)";
-  $("sum").innerHTML = `
-    <div><small>Chiuse</small><b>${s.total_trades}</b></div>
-    <div><small>Vinte</small><b>${wr}</b></div>
-    <div><small>Totale</small><b style="color:${tc};">${sg(s.total_pnl_usdt)}$</b></div>
-    <div><small>Oggi (${s.daily_trades || 0}/${DATA.limits.max_trades})</small><b style="color:${dc};">${sg(s.daily_pnl_usdt || 0)}$</b></div>`;
-  if (h.length === 0) { $("hist").innerHTML = `<div class="sub" style="text-align:center;padding:14px;">Ancora nessuna posizione chiusa.</div>`; return; }
-  $("hist").innerHTML = h.map(x => {
-    const win = x.pnl_pct >= 0, col = win ? "var(--green)" : "var(--red)";
-    return `<div class="h">
-      <div class="h-top">
-        <div><b>${esc(x.coin)}</b> <span class="chip n">${x.mode === "LIVE_PIONEX" ? "REALE" : "SIM"}</span>
-          <div class="sub">${esc(x.closed_at)} · ${fp(x.entry)} → ${fp(x.exit)}</div></div>
-        <div class="h-res" style="color:${col};">${sg(x.pnl_pct)}%<small>${sg(x.pnl_usdt || 0)} USDT</small></div>
-      </div>
-      <div class="why">${esc(x.reason)}</div></div>`;
-  }).join("");
+function renderTabs(){
+  const t = document.getElementById('coin-tabs');
+  t.innerHTML = D.coins.map(c=>{
+    const px = livePx[c.code] || c.price;
+    const badge = c.entry_ok ? '🟢' : (c.raw_100>=54 ? '🟡' : '⚪');
+    return `<button class="tab ${c.code===selected?'active':''}" onclick="selCoin('${c.code}')">
+      <div class="tab-top"><span>${badge} ${c.code}</span><span>${c.raw_100}/100</span></div>
+      <div class="tab-px" id="tabpx-${c.code}">${fmtPx(px)}</div>
+    </button>`;
+  }).join('');
 }
 
-function renderMacro() {
-  const now = Date.now() / 1000, ev = DATA.macro || [];
-  let blocking = null, nextHigh = null;
-  ev.forEach(e => {
-    if (e.impact !== "High") return;
-    if (now >= e.ts - 7200 && now <= e.ts + 1800) blocking = e;
-    else if (e.ts > now && (!nextHigh || e.ts < nextHigh.ts)) nextHigh = e;
-  });
-  const b = $("macro-banner");
-  if (!DATA.macro_ok) {
-    b.style.background = "rgba(245,158,11,.14)"; b.style.border = "1px solid var(--amber)";
-    b.innerHTML = `<div style="color:#fbbf24;">⚠️ Calendario non raggiungibile in questo giro</div><div class="sub">Il bot non ha potuto controllare le news: nessun blocco applicato.</div>`;
-  } else if (blocking) {
-    b.style.background = "rgba(239,68,68,.14)"; b.style.border = "1px solid var(--red)";
-    b.innerHTML = `<div style="color:#f87171;">⛔ Acquisti sospesi: ${esc(blocking.title)} alle ${hm(blocking.ts)}</div>`;
-  } else if (nextHigh) {
-    b.style.background = "rgba(56,189,248,.12)"; b.style.border = "1px solid var(--blue)";
-    b.innerHTML = `<div style="color:#7dd3fc;">✅ Nessun blocco ora</div><div class="sub">Prossimo evento forte: ${esc(nextHigh.title)} alle ${hm(nextHigh.ts)} (stop acquisti da 2 ore prima)</div>`;
-  } else {
-    b.style.background = "rgba(34,197,94,.12)"; b.style.border = "1px solid var(--green)";
-    b.innerHTML = `<div style="color:#4ade80;">✅ Nessun evento forte in arrivo</div>`;
-  }
-  let html = "", last = "";
-  ev.filter(e => e.ts > now - 6 * 3600).forEach(e => {
-    const d = dayLabel(e.ts);
-    if (d !== last) { html += `<div class="day">${esc(d)}</div>`; last = d; }
-    let chip;
-    if (now > e.ts + 1800) chip = `<span class="chip n">concluso</span>`;
-    else if (e.impact === "High" && now >= e.ts - 7200) chip = `<span class="chip r">⛔ blocca acquisti</span>`;
-    else if (e.impact === "High") chip = `<span class="chip a">⚠️ stop 2h prima</span>`;
-    else chip = `<span class="chip n">monitorato</span>`;
-    html += `<div class="ev"><div class="evt">${hm(e.ts)}</div><div class="evn">${esc(e.title)}<div class="sub">Impatto ${e.impact === "High" ? "ALTO" : "medio"} · USD</div></div>${chip}</div>`;
-  });
-  $("macro-list").innerHTML = html || (DATA.macro_ok ? `<div class="sub">Nessun evento USD importante nelle prossime 36 ore.</div>` : "");
-  $("fng").textContent = "Sentiment di mercato: Fear & Greed " + DATA.fng_val + " (" + DATA.fng_class + ")";
+function renderDetail(){
+  const c = D.coins.find(x=>x.code===selected) || D.coins[0];
+  if(!c) return;
+  const px = livePx[c.code] || c.price;
+  document.getElementById('coin-detail').innerHTML = `
+    <div class="card-h"><span>🔍 Dettaglio ${c.name} (${c.code}) — Score ${c.final_score}/10 (${c.raw_100}/100)</span><span>${c.entry_ok?'🟢 SEGNALE PRONTO':'⏳ IN ATTESA'}</span></div>
+    <div class="grid">
+      <div class="kv"><div class="kv-l">Prezzo Live</div><div class="kv-v">${fmtPx(px)}</div></div>
+      <div class="kv"><div class="kv-l">FreqAI Triple-Barrier</div><div class="kv-v">${c.ai_prob}%</div></div>
+      <div class="kv"><div class="kv-l">Stop-Loss Calcolato</div><div class="kv-v pos-red">${fmtPx(c.sl_price)}</div></div>
+      <div class="kv"><div class="kv-l">Take-Profit Calcolato</div><div class="kv-v pos-green">${fmtPx(c.tp_price)}</div></div>
+      <div class="kv"><div class="kv-l">Reward / Risk Netto</div><div class="kv-v">${c.rr_ratio}x</div></div>
+      <div class="kv"><div class="kv-l">Size Consigliata</div><div class="kv-v">${c.pos_usdt.toFixed(2)} USDT</div></div>
+    </div>
+    <div class="muted" style="margin-top:8px;">⏱️ <b>Timer 15m:</b> ${c.timer_summary} &nbsp;|&nbsp; 🛡️ <b>Rischio:</b> ${c.risk_status}</div>`;
 }
 
-function renderScanner() {
-  const tb = $("scan");
-  tb.innerHTML = "";
-  DATA.coins.forEach(c => {
-    let st = `<span class="chip n">—</span>`;
-    if (DATA.position.is_open && DATA.position.coin_code === c.code) st = `<span class="chip b">📌 Aperta</span>`;
-    else if (c.entry_ok) st = `<span class="chip g">✅ Pronta</span>`;
-    else if (c.raw_100 >= 54) st = `<span class="chip a">👀 Quasi</span>`;
-    const tr = document.createElement("tr");
-    tr.className = "row";
-    tr.onclick = () => $("d-" + c.code).classList.toggle("open");
-    tr.innerHTML = `<td><b>${esc(c.code)}</b></td><td id="px-${c.code}">${fp(live[c.code] || c.price)}</td><td>${c.raw_100}/100</td><td>${st}</td>`;
-    tb.appendChild(tr);
-    const dr = document.createElement("tr");
-    dr.className = "drow"; dr.id = "d-" + c.code;
-    dr.innerHTML = `<td colspan="4">Stop ${fp(c.sl_price)} · Target ${fp(c.tp_price)} · Budget ${c.pos_usdt.toFixed(2)} USDT · FreqAI ${c.ai_prob}% (DI=${c.di_val}) · Spread ${c.spread_bps} bps<br>Segnale 15m: ${esc(c.timer_summary)}<br>Controllo rischio: ${esc(c.risk_status)}</td>`;
-    tb.appendChild(dr);
-  });
-  const sel = $("m-coin");
-  DATA.coins.forEach(c => { const o = document.createElement("option"); o.value = c.code; o.textContent = c.code + " - " + c.name; sel.appendChild(o); });
-  if (DATA.position.is_open) sel.value = DATA.position.coin_code;
+function renderStats(){
+  const s = D.stats || {};
+  const wr = s.total_trades ? ((s.wins/s.total_trades)*100).toFixed(0)+'%' : 'N/A';
+  document.getElementById('daily-tag').textContent = `Oggi: ${s.daily_trades||0}/${D.limits.max_trades} trade · PnL oggi: ${(s.daily_pnl_pct||0)>=0?'+':''}${(s.daily_pnl_pct||0).toFixed(2)}%`;
+  document.getElementById('stats-grid').innerHTML = `
+    <div class="kv"><div class="kv-l">Trade Totali (W/L)</div><div class="kv-v">${s.total_trades||0} (${s.wins||0}W / ${s.losses||0}L)</div></div>
+    <div class="kv"><div class="kv-l">Win Rate</div><div class="kv-v">${wr}</div></div>
+    <div class="kv"><div class="kv-l">PnL Cumulato USDT</div><div class="kv-v ${(s.total_pnl_usdt||0)>=0?'pos-green':'pos-red'}">${(s.total_pnl_usdt||0)>=0?'+':''}${(s.total_pnl_usdt||0).toFixed(2)} $</div></div>
+    <div class="kv"><div class="kv-l">Ultima Azione</div><div class="kv-v" style="font-size:12px;">${s.last_action||'—'}</div></div>`;
+
+  const h = D.history || [];
+  document.getElementById('macro-tag').textContent = D.macro_ok ? `Calendario USD: ${(D.macro||[]).length} eventi` : 'Calendario USD offline';
+  document.getElementById('hist-box').innerHTML = h.length ? `<table><thead><tr><th>Coin</th><th>Ingresso</th><th>Uscita</th><th>PnL</th><th>Motivo</th><th>Data</th></tr></thead><tbody>` +
+    h.slice(0,10).map(r=>`<tr><td><b>${r.coin}</b></td><td>${fmtPx(r.entry)}</td><td>${fmtPx(r.exit)}</td><td class="${r.pnl_usdt>=0?'pos-green':'pos-red'}">${r.pnl_pct>=0?'+':''}${r.pnl_pct}% (${r.pnl_usdt>=0?'+':''}${r.pnl_usdt}$)</td><td>${r.reason}</td><td>${r.closed_at}</td></tr>`).join('') +
+    `</tbody></table>` : `<div class="muted">Nessun trade chiuso finora.</div>`;
 }
 
-function updateLivePrice(code, price) {
-  if (!price || price <= 0) return;
-  live[code] = price;
-  const c = $("px-" + code);
-  if (c) c.textContent = fp(price);
-  if (DATA.position.is_open && DATA.position.coin_code === code) updatePosLive();
+function selCoin(code){ selected = code; renderTabs(); renderDetail(); }
+function toggleCfg(){ const b=document.getElementById('cfg-box'); b.style.display=b.style.display==='none'?'flex':'none'; }
+function saveToken(){ localStorage.setItem('gh_pat', document.getElementById('gh-token').value.trim()); document.getElementById('cmd-msg').textContent='✅ Token salvato nel browser.'; }
+
+async function dispatchCmd(command, coin, amount_usdt){
+  const tok = localStorage.getItem('gh_pat') || document.getElementById('gh-token').value.trim();
+  const msg = document.getElementById('cmd-msg');
+  if(!tok){ toggleCfg(); msg.textContent='⚠️ Inserisci prima un GitHub Personal Access Token (scope: workflow) oppure invia il comando su Telegram.'; return; }
+  if(!D.repo){ msg.textContent='⚠️ Repository GitHub non rilevato.'; return; }
+  msg.textContent = `⏳ Invio comando '${command}' a GitHub Actions...`;
+  try{
+    const r = await fetch(`https://api.github.com/repos/${D.repo}/actions/workflows/${D.workflow}/dispatches`, {
+      method:'POST',
+      headers:{'Authorization':`Bearer ${tok}`,'Accept':'application/vnd.github+json','Content-Type':'application/json'},
+      body: JSON.stringify({ref: D.ref || 'main', inputs:{command, coin: String(coin||''), amount_usdt: String(amount_usdt||0)}})
+    });
+    msg.textContent = r.status===204 ? `✅ Comando '${command}' avviato! Riceverai conferma su Telegram tra ~40s.` : `❌ Errore GitHub API HTTP ${r.status}`;
+  }catch(e){ msg.textContent = '❌ Errore rete: '+e; }
+}
+function manualOpen(){ dispatchCmd('open', document.getElementById('man-coin').value, document.getElementById('man-usdt').value||0); }
+function manualSellAll(){
+  const c = document.getElementById('man-coin').value;
+  if(confirm(`Confermi la vendita immediata a mercato di TUTTO il saldo ${c} su Pionex?`)) dispatchCmd('sell_all', c, 0);
 }
 
-function connectWS() {
-  try {
-    const ws = new WebSocket("wss://ws.kraken.com");
-    ws.onopen = () => ws.send(JSON.stringify({ event: "subscribe", pair: DATA.coins.map(c => c.ws), subscription: { name: "ticker" } }));
-    ws.onmessage = ev => {
+function connectWS(){
+  try{
+    const ws = new WebSocket('wss://ws.kraken.com');
+    const pairToCode = {};
+    D.coins.forEach(c => { pairToCode[c.ws] = c.code; });
+    ws.onopen = () => {
+      document.getElementById('ws-pill').textContent = '🟢 Live Kraken WS';
+      ws.send(JSON.stringify({event:'subscribe', pair: D.coins.map(c=>c.ws), subscription:{name:'ticker'}}));
+    };
+    ws.onmessage = (ev) => {
       const m = JSON.parse(ev.data);
-      if (Array.isArray(m) && m.length >= 4 && m[1] && m[1].c) {
-        const code = wsMap[m[3]], pr = parseFloat(m[1].c[0]);
-        if (code && pr > 0) updateLivePrice(code, pr);
+      if(Array.isArray(m) && m[1] && m[1].c){
+        const code = pairToCode[m[3]];
+        const px = parseFloat(m[1].c[0]);
+        if(code && px>0){
+          livePx[code] = px;
+          const el = document.getElementById('tabpx-'+code);
+          if(el) el.textContent = fmtPx(px);
+          if(code===selected) renderDetail();
+          if(D.position && D.position.is_open && D.position.coin_code===code) renderPosition();
+        }
       }
     };
-    ws.onclose = () => setTimeout(connectWS, 5000);
-  } catch (e) {}
-}
-async function pollPrices() {
-  try {
-    const res = await fetch("https://api.kraken.com/0/public/Ticker?pair=" + DATA.coins.map(c => c.kraken).join(","));
-    const j = await res.json();
-    if (j && j.result) Object.keys(j.result).forEach(k => {
-      const p = parseFloat(j.result[k].c[0]);
-      DATA.coins.forEach(c => { if (k.includes(c.code) || (c.code === "BTC" && k.includes("XBT")) || (c.code === "DOGE" && k.includes("XDG"))) updateLivePrice(c.code, p); });
-    });
-  } catch (e) {}
+    ws.onclose = () => { document.getElementById('ws-pill').textContent = '🟡 Riconnessione WS...'; setTimeout(connectWS, 4000); };
+  }catch(e){}
 }
 
-function tokenNow() {
-  try { const t = localStorage.getItem("gh_token"); if (t) return t; } catch (e) {}
-  return window._tok || "";
-}
-function tokState() { $("tok-state").textContent = tokenNow() ? "impostato ✅" : "non impostato"; }
-function setToken() {
-  const t = prompt("Incolla il token GitHub (fine-grained, SOLO il repo del bot, permesso Actions: Read and write):");
-  if (!t) return;
-  window._tok = t.trim();
-  try { localStorage.setItem("gh_token", t.trim()); } catch (e) {}
-  tokState();
-}
-async function dispatchBot(command, coin, amount) {
-  const log = $("cmd-log");
-  if (!tokenNow()) setToken();
-  const tok = tokenNow();
-  if (!tok) { log.textContent = "❌ Token mancante."; return; }
-  if (!DATA.repo) { log.textContent = "❌ Repo sconosciuta: usa il pulsante GitHub Actions (Run workflow)."; return; }
-  log.textContent = "⏳ Invio comando...";
-  try {
-    const r = await fetch("https://api.github.com/repos/" + DATA.repo + "/actions/workflows/" + DATA.workflow + "/dispatches", {
-      method: "POST",
-      headers: { "Authorization": "Bearer " + tok, "Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28", "Content-Type": "application/json" },
-      body: JSON.stringify({ ref: DATA.ref, inputs: { command: command, coin: coin || "", amount_usdt: String(amount || "") } })
-    });
-    if (r.status === 204) { log.textContent = "✅ Comando '" + command + "' inviato. Conferma su Telegram entro 30-90 secondi."; alert("✅ Comando inviato. Attendi la conferma su Telegram."); }
-    else { const t = await r.text(); log.textContent = "❌ Errore " + r.status + ": " + t.slice(0, 200); alert("❌ Errore " + r.status); }
-  } catch (e) { log.textContent = "❌ Errore di rete: " + e; }
-}
-function cmdClose() {
-  if (!confirm("CHIUDERE a mercato la posizione " + DATA.position.coin_code + " ORA?")) return;
-  dispatchBot("close", DATA.position.coin_code, "");
-}
-function cmdSellAll() {
-  const c = $("m-coin").value;
-  if (!confirm("VENDERE TUTTO il saldo libero di " + c + " a mercato?")) return;
-  dispatchBot("sell_all", c, "");
-}
-function cmdOpen() {
-  if (DATA.position.is_open) { alert("C'e' gia' una posizione aperta su " + DATA.position.coin_code + ": chiudila prima."); return; }
-  const c = $("m-coin").value, a = $("m-amt").value;
-  if (!confirm("APRIRE LONG a mercato su " + c + (a ? " con " + a + " USDT" : " (importo automatico)") + "?")) return;
-  dispatchBot("open", c, a);
-}
-
-$("actions-link").href = "https://github.com/" + DATA.repo + "/actions/workflows/" + DATA.workflow;
-renderHead(); renderPosition(); renderHistory(); renderMacro(); renderScanner(); tokState();
-setInterval(() => { renderHead(); renderMacro(); }, 60000);
-connectWS();
-setInterval(pollPrices, 10000);
+(function init(){
+  document.getElementById('gh-token').value = localStorage.getItem('gh_pat') || '';
+  const sel = document.getElementById('man-coin');
+  sel.innerHTML = D.coins.map(c=>`<option value="${c.code}">${c.code}</option>`).join('');
+  renderTop(); renderPosition(); renderTabs(); renderDetail(); renderStats();
+  setInterval(renderTop, 10000);
+  connectWS();
+})();
 </script>
 </body>
 </html>"""
 
-    html = html.replace("__CONSOLE_PAYLOAD__", payload_json)
+    html = html.replace("__PAYLOAD_JSON__", payload_json)
     try:
         with open(WEBAPP_FILE, "w", encoding="utf-8") as f:
             f.write(html)
-        return True
+        log("INFO", f"Web Console {WEBAPP_FILE} aggiornata con successo.")
     except Exception as e:
-        log("ERROR", f"Scrittura {WEBAPP_FILE} fallita: {e}")
-        return False
+        log("ERROR", f"Impossibile scrivere {WEBAPP_FILE}: {e}")
 
 
 # ==============================================================================
-# 12. TELEGRAM (solo apertura / chiusura / errori / run manuale)
+# 12. REPORTISTICA E NOTIFICHE ISTANTANEE TELEGRAM
 # ==============================================================================
-def build_telegram_report(ranked_evals, state, trade_status, session_str):
-    focus = next((e for e in ranked_evals if entry_conditions(e)), ranked_evals[0])
-    advisor = build_manual_action_advisor(state, focus, {e["code"]: e for e in ranked_evals}, trade_status)
+def send_telegram_message(text):
+    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
+        log("WARN", "Credenziali Telegram non configurate: salto invio messaggio.")
+        return
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    try:
+        r = SESSION.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML", "disable_web_page_preview": True}, timeout=HTTP_TIMEOUT)
+        if r.status_code != 200:
+            log("WARN", f"Telegram API HTTP {r.status_code}: {r.text[:160]}")
+    except Exception as e:
+        log("WARN", f"Errore invio Telegram: {e}")
+
+
+def build_telegram_report(ranked_evals, state, trade_status, fng_val, fng_class, session_str, eur_usd):
     pos, stats = state["position"], state["stats"]
-    esc = html_lib.escape
+    best = ranked_evals[0]
+    mode_str = "🟢 LIVE PIONEX" if pionex_live_enabled() else "🧪 SIMULAZIONE"
+    lines = [
+        f"🤖 <b>PIONEX FREQTRADE + FREQAI v10</b> ({mode_str})",
+        f"🌍 {html_lib.escape(session_str)} | {html_lib.escape(BTC_REGIME['label'])} | F&G: <b>{fng_val}</b> ({html_lib.escape(fng_class)})",
+        "",
+        f"<b>{html_lib.escape(trade_status['headline'])}</b>",
+        f"{html_lib.escape(trade_status['detail'])}",
+    ]
 
-    medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"]
-    rank_lines = []
-    for idx, ev in enumerate(ranked_evals[:5]):
-        t_icon = "⚡" if ev["scanner_timer"]["triggered"] else "⏳"
-        rank_lines.append(f"{medals[idx]} <b>{ev['code']}</b> ({fmt_price(ev['price'])}): <b>{ev['final_score']}/10</b> ({ev['raw_100']}/100) | FreqAI {ev['ai_prob'] * 100:.0f}% | 15m {t_icon}")
+    for al in trade_status.get("alerts_fired", []):
+        lines.append(f"• {html_lib.escape(al)}")
 
     if pos["is_open"]:
-        pos_block = (f"📌 <b>POSIZIONE APERTA SU {pos['coin_code']} ({pos['mode']}):</b>\n"
-                     f"• Entry: <b>{fmt_price(pos['entry_price'])}</b> | Investito: <b>{pos['invested_usdt']:.2f} USDT</b>\n"
-                     f"• Stop-Loss Attivo: <b>{fmt_price(pos['sl_price'])}</b> | Take-Profit: <b>{fmt_price(pos['tp_price'])}</b>\n"
-                     f"• PnL Netto Live: <b>{trade_status['pnl_pct']:+.2f}% ({trade_status['pnl_usdt']:+.2f} USDT / {trade_status['current_r']:+.2f}R)</b>")
-    else:
-        pos_block = "📌 <b>POSIZIONE APERTA:</b> Nessuna (100% Liquidita' in USDT)"
+        scale_info = f" | Scale-Out 50%: +{pos.get('realized_partial_usdt', 0.0):.2f}$" if pos.get("partial_tp_done") else ""
+        lines.extend([
+            "",
+            f"📌 <b>POSIZIONE ATTIVA: {pos['coin_code']}</b> ({pos['mode']}{scale_info})",
+            f"• Entry: <code>{fmt_price(pos['entry_price'])}</code> | SL: <code>{fmt_price(pos['sl_price'])}</code> | TP: <code>{fmt_price(pos['tp_price'])}</code>",
+            f"• Size residua: <code>{pos['amount_coin']} {pos['coin_code']}</code> ({pos['invested_usdt']:.2f} USDT)",
+        ])
+
+    lines.extend([
+        "",
+        "🏆 <b>TOP 5 CLASSIFICA FREQAI TRIPLE-BARRIER (10 COIN):</b>",
+    ])
+    for i, ev in enumerate(ranked_evals[:5], 1):
+        flag = "🟢" if entry_conditions(ev) else ("🟡" if ev["raw_100"] >= 54 else "⚪")
+        di_tag = "OK" if ev.get("do_predict", 1) == 1 else "OUTLIER"
+        lines.append(
+            f"{i}. {flag} <b>{ev['code']}</b> ({fmt_price(ev['price'])}) — "
+            f"Score: <b>{ev['final_score']}/10</b> ({ev['raw_100']}/100) | "
+            f"AI: <b>{ev['ai_prob']*100:.0f}%</b> (DI:{di_tag}) | 15m: {ev['scanner_timer']['triggers']}/4"
+        )
 
     wr = (stats["wins"] / stats["total_trades"] * 100.0) if stats["total_trades"] > 0 else 0.0
-    hist = state.get("history", [])
-    if hist:
-        h = hist[0]
-        closed_block = f"📜 <b>ULTIMA POSIZIONE CHIUSA:</b> {h['coin']} il {h['closed_at']} -> <b>{h['pnl_pct']:+.2f}% ({h.get('pnl_usdt', 0.0):+.2f} USDT)</b> ({esc(h['reason'])})"
-    else:
-        closed_block = "📜 <b>ULTIMA POSIZIONE CHIUSA:</b> Nessuna operazione chiusa di recente"
-
-    alerts_block = ("\n" + "\n".join(esc(a) for a in trade_status["alerts_fired"]) + "\n") if trade_status.get("alerts_fired") else ""
-
-    return f"""🤖 <b>PIONEX FREQTRADE + FREQAI v10.0</b>
-🕒 <i>{session_str} | BTC Regime: {BTC_REGIME['state']}</i>
-━━━━━━━━━━━━━━━━━━━━
-<b>{esc(trade_status['headline'])}</b>
-{esc(trade_status['detail'])}{alerts_block}
-
-🧭 <b>COSA FARE MANUALMENTE ADESSO:</b>
-<b>{esc(advisor['badge'])}</b>
-<i>{esc(advisor['instruction'])}</i>
-
-{pos_block}
-{closed_block}
-• Bilancio Storico: <b>{stats['total_trades']} Trade</b> (Win Rate <b>{wr:.0f}%</b> | PnL Netto: <b>{stats['total_pnl_pct']:+.2f}% / {stats['total_pnl_usdt']:+.2f} USDT</b>)
-
-🏆 <b>TOP 5 CLASSIFICA FREQAI (SU 10 COIN):</b>
-{chr(10).join(rank_lines)}
-━━━━━━━━━━━━━━━━━━━━
-📲 <i>Apri il file <b>Console_Live_AI_Bot.html</b> qui sotto per lo streaming live dei prezzi!</i>"""
-
-
-def send_telegram(msg, attach_console=True):
-    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-        log("WARN", "Credenziali Telegram mancanti nei Secrets.")
-        return
-    url_msg = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    try:
-        r = SESSION.post(url_msg, json={"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "HTML",
-                                        "disable_web_page_preview": True}, timeout=HTTP_TIMEOUT)
-        if r.status_code != 200:
-            SESSION.post(url_msg, json={"chat_id": TELEGRAM_CHAT_ID, "text": re.sub(r"<[^>]+>", "", msg)}, timeout=HTTP_TIMEOUT)
-    except Exception as e:
-        log("ERROR", f"Invio messaggio Telegram fallito: {e}")
-    if attach_console and os.path.exists(WEBAPP_FILE):
-        try:
-            with open(WEBAPP_FILE, "rb") as f:
-                SESSION.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendDocument",
-                             data={"chat_id": TELEGRAM_CHAT_ID, "caption": "🖥️ Console Web Interattiva (prezzi live, posizioni, guida manuale)"},
-                             files={"document": ("Console_Live_AI_Bot.html", f, "text/html")}, timeout=HTTP_TIMEOUT)
-        except Exception as e:
-            log("ERROR", f"Invio Console HTML fallito: {e}")
+    lines.extend([
+        "",
+        f"📊 <b>Statistiche:</b> {stats['total_trades']} trade ({stats['wins']}W/{stats['losses']}L, WR {wr:.0f}%) | "
+        f"PnL Tot: <b>{stats['total_pnl_usdt']:+.2f} USDT</b> | Oggi: <b>{stats.get('daily_pnl_pct', 0.0):+.2f}%</b>",
+        f"💬 <i>Comandi rapidi chat: /status · /close · /open {best['code']} · /sellall {best['code']}</i>",
+    ])
+    return "\n".join(lines)
 
 
 # ==============================================================================
-# MAIN
+# 13. ESECUZIONE CICLO COMPLETO + MODALITA' CONTINUA (TICK GUARDIAN)
 # ==============================================================================
-def main():
-    mode = "LIVE (ordini reali)" if pionex_live_enabled() else "SIMULAZIONE (nessun ordine reale)"
-    log("INFO", f"Avvio Pionex Freqtrade + FreqAI v10.0 | Strategia: {STRATEGY.__class__.__name__} | Modalita': {mode}")
-    state = load_state()
-    pos = state["position"]
-    now_utc = datetime.now(timezone.utc)
-    in_window = ENTRY_START_UTC <= now_utc.hour < ENTRY_END_UTC
-    is_manual_run = GITHUB_EVENT_NAME == "workflow_dispatch"
-
-    if not pos["is_open"] and not in_window and not is_manual_run:
-        log("INFO", f"Fuori finestra operativa ({ENTRY_START_UTC:02d}-{ENTRY_END_UTC:02d} UTC) e nessuna posizione: skip.")
-        return
-
+def run_full_cycle(state, manual_override=None):
+    """Esegue una scansione completa multi-timeframe + FreqAI su tutte le 10 coin."""
+    LIVE_PX.clear()
     LIVE_PX.update(fetch_pionex_prices())
     eur_usd = fetch_eur_usd_rate()
+    futures_map = fetch_all_kraken_futures()
     fng_val, fng_class = fetch_fear_and_greed()
     macro_events = fetch_macro_calendar()
-    futures_map = fetch_all_kraken_futures()
     session_str = skill_nyse_bell_and_session()
 
-    if MANUAL_COMMAND in ("close", "sell_all"):
-        tgt = pos["coin_code"] if (MANUAL_COMMAND == "close" or not MANUAL_COIN) else MANUAL_COIN
-        scan_list = [COIN_MAP.get(tgt, COINS[0])]
-    elif pos["is_open"] and not (in_window or is_manual_run):
-        scan_list = [COIN_MAP.get(pos["coin_code"], COINS[0])]
-    else:
-        scan_list = COINS
-    all_evals = scan_all_coins(scan_list, futures_map, fng_val, macro_events)
-    update_btc_market_regime(all_evals)
+    all_evals = scan_all_coins(COINS, futures_map, fng_val, macro_events)
+    pos = state["position"]
+    if pos["is_open"] and pos["coin_code"] not in all_evals:
+        oc = pos["coin_code"]
+        all_evals[oc] = make_fallback_eval(COIN_MAP.get(oc, COINS[0]), pos)
 
-    if pos["is_open"]:
-        open_code = pos.get("coin_code", "SOL")
-        if open_code not in all_evals:
-            log("WARN", f"Analisi di {open_code} non disponibile: uso valutazione neutra col prezzo Pionex")
-            all_evals[open_code] = make_fallback_eval(COIN_MAP.get(open_code, COINS[0]), pos)
-    if MANUAL_COMMAND == "sell_all" and MANUAL_COIN in COIN_MAP and MANUAL_COIN not in all_evals:
-        all_evals[MANUAL_COIN] = make_fallback_eval(COIN_MAP[MANUAL_COIN], {})
     if not all_evals:
-        log("ERROR", "Nessuna coin analizzata con successo.")
-        return
+        log("ERROR", "Nessuna coin analizzata con successo (API Kraken non raggiungibili).")
+        return None
 
-    ranked_evals = sorted(all_evals.values(), key=lambda x: (x["raw_100"], x["scanner_timer"]["triggered"], x["ai_prob"]), reverse=True)
-    for ev in ranked_evals:
-        ev["risk_manager"] = skill_budget_and_risk_manager(INVEST_EUR, eur_usd, ev["price"], ev["sl_price"], ev["tp_price"], state, ev["high_soon"], ev["code"], ev=ev)
+    for code, ev in all_evals.items():
+        ev["risk_manager"] = skill_budget_and_risk_manager(
+            INVEST_EUR, eur_usd, ev["price"], ev["sl_price"], ev["tp_price"], state, ev["high_soon"], code, ev
+        )
         ev["exit_plan"] = skill_exit_planner(ev["price"], ev["sl_price"], ev["tp_price"])
 
-    if MANUAL_COMMAND in ("close", "sell_all", "open"):
-        log("INFO", f"COMANDO MANUALE: {MANUAL_COMMAND} {MANUAL_COIN} {MANUAL_USDT or ''}")
-        trade_status = run_manual_command(state, all_evals, eur_usd, MANUAL_COMMAND, MANUAL_COIN, MANUAL_USDT)
+    ranked_evals = sorted(all_evals.values(), key=lambda x: (x["raw_100"], x["ai_prob"]), reverse=True)
+
+    # Controlla se c'e' un comando manuale da GitHub Actions o da Telegram
+    tg_cmd = poll_telegram_commands(state)
+    cmd_obj = manual_override or tg_cmd
+
+    if cmd_obj and cmd_obj.get("command") in ("close", "sell_all", "open"):
+        trade_status = run_manual_command(
+            state, all_evals, eur_usd, cmd_obj["command"], cmd_obj.get("coin", ""), cmd_obj.get("usdt", 0.0)
+        )
     else:
         trade_status = manage_autonomous_trading(state, ranked_evals, all_evals, eur_usd)
+
     generate_webapp_html(ranked_evals, state, trade_status, fng_val, fng_class, session_str, eur_usd, macro_events)
+    report = build_telegram_report(ranked_evals, state, trade_status, fng_val, fng_class, session_str, eur_usd)
+    send_telegram_message(report)
 
-    action_state = trade_status["action_state"]
-    notify_states = ("OPENED_NOW", "CLOSED_NOW", "CLOSE_FAILED", "ENTRY_FAILED", "MANUAL_DONE", "MANUAL_NOOP")
-    if action_state in notify_states or is_manual_run:
-        log("INFO", f"Invio notifica Telegram (action_state={action_state}, manual_run={is_manual_run})")
-        send_telegram(build_telegram_report(ranked_evals, state, trade_status, session_str))
+    return {
+        "ranked_evals": ranked_evals,
+        "all_evals": all_evals,
+        "eur_usd": eur_usd,
+        "trade_status": trade_status,
+        "fng_val": fng_val,
+        "fng_class": fng_class,
+        "session_str": session_str,
+        "macro_events": macro_events,
+    }
+
+
+def run_continuous_guardian(state, ctx):
+    """
+    Tick Guardian Real-Time:
+    - Se c'e' una posizione aperta, monitora i prezzi live Pionex e i comandi Telegram ogni `GUARDIAN_TICK_SEC` (15s)
+      per applicare all'istante Break-Even, Scale-Out 50%, Trailing Stop e Take-Profit.
+    - Se una coin e' 'HOT' (raw_100 >= 54), monitora ogni 15s e ricalcola le candele ogni 5 min per cogliere il breakout.
+    - In DAEMON_MODE=true gira all'infinito 24/7.
+    """
+    pos = state["position"]
+    best = ctx["ranked_evals"][0] if ctx["ranked_evals"] else None
+    is_hot = bool(best and best["raw_100"] >= 54 and best["risk_manager"]["passed"])
+
+    if DAEMON_MODE:
+        max_seconds = 10 ** 9
+        log("INFO", f"DAEMON_MODE=true attivo: avvio loop infinito 24/7 (tick ogni {GUARDIAN_TICK_SEC}s, rescan AI ogni {GUARDIAN_RESCAN_SEC}s).")
+    elif pos["is_open"]:
+        max_seconds = int(GUARDIAN_MINUTES_OPEN * 60)
+        log("INFO", f"Posizione aperta su {pos['coin_code']}: avvio Tick Guardian continuo per {GUARDIAN_MINUTES_OPEN:.1f} minuti (tick ogni {GUARDIAN_TICK_SEC}s).")
+    elif is_hot:
+        max_seconds = int(GUARDIAN_MINUTES_HOT * 60)
+        log("INFO", f"Setup quasi pronto su {best['code']} ({best['raw_100']}/100): avvio Tick Guardian per {GUARDIAN_MINUTES_HOT:.1f} minuti.")
     else:
-        best = ranked_evals[0]
-        log("INFO", f"Giro completato ({action_state} | BTC: {BTC_REGIME['state']} | Migliore: {best['code']} {best['raw_100']}/100). Nessun messaggio Telegram.")
-    log("INFO", "Esecuzione completata.")
+        return
 
-    if action_state in ("CLOSE_FAILED", "ENTRY_FAILED"):
-        raise SystemExit(1)
+    start_mon = time.monotonic()
+    last_rescan = time.monotonic()
+
+    while time.monotonic() - start_mon < max_seconds:
+        time.sleep(max(5, GUARDIAN_TICK_SEC))
+        now_dt = datetime.now(timezone.utc)
+        now_str, now_ts = now_dt.strftime("%d/%m %H:%M UTC"), int(now_dt.timestamp())
+
+        # 1. Aggiorna i ticker istantanei Pionex (1 chiamata leggera)
+        px_now = fetch_pionex_prices()
+        if px_now:
+            LIVE_PX.update(px_now)
+
+        # 2. Controlla comandi diretti inviati su Telegram (/status, /close, /open, /sellall)
+        tg_cmd = poll_telegram_commands(state)
+        if tg_cmd:
+            c_type = tg_cmd["command"]
+            log("INFO", f"Comando Telegram ricevuto nel Tick Guardian: {tg_cmd}")
+            if c_type == "status":
+                rep = build_telegram_report(ctx["ranked_evals"], state, ctx["trade_status"], ctx["fng_val"], ctx["fng_class"], ctx["session_str"], ctx["eur_usd"])
+                send_telegram_message(rep)
+            else:
+                st = run_manual_command(state, ctx["all_evals"], ctx["eur_usd"], c_type, tg_cmd.get("coin", ""), tg_cmd.get("usdt", 0.0))
+                ctx["trade_status"] = st
+                send_telegram_message(f"<b>{html_lib.escape(st['headline'])}</b>\n{html_lib.escape(st['detail'])}")
+                generate_webapp_html(ctx["ranked_evals"], state, st, ctx["fng_val"], ctx["fng_class"], ctx["session_str"], ctx["eur_usd"], ctx["macro_events"])
+                if not state["position"]["is_open"] and not DAEMON_MODE:
+                    break
+
+        # 3. Se c'e' una posizione aperta, verifica ogni 15s SL / TP / Scale-Out 50% / Break-Even / Trailing
+        if state["position"]["is_open"]:
+            capital_usdt = INVEST_EUR * ctx["eur_usd"]
+            st = _manage_open_position(state, ctx["all_evals"], capital_usdt, now_str, now_ts)
+            ctx["trade_status"] = st
+
+            if st.get("alerts_fired"):
+                for al in st["alerts_fired"]:
+                    send_telegram_message(f"⚡ <b>TICK GUARDIAN ({state['position']['coin_code']})</b>\n{html_lib.escape(al)}")
+
+            if st["action_state"] in ("CLOSED_NOW", "CLOSE_FAILED"):
+                send_telegram_message(f"<b>{html_lib.escape(st['headline'])}</b>\n{html_lib.escape(st['detail'])}")
+                generate_webapp_html(ctx["ranked_evals"], state, st, ctx["fng_val"], ctx["fng_class"], ctx["session_str"], ctx["eur_usd"], ctx["macro_events"])
+                if st["action_state"] == "CLOSED_NOW" and not DAEMON_MODE:
+                    log("INFO", "Posizione chiusa durante il Tick Guardian: termino il job per salvare subito lo stato.")
+                    break
+
+        # 4. Ogni GUARDIAN_RESCAN_SEC (es. 5 minuti), rianalizza candele 15m/1h e FreqAI
+        if time.monotonic() - last_rescan >= GUARDIAN_RESCAN_SEC:
+            last_rescan = time.monotonic()
+            log("INFO", "Tick Guardian: avvio rianalisi periodica 15m/1h + FreqAI...")
+            new_ctx = run_full_cycle(state)
+            if new_ctx:
+                ctx = new_ctx
+                if state["position"]["is_open"] and not DAEMON_MODE:
+                    # Estende la guardia se si e' appena aperta una posizione
+                    max_seconds = max(max_seconds, int(GUARDIAN_MINUTES_OPEN * 60))
+
+
+def main():
+    log("INFO", f"Avvio Pionex Freqtrade + FreqAI Engine v10.0 (Evento: {GITHUB_EVENT_NAME}, AutoTrade={AUTO_TRADE_ENABLED}, Live={pionex_live_enabled()})")
+    state = load_state()
+
+    manual_override = None
+    if MANUAL_COMMAND in ("close", "sell_all", "open", "status"):
+        manual_override = {"command": MANUAL_COMMAND, "coin": MANUAL_COIN, "usdt": MANUAL_USDT}
+
+    ctx = run_full_cycle(state, manual_override=manual_override)
+    if not ctx:
+        return
+
+    # Avvia il Tick Guardian continuo (se trade aperto, coin hot o DAEMON_MODE=true)
+    if MANUAL_COMMAND not in ("close", "sell_all"):
+        run_continuous_guardian(state, ctx)
+
+    # Se a fine ciclo la posizione e' ancora aperta su GitHub Actions, rilancia il workflow per guardia senza buchi
+    if state["position"]["is_open"] and not DAEMON_MODE:
+        trigger_self_chain_dispatch()
 
 
 if __name__ == "__main__":
