@@ -44,14 +44,9 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
 
-      - name: Setup Python 3.13
-        uses: actions/setup-python@v6
-        with:
-          python-version: '3.13'
-          cache: 'pip'
-
+      # Nessun setup-python: usiamo il Python 3.12 gia' presente sul runner (evita ogni ricerca di requirements.txt)
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: python3 -m pip install --break-system-packages "requests>=2.32.5,<3"
 
       - name: Run Pionex AI Fast-Scalp Engine
         env:
@@ -66,7 +61,7 @@ jobs:
           MANUAL_COMMAND: ${{ github.event.inputs.command || '' }}
           MANUAL_COIN: ${{ github.event.inputs.coin || '' }}
           MANUAL_USDT: ${{ github.event.inputs.amount_usdt || '' }}
-        run: python main.py
+        run: python3 main.py
 
       # always(): lo stato viene salvato anche se il bot esce con errore dopo aver mandato un ordine reale
       - name: Save Bot State & Live Console (Auto-Commit)
