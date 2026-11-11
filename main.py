@@ -1,5 +1,5 @@
 """
-Pionex-FreqAI Engine v9.1 (Con Report Telegram Completo e Console HTML)
+Pionex-FreqAI Engine v9.1 (Corretto - Report Telegram Completo)
 """
 import os
 import re
@@ -19,15 +19,18 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 # ==============================================================================
-# CONFIGURAZIONE (INSERISCI QUI LE TUE CHIAVI SE SEI SU COLAB)
+# CONFIGURAZIONE (LEGGE DA GITHUB SECRETS O VARIABILI D'AMBIENTE)
 # ==============================================================================
 def _env(name, default=""):
     v = os.getenv(name)
     return v.strip() if v is not None and v.strip() != "" else str(default)
 
-# Se sei su Colab, puoi incollare il Token e il Chat ID direttamente tra le virgolette:
-TELEGRAM_TOKEN = _env("TELEGRAM_TOKEN", "INSERISCI_QUI_IL_TUO_TOKEN_TELEGRAM")
-TELEGRAM_CHAT_ID = _env("TELEGRAM_CHAT_ID", "INSERISCI_QUI_IL_TUO_CHAT_ID")
+TELEGRAM_TOKEN = (
+    _env("TELEGRAM_TOKEN") or _env("TELEGRAM_BOT_TOKEN") or _env("BOT_TOKEN") or ""
+)
+TELEGRAM_CHAT_ID = (
+    _env("TELEGRAM_CHAT_ID") or _env("CHAT_ID") or ""
+)
 
 PIONEX_API_KEY = _env("PIONEX_API_KEY", "")
 PIONEX_API_SECRET = _env("PIONEX_API_SECRET", "")
@@ -37,7 +40,7 @@ INVEST_EUR = float(_env("INVEST_EUR", 50.0))
 DAEMON_MODE = _env("DAEMON_MODE", "false").lower() == "true"
 LOOP_INTERVAL_SEC = int(_env("LOOP_INTERVAL_SEC", 60))
 
-# Freqtrade Minimal ROI Table (minuti : profitto decimale)
+# Freqtrade Minimal ROI Table & Parametri
 MINIMAL_ROI_TABLE = {0: 0.035, 30: 0.018, 60: 0.012, 120: 0.008, 240: 0.004}
 TRAILING_STOP_POSITIVE = 0.006          # 0.6% dal picco
 TRAILING_STOP_POSITIVE_OFFSET = 0.012   # Si attiva a +1.2%
@@ -72,8 +75,8 @@ adapter = HTTPAdapter(max_retries=Retry(total=2, backoff_factor=0.5))
 SESSION.mount("https://", adapter)
 
 def send_telegram_msg(text):
-    if not TELEGRAM_TOKEN or "INSERISCI" in TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-        print("⚠️ Notifica Telegram saltata: credenziali mancanti o predefinite.")
+    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
+        print("⚠️ Notifica Telegram saltata: TELEGRAM_TOKEN o TELEGRAM_CHAT_ID mancanti.")
         return False
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     try:
@@ -87,7 +90,7 @@ def send_telegram_msg(text):
             print("✅ Notifica Telegram inviata con successo!")
             return True
         else:
-            print(f"❌ Errore Telegram ({r.status_code}): {r.text}")
+            print(f"❌ Errore risposta Telegram ({r.status_code}): {r.text}")
     except Exception as e:
         print(f"❌ Errore di connessione a Telegram: {e}")
     return False
@@ -128,7 +131,7 @@ def save_state(state):
         json.dump(state, f, indent=2)
 
 # ==============================================================================
-# DATI & INDICATORI FREQTRADE
+# DATI & INDICATORI
 # ==============================================================================
 def fetch_candles(coin_cfg, interval_min=15):
     # Prova prima Pionex
@@ -190,19 +193,19 @@ def evaluate_coin(coin_cfg):
     if 40 <= rsi_15 <= 68: score += 20
     if vol_z >= -0.1: score += 10
     
-    passed = (score >= ENTRY_RAW_100_Min) and (price > ema50_1h) and (40 <= rsi_15 <= 68)
+    # Corretto qui: ENTRY_RAW_100_MIN (tutto maiuscolo)
+    passed = (score >= ENTRY_RAW_100_MIN) and (price > ema50_1h) and (40 <= rsi_15 <= 68)
     return {"coin": coin_cfg, "code": coin_cfg["code"], "price": price, "score": score,
             "rsi": rsi_15, "vol_z": vol_z, "passed": passed}
 
 # ==============================================================================
-# REPORT TELEGRAM DETTAGLIATO
+# REPORT TELEGRAM
 # ==============================================================================
 def build_telegram_report(ranked_evals, state, status_headline, status_detail):
     pos, stats = state["position"], state["stats"]
     esc = html_lib.escape
     now_str = datetime.now(timezone.utc).strftime("%d/%m %H:%M UTC")
 
-    # Classifica Top 5 Coin
     medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"]
     rank_lines = []
     for idx, ev in enumerate(ranked_evals[:5]):
@@ -210,10 +213,11 @@ def build_telegram_report(ranked_evals, state, status_headline, status_detail):
         rank_lines.append(f"{medals[idx]} <b>{ev['code']}</b> ({fmt_price(ev['price'])}): <b>{ev['score']}/100</b> | RSI: {ev['rsi']:.0f} {icon}")
 
     if pos["is_open"]:
-        pnl = ((ranked_evals[0]["price"] - pos["entry_price"]) / pos["entry_price"]) * 100.0 - PIONEX_FEE_ROUNDTRIP_PCT
+        entry = pos["entry_price"]
+        pnl = (((ranked_evals[0]["price"] - entry) / entry) * 100.0 - PIONEX_FEE_ROUNDTRIP_PCT) if entry > 0 else 0.0
         pos_block = (
             f"📌 <b>POSIZIONE APERTA SU {pos['coin_code']} ({pos['mode']}):</b>\n"
-            f"• Entry: <b>{fmt_price(pos['entry_price'])}</b> | Investiti: <b>{pos['invested_usdt']:.2f} USDT</b>\n"
+            f"• Entry: <b>{fmt_price(entry)}</b> | Investiti: <b>{pos['invested_usdt']:.2f} USDT</b>\n"
             f"• PnL Netto Live: <b>{pnl:+.2f}%</b>"
         )
     else:
@@ -246,7 +250,7 @@ def run_iteration():
 
     print(f"\n--- Scansione in corso ({now_utc.strftime('%H:%M:%S UTC')}) ---")
 
-    # 1. Valuta le monete
+    # 1. Analisi delle monete
     evals = []
     with ThreadPoolExecutor(max_workers=3) as executor:
         futures = {executor.submit(evaluate_coin, c): c for c in COINS}
@@ -269,7 +273,8 @@ def run_iteration():
         cfg = COIN_MAP.get(pos["coin_code"], COINS[0])
         c15 = fetch_candles(cfg, 15)
         curr_price = c15[-1]["close"] if c15 else pos["entry_price"]
-        profit_ratio = (curr_price - pos["entry_price"]) / pos["entry_price"]
+        entry = pos["entry_price"]
+        profit_ratio = ((curr_price - entry) / entry) if entry > 0 else 0.0
         profit_pct = profit_ratio * 100.0 - PIONEX_FEE_ROUNDTRIP_PCT
         
         # Stop / Target Freqtrade
@@ -289,7 +294,7 @@ def run_iteration():
             headline = f"⏳ MANTENIMENTO LONG SU {pos['coin_code']}"
             detail = f"Prezzo attuale {fmt_price(curr_price)} ({profit_pct:+.2f}% netto)"
     else:
-        # 3. Nessuna posizione: valuta nuovo ingresso
+        # 3. Nuova Posizione
         if best["passed"]:
             headline = f"🚀 SEGNALE D'ACQUISTO SU {best['code']}"
             detail = f"Score: {best['score']}/100. Avvio trade a {fmt_price(best['price'])}"
@@ -304,7 +309,7 @@ def run_iteration():
 
     print(f"Stato: {headline} | {detail}")
     
-    # Invia SEMPRE il report completo su Telegram
+    # Invia sempre il report Telegram completo
     report_text = build_telegram_report(evals, state, headline, detail)
     send_telegram_msg(report_text)
 
