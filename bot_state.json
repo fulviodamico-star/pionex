@@ -88,7 +88,7 @@
     "tp_price": 0.8605082528033542,
     "initial_sl": 0.8292797769437011,
     "one_r": 0.010720223056298828,
-    "highest_price": 0.84,
+    "highest_price": 0.842,
     "breakeven_locked": false,
     "tp1_locked": false,
     "tp2_locked": false,
@@ -97,7 +97,7 @@
     "opened_ts": 1794386437,
     "mode": "SIMULATION",
     "order_id": "SIM",
-    "last_check_ts": 1794386437,
+    "last_check_ts": 1794386937,
     "close_fail_count": 0
   },
   "stats": {
