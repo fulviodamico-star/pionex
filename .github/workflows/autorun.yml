@@ -1,69 +1,77 @@
-name: Pionex Fast-Scalp AI Bot
+name: Pionex FreqAI v10 Autonomous Bot
 
 on:
   repository_dispatch:
     types: [tick]
   schedule:
-    # Ogni 30 min (minuto 17 e 47) nella finestra operativa 07:00 - 21:59 UTC
     - cron: '17,47 7-21 * * *'
-    # Guardia notturna leggera (1 volta all'ora) solo se c'è una posizione aperta
     - cron: '17 22-23,0-6 * * *'
   workflow_dispatch:
     inputs:
       command:
-        description: 'status | close | sell_all | open'
-        type: choice
-        default: status
-        options: [status, close, sell_all, open]
+        description: 'Comando manuale (status | close | sell_all | open)'
+        required: false
+        default: 'status'
       coin:
-        description: 'Coin (es. SOL) per open / sell_all'
-        type: string
+        description: 'Codice coin (es. SOL, BTC, ETH) per open / sell_all'
+        required: false
         default: ''
       amount_usdt:
-        description: 'Importo USDT per open (vuoto = automatico)'
-        type: string
-        default: ''
-
-permissions:
-  contents: write
+        description: 'Importo USDT per open manuale (0 = calcolo automatico)'
+        required: false
+        default: '0'
 
 concurrency:
   group: pionex-bot
   cancel-in-progress: false
 
+permissions:
+  contents: write
+  actions: write
+
 jobs:
   run-bot:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 25
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install dependencies (Freqtrade + FreqAI stack)
-        run: |
-          python3 -m pip install --break-system-packages --prefer-binary \
-            "requests>=2.32.5,<3" \
-            "pandas>=2.2.0" \
-            "scikit-learn>=1.4.0"
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
 
-      - name: Run Pionex Freqtrade + FreqAI Engine
+      - name: Installa dipendenze (FreqAI + Scikit-Learn + Pandas)
+        run: |
+          python -m pip install --upgrade pip
+          pip install --prefer-binary "requests>=2.32.5,<3" "pandas>=2.2.0" "scikit-learn>=1.4.0"
+
+      - name: Esegui Pionex FreqAI v10 Engine (con Tick Guardian)
         env:
-          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN || secrets.TELEGRAM_BOT_TOKEN || secrets.BOT_TOKEN || secrets.TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || secrets.CHAT_ID || secrets.TELEGRAM_CHAT }}
-          PIONEX_API_KEY: ${{ secrets.PIONEX_API_KEY || secrets.API_KEY }}
-          PIONEX_API_SECRET: ${{ secrets.PIONEX_API_SECRET || secrets.API_SECRET }}
-          AUTO_TRADE_ENABLED: ${{ vars.AUTO_TRADE_ENABLED || 'false' }}
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          PIONEX_API_KEY: ${{ secrets.PIONEX_API_KEY }}
+          PIONEX_API_SECRET: ${{ secrets.PIONEX_API_SECRET }}
+          GH_PAT: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
           INVEST_EUR: ${{ vars.INVEST_EUR || '50' }}
-          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          AUTO_TRADE_ENABLED: ${{ vars.AUTO_TRADE_ENABLED || 'false' }}
+          GUARDIAN_MINUTES_OPEN: ${{ vars.GUARDIAN_MINUTES_OPEN || '18' }}
+          GUARDIAN_MINUTES_HOT: ${{ vars.GUARDIAN_MINUTES_HOT || '6' }}
+          GUARDIAN_TICK_SEC: ${{ vars.GUARDIAN_TICK_SEC || '15' }}
           MANUAL_COMMAND: ${{ github.event.inputs.command || '' }}
           MANUAL_COIN: ${{ github.event.inputs.coin || '' }}
-          MANUAL_USDT: ${{ github.event.inputs.amount_usdt || '' }}
+          MANUAL_USDT: ${{ github.event.inputs.amount_usdt || '0' }}
         run: python3 main.py
 
-      - name: Save Bot State & Live Console (Auto-Commit)
-        if: always()
+      - name: Salva stato (bot_state.json) e Web Console (index.html)
         run: |
-          git config --local user.email "github-actions[bot]@users.noreply.github.com"
-          git config --local user.name "github-actions[bot]"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
           git add bot_state.json index.html
-          git diff --staged --quiet || (git commit -m "chore: update fast-scalp state and live console" && git pull --rebase -X theirs origin ${{ github.ref_name }} && git push)
+          if ! git diff --cached --quiet; then
+            git commit -m "Update bot state & web console [skip ci]"
+            git pull --rebase -X theirs origin "${GITHUB_REF_NAME:-main}" || true
+            git push
+          fi
