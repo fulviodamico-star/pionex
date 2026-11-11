@@ -3,378 +3,276 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Pionex FreqAI Bot v10</title>
+<title>Pionex FreqAI v10 Bot</title>
 <style>
-  :root { --bg:#0b1220; --card:#121a2b; --line:#22304a; --text:#f1f5f9; --muted:#8fa0b8; --green:#22c55e; --red:#ef4444; --amber:#f59e0b; --blue:#38bdf8; }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); padding: 12px; max-width: 720px; margin: 0 auto; font-size: 15px; line-height: 1.4; }
-  h2 { font-size: 13px; letter-spacing: .6px; text-transform: uppercase; color: var(--muted); margin-bottom: 12px; font-weight: 700; }
-  .card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 16px; margin-bottom: 14px; }
-  .head { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
-  .title { font-size: 19px; font-weight: 800; }
-  .chips { display: flex; gap: 6px; flex-wrap: wrap; }
-  .chip { display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; white-space: nowrap; }
-  .g { background: rgba(34,197,94,.15); color: #4ade80; } .r { background: rgba(239,68,68,.15); color: #f87171; }
-  .a { background: rgba(245,158,11,.15); color: #fbbf24; } .b { background: rgba(56,189,248,.15); color: #7dd3fc; }
-  .n { background: rgba(143,160,184,.15); color: var(--muted); }
-  .banner { border-radius: 14px; padding: 12px 14px; margin-bottom: 14px; font-size: 15px; font-weight: 700; }
-  .warn { display: none; background: rgba(245,158,11,.15); border: 1px solid var(--amber); color: #fbbf24; border-radius: 12px; padding: 10px 12px; margin-bottom: 14px; font-size: 13.5px; font-weight: 600; }
-  .sub { color: var(--muted); font-size: 12.5px; font-weight: 400; }
-  .big { font-size: 38px; font-weight: 800; line-height: 1.05; }
-  .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin: 14px 0; }
-  .stat { background: #0d1626; border-radius: 12px; padding: 10px 12px; }
-  .stat small { display: block; color: var(--muted); font-size: 12px; }
-  .stat b { font-size: 16px; }
-  .bar { position: relative; height: 12px; border-radius: 8px; background: #1b2740; margin: 16px 0 6px; }
-  .fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 8px; transition: width .4s; }
-  .tick { position: absolute; top: -4px; bottom: -4px; width: 2px; background: #fff; opacity: .85; }
-  .scale { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); }
-  .btn { border: 1px solid var(--line); background: #16213a; color: var(--text); padding: 10px 14px; border-radius: 10px; font-size: 14px; font-weight: 700; cursor: pointer; text-decoration: none; display: inline-block; }
-  .btn.danger { background: rgba(239,68,68,.18); border-color: rgba(239,68,68,.6); color: #fca5a5; width: 100%; padding: 14px; font-size: 15px; margin-top: 4px; }
-  .empty { text-align: center; padding: 14px 4px; }
-  .empty b { display: block; font-size: 17px; margin: 6px 0; }
-  .sumrow { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 12px; }
-  .sumrow div { background: #0d1626; border-radius: 10px; padding: 8px; text-align: center; }
-  .sumrow small { display: block; color: var(--muted); font-size: 11px; }
-  .sumrow b { font-size: 14px; }
-  .h { padding: 11px 0; border-bottom: 1px solid var(--line); }
-  .h:last-child { border-bottom: none; }
-  .h-top { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
-  .h-res { text-align: right; font-weight: 800; }
-  .h-res small { display: block; font-weight: 500; font-size: 12px; }
-  .why { color: var(--muted); font-size: 12.5px; margin-top: 3px; }
-  .ev { display: flex; gap: 12px; align-items: center; padding: 9px 0; border-bottom: 1px solid var(--line); }
-  .ev:last-child { border-bottom: none; }
-  .evt { font-weight: 800; min-width: 46px; font-size: 15px; }
-  .evn { flex: 1; font-size: 14px; }
-  .day { font-size: 12px; color: var(--muted); text-transform: uppercase; margin: 12px 0 2px; font-weight: 700; }
-  table { width: 100%; border-collapse: collapse; font-size: 14px; }
-  th { text-align: left; color: var(--muted); font-size: 11px; text-transform: uppercase; padding: 6px 4px; }
-  td { padding: 9px 4px; border-top: 1px solid var(--line); }
-  tr.row { cursor: pointer; }
-  tr.drow { display: none; } tr.drow.open { display: table-row; }
-  tr.drow td { color: var(--muted); font-size: 12.5px; background: #0d1626; border-radius: 8px; }
-  details summary { cursor: pointer; font-weight: 700; font-size: 14px; }
-  .inp { background: #0b1220; color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 9px 10px; font-size: 14px; width: 100%; }
-  .flex { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
-  .flex > * { flex: 1; min-width: 120px; }
-  .note { font-size: 12px; color: var(--muted); margin-top: 10px; }
+      :root { --bg:#0b1220; --card:#121a2b; --line:#22304a; --text:#f1f5f9; --muted:#94a3b8; --green:#10b981; --red:#ef4444; --amber:#f59e0b; --blue:#38bdf8; }
+  * { box-sizing:border-box; margin:0; padding:0; font-family:system-ui,-apple-system,sans-serif; }
+  body { background:var(--bg); color:var(--text); padding:14px; max-width:960px; margin:0 auto; line-height:1.45; }
+  .top { display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:12px; }
+  .title { font-size:18px; font-weight:800; }
+  .sub { font-size:12px; color:var(--muted); }
+  .pill { font-size:11px; font-weight:700; padding:4px 9px; border-radius:999px; background:#1e293b; border:1px solid var(--line); }
+  .banner { padding:14px; border-radius:12px; border:1px solid var(--line); margin-bottom:12px; }
+  .banner-title { font-size:15px; font-weight:800; margin-bottom:4px; }
+  .banner-sub { font-size:13px; color:#cbd5e1; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px; margin-bottom:12px; }
+  .card-h { font-size:12px; font-weight:800; text-transform:uppercase; color:var(--muted); letter-spacing:0.6px; margin-bottom:10px; display:flex; justify-content:space-between; align-items:center; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:8px; }
+  .kv { background:#0f172a; padding:10px; border-radius:8px; border:1px solid #1e293b; }
+  .kv-l { font-size:11px; color:var(--muted); }
+  .kv-v { font-size:15px; font-weight:800; margin-top:2px; font-variant-numeric:tabular-nums; }
+  .tabs { display:flex; gap:6px; overflow-x:auto; padding-bottom:4px; margin-bottom:12px; }
+  .tab { background:#162033; border:1px solid var(--line); color:var(--text); padding:8px 11px; border-radius:9px; cursor:pointer; min-width:86px; text-align:left; }
+  .tab.active { border-color:var(--blue); background:#1a2b46; }
+  .tab-top { display:flex; justify-content:space-between; font-size:12px; font-weight:800; }
+  .tab-px { font-size:11px; color:var(--muted); margin-top:2px; font-variant-numeric:tabular-nums; }
+  .bar { height:8px; background:#0f172a; border-radius:99px; overflow:hidden; margin:8px 0 4px; position:relative; border:1px solid #1e293b; }
+  .bar > div { height:100%; transition:width .3s; }
+  table { width:100%; border-collapse:collapse; font-size:12px; }
+  th, td { padding:7px 6px; border-bottom:1px solid #1e293b; text-align:left; font-variant-numeric:tabular-nums; }
+  th { color:var(--muted); font-weight:700; font-size:11px; }
+  .btn { background:#1e293b; color:var(--text); border:1px solid #334155; padding:8px 12px; border-radius:8px; font-size:12px; font-weight:700; cursor:pointer; }
+  .btn:hover { filter:brightness(1.15); }
+  .btn-red { background:rgba(239,68,68,.18); border-color:#ef4444; color:#fca5a5; }
+  .btn-green { background:rgba(16,185,129,.18); border-color:#10b981; color:#6ee7b7; }
+  input, select { background:#0f172a; color:var(--text); border:1px solid #334155; padding:7px 9px; border-radius:8px; font-size:12px; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .muted { color:var(--muted); font-size:12px; }
+  .pos-green { color:var(--green); } .pos-red { color:var(--red); } .pos-amber { color:var(--amber); }
 </style>
 </head>
 <body>
 
-<div class="head">
-  <div class="title">🤖 Pionex FreqAI v10</div>
-  <div class="chips"><span id="mode" class="chip"></span><span id="btc-chip" class="chip"></span><span id="upd" class="chip"></span></div>
-</div>
-<div id="stale" class="warn">⚠️ Dati vecchi: il bot non risulta in esecuzione da piu' di 90 minuti. Controlla GitHub Actions.</div>
-<div id="banner" class="banner"></div>
-
-<div class="card" id="pos"></div>
-
-<div class="card">
-  <h2>📜 Storico posizioni chiuse</h2>
-  <div id="sum" class="sumrow"></div>
-  <div id="hist"></div>
+<div class="top">
+  <div>
+    <div class="title">⚡ Pionex Freqtrade + FreqAI v10 Engine</div>
+    <div class="sub" id="subline">Caricamento...</div>
+  </div>
+  <div class="row">
+    <span class="pill" id="ws-pill">🔴 Prezzi Live...</span>
+    <span class="pill" id="btc-pill">⚪ BTC</span>
+    <span class="pill" id="mode-pill">MODO</span>
+  </div>
 </div>
 
+<div class="banner" id="advisor">
+  <div class="banner-title" id="adv-title"></div>
+  <div class="banner-sub" id="adv-sub"></div>
+</div>
+
+<div class="card" id="pos-card"></div>
+
+<div class="tabs" id="coin-tabs"></div>
+
+<div class="card" id="coin-detail"></div>
+
 <div class="card">
-  <h2>📅 News e calendario (cosa valuta il bot)</h2>
-  <div id="macro-banner" class="banner" style="margin-bottom:10px;"></div>
-  <div id="macro-list"></div>
-  <div id="fng" class="sub" style="margin-top:12px;"></div>
-  <div class="note">Il bot non legge i titoli dei giornali: considera solo il calendario macro USD (impatto Alto e Medio) e l'indice Fear &amp; Greed. Con un evento ad impatto Alto sospende i nuovi acquisti da 2 ore prima a 30 minuti dopo.</div>
+  <div class="card-h"><span>🎛️ Controlli Manuali (GitHub Actions / Telegram)</span><button class="btn" onclick="toggleCfg()">⚙️ Token GitHub</button></div>
+  <div id="cfg-box" style="display:none; margin-bottom:10px;" class="row">
+    <input id="gh-token" type="password" placeholder="GitHub Personal Access Token (scope: workflow)" style="flex:1;min-width:220px;">
+    <button class="btn btn-green" onclick="saveToken()">Salva nel browser</button>
+    <span class="muted">oppure invia direttamente <code>/status</code>, <code>/close</code>, <code>/open SOL</code>, <code>/sellall SOL</code> al bot Telegram.</span>
+  </div>
+  <div class="row">
+    <button class="btn" onclick="dispatchCmd('status','',0)">🔄 Aggiorna Stato Ora</button>
+    <button class="btn btn-red" onclick="dispatchCmd('close','',0)">🛑 Chiudi Posizione Registrata</button>
+    <select id="man-coin"></select>
+    <input id="man-usdt" type="number" step="1" placeholder="USDT (0 = auto)" style="width:120px;">
+    <button class="btn btn-green" onclick="manualOpen()">🚀 Apri Long Manuale</button>
+    <button class="btn btn-red" onclick="manualSellAll()">🧹 Vendi Tutto Saldo Coin</button>
+  </div>
+  <div id="cmd-msg" class="muted" style="margin-top:8px;"></div>
 </div>
 
 <div class="card">
-  <h2>📡 Mercato: le 10 coin controllate (FreqAI + Pionex L2)</h2>
-  <table>
-    <thead><tr><th>Coin</th><th>Prezzo</th><th>Punteggio</th><th>Stato</th></tr></thead>
-    <tbody id="scan"></tbody>
-  </table>
-  <div class="note">Tocca una riga per i dettagli (DI_values FreqAI, Spread Pionex in bps, Stop/Target).</div>
+  <div class="card-h"><span>📊 Statistiche & Protezioni Giornaliere</span><span id="daily-tag"></span></div>
+  <div class="grid" id="stats-grid"></div>
 </div>
 
 <div class="card">
-  <details>
-    <summary>🚨 Controlli manuali / emergenza</summary>
-    <div class="note" style="margin-top:8px;">I comandi avviano il bot su GitHub (30-90 secondi) e ti arriva conferma su Telegram. Le chiavi Pionex restano nei Secrets.</div>
-    <div class="flex">
-      <select id="m-coin" class="inp"></select>
-      <input id="m-amt" class="inp" type="number" min="10" step="1" placeholder="USDT (vuoto = auto)">
-    </div>
-    <div class="flex">
-      <button class="btn" onclick="cmdOpen()">🚀 Apri long manuale</button>
-      <button class="btn" onclick="cmdSellAll()">💥 Vendi tutto il saldo della coin</button>
-    </div>
-    <div class="flex">
-      <button class="btn" onclick="setToken()">🔑 Imposta token GitHub</button>
-      <a class="btn" id="actions-link" target="_blank" rel="noopener">⚙️ GitHub Actions</a>
-      <a class="btn" href="https://www.pionex.com/" target="_blank" rel="noopener">📱 Pionex</a>
-    </div>
-    <div class="sub" style="margin-top:10px;">Token: <span id="tok-state"></span></div>
-    <div id="cmd-log" style="font-size:13px; margin-top:8px;"></div>
-  </details>
+  <div class="card-h"><span>📜 Storico Operazioni Recenti</span><span id="macro-tag"></span></div>
+  <div id="hist-box"></div>
 </div>
 
 <script>
-const DATA = {"updated_ts": 1794394971, "session": "🇪🇺 Sessione Europea Attiva", "fng_val": 29, "fng_class": "Fear", "btc_regime": {"state": "BULLISH", "ret_1h_pct": 0.0, "rsi_1h": 52.1, "above_ema50": true, "dump_guard": false}, "mode": "SIMULAZIONE", "advisor": {"badge": "👀 QUASI PRONTO SU DOT (66/100) - ATTENDI", "color": "#f59e0b", "bg": "rgba(245,158,11,0.14)", "instruction": "DOT e' vicino alla soglia di ingresso (66/100), ma manca una conferma (Vol Active (Z=+0.29) + L2 Bid (+1.9%) | BLOCCATO: Cooldown dopo ultima chiusura (60 min), DOT chiusa da meno di 6h). Attendi il prossimo segnale prima di entrare."}, "waiting": "Migliore: DOT (7/10 - 66/100) -> Non apro perche': BLOCCATO: Cooldown dopo ultima chiusura (60 min), DOT chiusa da meno di 6h.", "position": {"is_open": false, "coin_code": "DOT", "symbol": "DOT_USDT", "entry_price": 0.84, "amount_coin": 62.98, "invested_usdt": 52.93, "sl_price": 0.849112, "tp_price": 0.8605082528033542, "initial_sl": 0.8292797769437011, "one_r": 0.010720223056298828, "highest_price": 0.8584, "breakeven_locked": true, "tp1_locked": true, "tp2_locked": true, "alerts_triggered": [], "opened_at": "11/11 08:40 UTC", "opened_ts": 1794386437, "mode": "SIMULATION", "order_id": "SIM", "last_check_ts": 1794393679, "close_fail_count": 0, "enter_tag": "freqai_fastscalp"}, "stats": {"total_trades": 2, "wins": 1, "losses": 1, "total_pnl_pct": -0.95, "total_pnl_usdt": -0.51, "daily_date": "2026-11-11", "daily_pnl_pct": 1.37, "daily_trades": 1, "last_action": "CHIUSO DOT (+1.45%) il 11/11 10:51 UTC", "daily_pnl_usdt": 0.77, "consec_losses": 0, "last_close_ts": 1794394316, "last_loss_ts": 0, "coin_last_close": {"DOT": 1794394316}}, "history": [{"coin": "DOT", "entry": 0.84, "exit": 0.853, "pnl_pct": 1.45, "pnl_usdt": 0.77, "reason": "💰 FAST-SCALP PROFIT TAKE (+1.45% netto su rallentamento 15m)", "closed_at": "11/11 10:51 UTC", "mode": "SIMULATION"}, {"coin": "AVAX", "entry": 8.38, "exit": 8.187, "pnl_pct": -2.4, "pnl_usdt": -1.28, "reason": "🛑 STOP LOSS TOCCATO ($8.187)", "closed_at": "10/11 16:54 UTC", "mode": "SIMULATION"}, {"closed_at": "10/11/2026 11:26", "coin": "LINK", "entry": 10.6168, "exit": 10.4738, "pnl_usdt": -0.0, "pnl_pct": -0.69, "reason": "🎯 TAKE PROFIT GRIGLIA RAGGIUNTO su LINK (10.47$ >= 0.00$)"}], "coins": [{"code": "DOT", "name": "Polkadot", "ws": "DOT/USD", "kraken": "DOTUSD", "price": 0.851, "sl_price": 0.8396744296134255, "tp_price": 0.8666632, "final_score": 7, "raw_100": 66, "ai_prob": 50, "di_val": 0.28, "spread_bps": 11.8, "timer_summary": "Vol Active (Z=+0.29) + L2 Bid (+1.9%)", "risk_ok": false, "risk_status": "BLOCCATO: Cooldown dopo ultima chiusura (60 min), DOT chiusa da meno di 6h", "rr_ratio": 1.22, "pos_usdt": 52.9, "entry_ok": false}, {"code": "ADA", "name": "Cardano", "ws": "ADA/USD", "kraken": "ADAUSD", "price": 0.1765, "sl_price": 0.17457763007053026, "tp_price": 0.17909519940478413, "final_score": 6, "raw_100": 62, "ai_prob": 38, "di_val": 0.27, "spread_bps": 5.7, "timer_summary": "Vol Active (Z=+0.66) + L2 Bid (+2.0%)", "risk_ok": false, "risk_status": "BLOCCATO: Cooldown dopo ultima chiusura (60 min)", "rr_ratio": 1.15, "pos_usdt": 52.9, "entry_ok": false}, {"code": "BTC", "name": "Bitcoin", "ws": "XBT/USD", "kraken": "XBTUSD", "price": 74074.0, "sl_price": 73407.334, "tp_price": 75073.99900000001, "final_score": 6, "raw_100": 60, "ai_prob": 40, "di_val": 0.15, "spread_bps": 0.0, "timer_summary": "VWAP Active + EMA20 15m Hold/Bounce", "risk_ok": false, "risk_status": "BLOCCATO: Cooldown dopo ultima chiusura (60 min)", "rr_ratio": 1.25, "pos_usdt": 52.9, "entry_ok": false}, {"code": "AVAX", "name": "Avalanche", "ws": "AVAX/USD", "kraken": "AVAXUSD", "price": 8.68, "sl_price": 8.567866914195022, "tp_price": 8.83137966583672, "final_score": 6, "raw_100": 57, "ai_prob": 24, "di_val": 0.2, "spread_bps": 11.5, "timer_summary": "In attesa trigger 15m", "risk_ok": false, "risk_status": "BLOCCATO: Cooldown dopo ultima chiusura (60 min)", "rr_ratio": 1.18, "pos_usdt": 52.9, "entry_ok": false}, {"code": "SOL", "name": "Solana", "ws": "SOL/USD", "kraken": "SOLUSD", "price": 83.91, "sl_price": 82.95877573526545, "tp_price": 85.19415275739163, "final_score": 6, "raw_100": 56, "ai_prob": 36, "di_val": 0.19, "spread_bps": 1.2, "timer_summary": "VWAP Active + EMA20 15m Hold/Bounce", "risk_ok": false, "risk_status": "BLOCCATO: Cooldown dopo ultima chiusura (60 min)", "rr_ratio": 1.16, "pos_usdt": 52.9, "entry_ok": false}, {"code": "LINK", "name": "Chainlink", "ws": "LINK/USD", "kraken": "LINKUSD", "price": 10.38, "sl_price": 10.265285946380493, "tp_price": 10.567073500000001, "final_score": 6, "raw_100": 55, "ai_prob": 47, "di_val": 0.16, "spread_bps": 9.6, "timer_summary": "L2 Bid (+8.9%)", "risk_ok": false, "risk_status": "BLOCCATO: Cooldown dopo ultima chiusura (60 min)", "rr_ratio": 1.41, "pos_usdt": 52.9, "entry_ok": false}, {"code": "ETH", "name": "Ethereum", "ws": "ETH/USD", "kraken": "ETHUSD", "price": 2060.91, "sl_price": 2042.3618099999999, "tp_price": 2096.7059101526343, "final_score": 5, "raw_100": 53, "ai_prob": 48, "di_val": 0.14, "spread_bps": 0.0, "timer_summary": "EMA20 15m Hold/Bounce + L2 Bid (+2.0%)", "risk_ok": false, "risk_status": "BLOCCATO: Cooldown dopo ultima chiusura (60 min)", "rr_ratio": 1.64, "pos_usdt": 52.9, "entry_ok": false}, {"code": "SUI", "name": "Sui", "ws": "SUI/USD", "kraken": "SUIUSD", "price": 0.8306, "sl_price": 0.8208743817984742, "tp_price": 0.8441084, "final_score": 5, "raw_100": 51, "ai_prob": 47, "di_val": 0.2, "spread_bps": 1.2, "timer_summary": "In attesa trigger 15m", "risk_ok": false, "risk_status": "BLOCCATO: Cooldown dopo ultima chiusura (60 min)", "rr_ratio": 1.2, "pos_usdt": 52.9, "entry_ok": false}, {"code": "XRP", "name": "Ripple", "ws": "XRP/USD", "kraken": "XRPUSD", "price": 1.0634, "sl_price": 1.0518248950325375, "tp_price": 1.08154258, "final_score": 4, "raw_100": 37, "ai_prob": 37, "di_val": 0.18, "spread_bps": 1.9, "timer_summary": "In attesa trigger 15m", "risk_ok": false, "risk_status": "BLOCCATO: Cooldown dopo ultima chiusura (60 min)", "rr_ratio": 1.35, "pos_usdt": 52.9, "entry_ok": false}, {"code": "DOGE", "name": "Dogecoin", "ws": "XDG/USD", "kraken": "XDGUSD", "price": 0.0682, "sl_price": 0.06751210485167805, "tp_price": 0.06951597332722459, "final_score": 4, "raw_100": 37, "ai_prob": 36, "di_val": 0.17, "spread_bps": 4.4, "timer_summary": "In attesa trigger 15m", "risk_ok": false, "risk_status": "BLOCCATO: Cooldown dopo ultima chiusura (60 min)", "rr_ratio": 1.65, "pos_usdt": 52.9, "entry_ok": false}], "macro": [{"title": "Unemployment Claims", "impact": "Medium", "ts": 1794490200}], "macro_ok": true, "repo": "fulviodamico-star/pionex", "workflow": "bot.yml", "ref": "main", "limits": {"max_trades": 5, "daily_max_loss": 4.0, "fee_rt": 0.1}};
-const live = {}; const wsMap = {};
-DATA.coins.forEach(c => { live[c.code] = c.price; wsMap[c.ws] = c.code; });
-const $ = id => document.getElementById(id);
+const D = {"updated_ts": 1794399717, "session": "🇪🇺 Sessione Europea Attiva", "btc_regime": "⚪ BTC Neutrale / Range", "fng_val": 29, "fng_class": "Fear", "mode": "SIMULAZIONE", "advisor": {"badge": "👀 QUASI PRONTO SU AVAX (65/100) - ATTENDI", "color": "#f59e0b", "bg": "rgba(245,158,11,0.14)", "instruction": "AVAX e' vicino alla soglia di ingresso (65/100), ma manca una conferma (L2 Bid (+11.0%) | PASS (Rischio OK))."}, "waiting": "", "position": {"is_open": false, "coin_code": "DOT", "symbol": "DOT_USDT", "entry_price": 0.84, "amount_coin": 62.98, "invested_usdt": 52.93, "sl_price": 0.849112, "tp_price": 0.8605082528033542, "initial_sl": 0.8292797769437011, "one_r": 0.010720223056298828, "highest_price": 0.8584, "breakeven_locked": true, "tp1_locked": true, "tp2_locked": true, "alerts_triggered": [], "opened_at": "11/11 08:40 UTC", "opened_ts": 1794386437, "mode": "SIMULATION", "order_id": "SIM", "last_check_ts": 1794393679, "close_fail_count": 0, "enter_tag": "freqai_fastscalp", "partial_tp_done": false, "realized_partial_usdt": 0.0}, "stats": {"total_trades": 2, "wins": 1, "losses": 1, "total_pnl_pct": -0.95, "total_pnl_usdt": -0.51, "daily_date": "2026-11-11", "daily_pnl_pct": 1.37, "daily_trades": 1, "last_action": "CHIUSO DOT (+1.45%) il 11/11 10:51 UTC", "daily_pnl_usdt": 0.77, "consec_losses": 0, "last_close_ts": 1794394316, "last_loss_ts": 0, "coin_last_close": {"DOT": 1794394316}, "last_tg_update_id": 540276387}, "history": [{"coin": "DOT", "entry": 0.84, "exit": 0.853, "pnl_pct": 1.45, "pnl_usdt": 0.77, "reason": "💰 FAST-SCALP PROFIT TAKE (+1.45% netto su rallentamento 15m)", "closed_at": "11/11 10:51 UTC", "mode": "SIMULATION"}, {"coin": "AVAX", "entry": 8.38, "exit": 8.187, "pnl_pct": -2.4, "pnl_usdt": -1.28, "reason": "🛑 STOP LOSS TOCCATO ($8.187)", "closed_at": "10/11 16:54 UTC", "mode": "SIMULATION"}, {"closed_at": "10/11/2026 11:26", "coin": "LINK", "entry": 10.6168, "exit": 10.4738, "pnl_usdt": -0.0, "pnl_pct": -0.69, "reason": "🎯 TAKE PROFIT GRIGLIA RAGGIUNTO su LINK (10.47$ >= 0.00$)"}], "coins": [{"code": "AVAX", "name": "Avalanche", "ws": "AVAX/USD", "kraken": "AVAXUSD", "price": 8.57, "sl_price": 8.49287, "tp_price": 8.698568, "final_score": 6, "raw_100": 65, "ai_prob": 36, "timer_summary": "L2 Bid (+11.0%)", "risk_ok": true, "risk_status": "PASS (Rischio OK)", "rr_ratio": 1.4, "pos_usdt": 52.89, "entry_ok": false}, {"code": "ADA", "name": "Cardano", "ws": "ADA/USD", "kraken": "ADAUSD", "price": 0.1767, "sl_price": 0.1748540860611262, "tp_price": 0.1791919838174796, "final_score": 6, "raw_100": 60, "ai_prob": 32, "timer_summary": "EMA20 15m Hold/Bounce + L2 Bid (+37.3%)", "risk_ok": false, "risk_status": "BLOCCATO: R:R netto basso (1.14x < 1.15x)", "rr_ratio": 1.14, "pos_usdt": 52.89, "entry_ok": false}, {"code": "SUI", "name": "Sui", "ws": "SUI/USD", "kraken": "SUIUSD", "price": 0.8318, "sl_price": 0.822405130892011, "tp_price": 0.8444830732957852, "final_score": 6, "raw_100": 57, "ai_prob": 39, "timer_summary": "L2 Bid (+8.9%)", "risk_ok": true, "risk_status": "PASS (Rischio OK)", "rr_ratio": 1.16, "pos_usdt": 52.89, "entry_ok": false}, {"code": "DOT", "name": "Polkadot", "ws": "DOT/USD", "kraken": "DOTUSD", "price": 0.85, "sl_price": 0.8392645056649688, "tp_price": 0.8666632, "final_score": 6, "raw_100": 55, "ai_prob": 33, "timer_summary": "EMA20 15m Hold/Bounce + L2 Bid (+22.7%)", "risk_ok": false, "risk_status": "BLOCCATO: DOT chiusa da meno di 6h", "rr_ratio": 1.36, "pos_usdt": 49.02, "entry_ok": false}, {"code": "DOGE", "name": "Dogecoin", "ws": "XDG/USD", "kraken": "XDGUSD", "price": 0.06816, "sl_price": 0.06750526620478764, "tp_price": 0.06941253421692799, "final_score": 5, "raw_100": 48, "ai_prob": 36, "timer_summary": "L2 Bid (+26.1%)", "risk_ok": true, "risk_status": "PASS (Rischio OK)", "rr_ratio": 1.64, "pos_usdt": 52.89, "entry_ok": false}, {"code": "SOL", "name": "Solana", "ws": "SOL/USD", "kraken": "SOLUSD", "price": 83.85, "sl_price": 82.96273897056338, "tp_price": 85.04780238973943, "final_score": 5, "raw_100": 46, "ai_prob": 31, "timer_summary": "L2 Bid (+11.1%)", "risk_ok": false, "risk_status": "BLOCCATO: R:R netto basso (1.15x < 1.15x)", "rr_ratio": 1.15, "pos_usdt": 52.89, "entry_ok": false}, {"code": "LINK", "name": "Chainlink", "ws": "LINK/USD", "kraken": "LINKUSD", "price": 10.39, "sl_price": 10.283379086863093, "tp_price": 10.567073500000001, "final_score": 4, "raw_100": 44, "ai_prob": 41, "timer_summary": "In attesa trigger 15m", "risk_ok": true, "risk_status": "PASS (Rischio OK)", "rr_ratio": 1.42, "pos_usdt": 52.89, "entry_ok": false}, {"code": "ETH", "name": "Ethereum", "ws": "ETH/USD", "kraken": "ETHUSD", "price": 2057.22, "sl_price": 2038.7050199999999, "tp_price": 2090.5369887989496, "final_score": 4, "raw_100": 43, "ai_prob": 57, "timer_summary": "In attesa trigger 15m", "risk_ok": true, "risk_status": "PASS (Rischio OK)", "rr_ratio": 1.52, "pos_usdt": 52.89, "entry_ok": false}, {"code": "BTC", "name": "Bitcoin", "ws": "XBT/USD", "kraken": "XBTUSD", "price": 74038.01, "sl_price": 73371.66790999999, "tp_price": 75037.523135, "final_score": 4, "raw_100": 42, "ai_prob": 42, "timer_summary": "In attesa trigger 15m", "risk_ok": true, "risk_status": "PASS (Rischio OK)", "rr_ratio": 1.25, "pos_usdt": 52.89, "entry_ok": false}, {"code": "XRP", "name": "Ripple", "ws": "XRP/USD", "kraken": "XRPUSD", "price": 1.0557, "sl_price": 1.0461987000000001, "tp_price": 1.0770031885257638, "final_score": 4, "raw_100": 35, "ai_prob": 36, "timer_summary": "In attesa trigger 15m", "risk_ok": true, "risk_status": "PASS (Rischio OK)", "rr_ratio": 1.92, "pos_usdt": 52.89, "entry_ok": false}], "macro": [{"title": "Unemployment Claims", "impact": "Medium", "ts": 1794490200}], "macro_ok": true, "repo": "fulviodamico-star/pionex", "workflow": "bot.yml", "ref": "main", "limits": {"max_trades": 5, "daily_max_loss": 4.0, "fee_rt": 0.1}};
+const livePx = {};
+let selected = (D.position && D.position.is_open) ? D.position.coin_code : (D.coins[0]?.code || 'SOL');
 
-function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, m => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m])); }
-function fp(p) {
-  p = Number(p || 0);
-  if (p <= 0) return "$0.00";
-  if (p >= 1000) return "$" + p.toLocaleString("en-US", {minimumFractionDigits: 2, maximumFractionDigits: 2});
-  if (p >= 10) return "$" + p.toFixed(2);
-  if (p >= 1) return "$" + p.toFixed(3);
-  return "$" + p.toFixed(4);
+function fmtPx(p){
+  p = Number(p||0);
+  if(p<=0) return '$0.00';
+  if(p>=1000) return '$'+p.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+  if(p>=10) return '$'+p.toFixed(2);
+  if(p>=1) return '$'+p.toFixed(3);
+  return '$'+p.toFixed(4);
 }
-function sg(x) { return (x >= 0 ? "+" : "") + x.toFixed(2); }
-function ago(ts) {
-  const m = Math.max(0, Math.round((Date.now() / 1000 - ts) / 60));
-  if (m < 60) return m + " min fa";
-  return Math.floor(m / 60) + "h " + (m % 60) + "m fa";
-}
-function dur(ts) {
-  const m = Math.max(0, Math.round((Date.now() / 1000 - ts) / 60));
-  return m < 60 ? m + " min" : Math.floor(m / 60) + "h " + (m % 60) + "m";
-}
-function hm(ts) { return new Date(ts * 1000).toLocaleTimeString("it-IT", {hour: "2-digit", minute: "2-digit"}); }
-function dayLabel(ts) {
-  const d = new Date(ts * 1000), t = new Date(), tm = new Date(t.getTime() + 86400000);
-  if (d.toDateString() === t.toDateString()) return "Oggi";
-  if (d.toDateString() === tm.toDateString()) return "Domani";
-  return d.toLocaleDateString("it-IT", {weekday: "long", day: "numeric", month: "long"});
+function ageStr(ts){
+  const s = Math.max(0, Math.floor(Date.now()/1000 - ts));
+  if(s<60) return s+'s fa';
+  if(s<3600) return Math.floor(s/60)+'m fa';
+  return (s/3600).toFixed(1)+'h fa';
 }
 
-function renderHead() {
-  const age = (Date.now() / 1000 - DATA.updated_ts) / 60;
-  $("mode").className = "chip " + (DATA.mode === "LIVE" ? "r" : "b");
-  $("mode").textContent = DATA.mode === "LIVE" ? "LIVE · soldi reali" : "SIMULAZIONE";
-  const br = DATA.btc_regime || {state: "NEUTRAL"};
-  $("btc-chip").className = "chip " + (br.state === "BULLISH" ? "g" : (br.state === "BEARISH_DUMP" ? "r" : "n"));
-  $("btc-chip").textContent = "BTC: " + br.state;
-  $("upd").className = "chip " + (age > 90 ? "a" : "n");
-  $("upd").textContent = "Aggiornato " + ago(DATA.updated_ts);
-  $("stale").style.display = age > 90 ? "block" : "none";
-  const a = DATA.advisor, b = $("banner");
-  b.style.background = a.bg;
-  b.style.border = "1px solid " + a.color;
-  b.innerHTML = `<div style="color:${a.color}">${esc(a.badge)}</div><div class="sub" style="margin-top:4px;color:#cbd5e1;">${esc(a.instruction)}</div>`;
+function renderTop(){
+  document.getElementById('subline').textContent =
+    `Ultimo calcolo AI: ${ageStr(D.updated_ts)} · ${D.session} · Fear&Greed: ${D.fng_val} (${D.fng_class})`;
+  const mp = document.getElementById('mode-pill');
+  mp.textContent = D.mode === 'LIVE' ? '🟢 LIVE PIONEX' : '🧪 SIMULAZIONE';
+  mp.style.borderColor = D.mode === 'LIVE' ? '#10b981' : '#f59e0b';
+  const bp = document.getElementById('btc-pill');
+  bp.textContent = D.btc_regime || '⚪ BTC';
+
+  const adv = document.getElementById('advisor');
+  adv.style.background = D.advisor.bg;
+  adv.style.borderColor = D.advisor.color;
+  const t = document.getElementById('adv-title');
+  t.style.color = D.advisor.color;
+  t.textContent = D.advisor.badge;
+  document.getElementById('adv-sub').textContent = D.advisor.instruction + (D.waiting ? ' — ' + D.waiting : '');
 }
 
-function renderPosition() {
-  const p = DATA.position, el = $("pos");
-  if (!p.is_open) {
-    el.innerHTML = `<h2>📌 Posizione aperta</h2><div class="empty"><div style="font-size:30px;">⚪</div><b>Nessuna posizione aperta</b><div class="sub">Il capitale e' in USDT, il bot attende un segnale.</div>${DATA.waiting ? `<div class="sub" style="margin-top:8px;">${esc(DATA.waiting)}</div>` : ""}</div>`;
+function renderPosition(){
+  const box = document.getElementById('pos-card');
+  const p = D.position;
+  if(!p || !p.is_open){
+    box.innerHTML = `<div class="card-h"><span>💼 Posizione Attiva</span><span>FLAT (100% USDT)</span></div>
+      <div class="muted">${D.waiting || 'Nessuna posizione aperta. Il motore FreqAI v10 attende un setup ad alta probabilita\'.'}</div>`;
     return;
   }
-  const prot = p.tp2_locked ? "Profitto blindato +1.45R" : (p.tp1_locked ? "Profitto blindato +1R" : (p.breakeven_locked ? "Break-even (non puoi perdere)" : "Stop iniziale"));
-  el.innerHTML = `
-    <h2>📌 Posizione aperta · ${esc(p.coin_code)} <span class="chip ${p.mode === "LIVE_PIONEX" ? "r" : "b"}">${p.mode === "LIVE_PIONEX" ? "REALE" : "SIM"}</span></h2>
-    <div id="pos-pnl" class="big">—</div>
-    <div id="pos-usdt" class="sub" style="font-size:14px;"></div>
-    <div class="bar"><div id="pos-fill" class="fill"></div><div id="pos-tick" class="tick"></div></div>
-    <div class="scale"><span>🛑 Stop ${fp(p.sl_price)}</span><span id="pos-now"></span><span>🎯 Target ${fp(p.tp_price)}</span></div>
-    <div class="grid">
-      <div class="stat"><small>Prezzo di ingresso</small><b>${fp(p.entry_price)}</b></div>
-      <div class="stat"><small>Investito</small><b>${p.invested_usdt.toFixed(2)} USDT</b></div>
-      <div class="stat"><small>Aperta da</small><b>${dur(p.opened_ts)}</b></div>
-      <div class="stat"><small>Protezione</small><b style="font-size:13px;">${prot}</b></div>
-    </div>
-    <button class="btn danger" onclick="cmdClose()">🛑 CHIUDI ORA A MERCATO</button>`;
-  updatePosLive();
-}
-
-function updatePosLive() {
-  const p = DATA.position;
-  if (!p.is_open || !$("pos-pnl")) return;
-  const cur = live[p.coin_code] || p.entry_price, entry = p.entry_price;
-  const net = ((cur - entry) / entry) * 100 - DATA.limits.fee_rt;
-  const usdt = p.invested_usdt * net / 100;
-  const oneR = p.one_r || Math.max(entry - p.initial_sl, entry * 0.009);
-  const r = (cur - entry) / oneR;
-  const col = net >= 0 ? "var(--green)" : "var(--red)";
-  $("pos-pnl").style.color = col;
-  $("pos-pnl").textContent = sg(net) + "%";
-  $("pos-usdt").textContent = sg(usdt) + " USDT · " + sg(r) + "R (al netto delle commissioni)";
+  const coin = D.coins.find(c=>c.code===p.coin_code) || {};
+  const cur = livePx[p.coin_code] || coin.price || p.entry_price;
+  const fee = (D.limits.fee_rt || 0.10) / 100;
+  const partialPnl = Number(p.realized_partial_usdt || 0);
+  const netPct = (((cur - p.entry_price) / p.entry_price) - fee) * 100;
+  const netUsdt = p.invested_usdt * (netPct / 100) + partialPnl;
+  const oneR = p.one_r || Math.max(p.entry_price - p.initial_sl, p.entry_price*0.01);
+  const rMult = (cur - p.entry_price) / oneR;
   const span = Math.max(p.tp_price - p.sl_price, 1e-9);
-  const pc = x => Math.max(0, Math.min(100, (x - p.sl_price) / span * 100));
-  $("pos-fill").style.width = pc(cur) + "%";
-  $("pos-fill").style.background = col;
-  $("pos-tick").style.left = pc(entry) + "%";
-  $("pos-now").textContent = "Ora " + fp(cur);
+  const prog = Math.max(0, Math.min(100, ((cur - p.sl_price) / span) * 100));
+  const col = netUsdt >= 0 ? 'pos-green' : 'pos-red';
+  const scaleTag = p.partial_tp_done ? ` · 💰 Scale-Out 50% (+${partialPnl.toFixed(2)} USDT)` : '';
+
+  box.innerHTML = `
+    <div class="card-h"><span>🔥 POSIZIONE APERTA: ${p.coin_code} (${p.mode}${scaleTag})</span><span>Aperta: ${p.opened_at}</span></div>
+    <div class="grid">
+      <div class="kv"><div class="kv-l">Prezzo Ingresso</div><div class="kv-v">${fmtPx(p.entry_price)}</div></div>
+      <div class="kv"><div class="kv-l">Prezzo Live</div><div class="kv-v">${fmtPx(cur)}</div></div>
+      <div class="kv"><div class="kv-l">PnL Netto Totale</div><div class="kv-v ${col}">${netPct>=0?'+':''}${netPct.toFixed(2)}% (${netUsdt>=0?'+':''}${netUsdt.toFixed(2)} $)</div></div>
+      <div class="kv"><div class="kv-l">Multiplo R</div><div class="kv-v ${col}">${rMult>=0?'+':''}${rMult.toFixed(2)}R</div></div>
+      <div class="kv"><div class="kv-l">Stop-Loss ${p.breakeven_locked?'🔒':''}</div><div class="kv-v pos-red">${fmtPx(p.sl_price)}</div></div>
+      <div class="kv"><div class="kv-l">Take-Profit 🎯</div><div class="kv-v pos-green">${fmtPx(p.tp_price)}</div></div>
+    </div>
+    <div class="bar"><div style="width:${prog}%; background:${netUsdt>=0?'#10b981':'#ef4444'}"></div></div>
+    <div class="row" style="justify-content:space-between"><span class="muted">SL ${fmtPx(p.sl_price)}</span><span class="muted">Investito residuo: ${Number(p.invested_usdt).toFixed(2)} USDT (${p.amount_coin} ${p.coin_code})</span><span class="muted">TP ${fmtPx(p.tp_price)}</span></div>`;
 }
 
-function renderHistory() {
-  const s = DATA.stats, h = DATA.history || [];
-  const wr = s.total_trades > 0 ? Math.round(s.wins / s.total_trades * 100) + "%" : "—";
-  const tc = s.total_pnl_usdt >= 0 ? "var(--green)" : "var(--red)";
-  const dc = (s.daily_pnl_usdt || 0) >= 0 ? "var(--green)" : "var(--red)";
-  $("sum").innerHTML = `
-    <div><small>Chiuse</small><b>${s.total_trades}</b></div>
-    <div><small>Vinte</small><b>${wr}</b></div>
-    <div><small>Totale</small><b style="color:${tc};">${sg(s.total_pnl_usdt)}$</b></div>
-    <div><small>Oggi (${s.daily_trades || 0}/${DATA.limits.max_trades})</small><b style="color:${dc};">${sg(s.daily_pnl_usdt || 0)}$</b></div>`;
-  if (h.length === 0) { $("hist").innerHTML = `<div class="sub" style="text-align:center;padding:14px;">Ancora nessuna posizione chiusa.</div>`; return; }
-  $("hist").innerHTML = h.map(x => {
-    const win = x.pnl_pct >= 0, col = win ? "var(--green)" : "var(--red)";
-    return `<div class="h">
-      <div class="h-top">
-        <div><b>${esc(x.coin)}</b> <span class="chip n">${x.mode === "LIVE_PIONEX" ? "REALE" : "SIM"}</span>
-          <div class="sub">${esc(x.closed_at)} · ${fp(x.entry)} → ${fp(x.exit)}</div></div>
-        <div class="h-res" style="color:${col};">${sg(x.pnl_pct)}%<small>${sg(x.pnl_usdt || 0)} USDT</small></div>
-      </div>
-      <div class="why">${esc(x.reason)}</div></div>`;
-  }).join("");
+function renderTabs(){
+  const t = document.getElementById('coin-tabs');
+  t.innerHTML = D.coins.map(c=>{
+    const px = livePx[c.code] || c.price;
+    const badge = c.entry_ok ? '🟢' : (c.raw_100>=54 ? '🟡' : '⚪');
+    return `<button class="tab ${c.code===selected?'active':''}" onclick="selCoin('${c.code}')">
+      <div class="tab-top"><span>${badge} ${c.code}</span><span>${c.raw_100}/100</span></div>
+      <div class="tab-px" id="tabpx-${c.code}">${fmtPx(px)}</div>
+    </button>`;
+  }).join('');
 }
 
-function renderMacro() {
-  const now = Date.now() / 1000, ev = DATA.macro || [];
-  let blocking = null, nextHigh = null;
-  ev.forEach(e => {
-    if (e.impact !== "High") return;
-    if (now >= e.ts - 7200 && now <= e.ts + 1800) blocking = e;
-    else if (e.ts > now && (!nextHigh || e.ts < nextHigh.ts)) nextHigh = e;
-  });
-  const b = $("macro-banner");
-  if (!DATA.macro_ok) {
-    b.style.background = "rgba(245,158,11,.14)"; b.style.border = "1px solid var(--amber)";
-    b.innerHTML = `<div style="color:#fbbf24;">⚠️ Calendario non raggiungibile in questo giro</div><div class="sub">Il bot non ha potuto controllare le news: nessun blocco applicato.</div>`;
-  } else if (blocking) {
-    b.style.background = "rgba(239,68,68,.14)"; b.style.border = "1px solid var(--red)";
-    b.innerHTML = `<div style="color:#f87171;">⛔ Acquisti sospesi: ${esc(blocking.title)} alle ${hm(blocking.ts)}</div>`;
-  } else if (nextHigh) {
-    b.style.background = "rgba(56,189,248,.12)"; b.style.border = "1px solid var(--blue)";
-    b.innerHTML = `<div style="color:#7dd3fc;">✅ Nessun blocco ora</div><div class="sub">Prossimo evento forte: ${esc(nextHigh.title)} alle ${hm(nextHigh.ts)} (stop acquisti da 2 ore prima)</div>`;
-  } else {
-    b.style.background = "rgba(34,197,94,.12)"; b.style.border = "1px solid var(--green)";
-    b.innerHTML = `<div style="color:#4ade80;">✅ Nessun evento forte in arrivo</div>`;
-  }
-  let html = "", last = "";
-  ev.filter(e => e.ts > now - 6 * 3600).forEach(e => {
-    const d = dayLabel(e.ts);
-    if (d !== last) { html += `<div class="day">${esc(d)}</div>`; last = d; }
-    let chip;
-    if (now > e.ts + 1800) chip = `<span class="chip n">concluso</span>`;
-    else if (e.impact === "High" && now >= e.ts - 7200) chip = `<span class="chip r">⛔ blocca acquisti</span>`;
-    else if (e.impact === "High") chip = `<span class="chip a">⚠️ stop 2h prima</span>`;
-    else chip = `<span class="chip n">monitorato</span>`;
-    html += `<div class="ev"><div class="evt">${hm(e.ts)}</div><div class="evn">${esc(e.title)}<div class="sub">Impatto ${e.impact === "High" ? "ALTO" : "medio"} · USD</div></div>${chip}</div>`;
-  });
-  $("macro-list").innerHTML = html || (DATA.macro_ok ? `<div class="sub">Nessun evento USD importante nelle prossime 36 ore.</div>` : "");
-  $("fng").textContent = "Sentiment di mercato: Fear & Greed " + DATA.fng_val + " (" + DATA.fng_class + ")";
+function renderDetail(){
+  const c = D.coins.find(x=>x.code===selected) || D.coins[0];
+  if(!c) return;
+  const px = livePx[c.code] || c.price;
+  document.getElementById('coin-detail').innerHTML = `
+    <div class="card-h"><span>🔍 Dettaglio ${c.name} (${c.code}) — Score ${c.final_score}/10 (${c.raw_100}/100)</span><span>${c.entry_ok?'🟢 SEGNALE PRONTO':'⏳ IN ATTESA'}</span></div>
+    <div class="grid">
+      <div class="kv"><div class="kv-l">Prezzo Live</div><div class="kv-v">${fmtPx(px)}</div></div>
+      <div class="kv"><div class="kv-l">FreqAI Triple-Barrier</div><div class="kv-v">${c.ai_prob}%</div></div>
+      <div class="kv"><div class="kv-l">Stop-Loss Calcolato</div><div class="kv-v pos-red">${fmtPx(c.sl_price)}</div></div>
+      <div class="kv"><div class="kv-l">Take-Profit Calcolato</div><div class="kv-v pos-green">${fmtPx(c.tp_price)}</div></div>
+      <div class="kv"><div class="kv-l">Reward / Risk Netto</div><div class="kv-v">${c.rr_ratio}x</div></div>
+      <div class="kv"><div class="kv-l">Size Consigliata</div><div class="kv-v">${c.pos_usdt.toFixed(2)} USDT</div></div>
+    </div>
+    <div class="muted" style="margin-top:8px;">⏱️ <b>Timer 15m:</b> ${c.timer_summary} &nbsp;|&nbsp; 🛡️ <b>Rischio:</b> ${c.risk_status}</div>`;
 }
 
-function renderScanner() {
-  const tb = $("scan");
-  tb.innerHTML = "";
-  DATA.coins.forEach(c => {
-    let st = `<span class="chip n">—</span>`;
-    if (DATA.position.is_open && DATA.position.coin_code === c.code) st = `<span class="chip b">📌 Aperta</span>`;
-    else if (c.entry_ok) st = `<span class="chip g">✅ Pronta</span>`;
-    else if (c.raw_100 >= 54) st = `<span class="chip a">👀 Quasi</span>`;
-    const tr = document.createElement("tr");
-    tr.className = "row";
-    tr.onclick = () => $("d-" + c.code).classList.toggle("open");
-    tr.innerHTML = `<td><b>${esc(c.code)}</b></td><td id="px-${c.code}">${fp(live[c.code] || c.price)}</td><td>${c.raw_100}/100</td><td>${st}</td>`;
-    tb.appendChild(tr);
-    const dr = document.createElement("tr");
-    dr.className = "drow"; dr.id = "d-" + c.code;
-    dr.innerHTML = `<td colspan="4">Stop ${fp(c.sl_price)} · Target ${fp(c.tp_price)} · Budget ${c.pos_usdt.toFixed(2)} USDT · FreqAI ${c.ai_prob}% (DI=${c.di_val}) · Spread ${c.spread_bps} bps<br>Segnale 15m: ${esc(c.timer_summary)}<br>Controllo rischio: ${esc(c.risk_status)}</td>`;
-    tb.appendChild(dr);
-  });
-  const sel = $("m-coin");
-  DATA.coins.forEach(c => { const o = document.createElement("option"); o.value = c.code; o.textContent = c.code + " - " + c.name; sel.appendChild(o); });
-  if (DATA.position.is_open) sel.value = DATA.position.coin_code;
+function renderStats(){
+  const s = D.stats || {};
+  const wr = s.total_trades ? ((s.wins/s.total_trades)*100).toFixed(0)+'%' : 'N/A';
+  document.getElementById('daily-tag').textContent = `Oggi: ${s.daily_trades||0}/${D.limits.max_trades} trade · PnL oggi: ${(s.daily_pnl_pct||0)>=0?'+':''}${(s.daily_pnl_pct||0).toFixed(2)}%`;
+  document.getElementById('stats-grid').innerHTML = `
+    <div class="kv"><div class="kv-l">Trade Totali (W/L)</div><div class="kv-v">${s.total_trades||0} (${s.wins||0}W / ${s.losses||0}L)</div></div>
+    <div class="kv"><div class="kv-l">Win Rate</div><div class="kv-v">${wr}</div></div>
+    <div class="kv"><div class="kv-l">PnL Cumulato USDT</div><div class="kv-v ${(s.total_pnl_usdt||0)>=0?'pos-green':'pos-red'}">${(s.total_pnl_usdt||0)>=0?'+':''}${(s.total_pnl_usdt||0).toFixed(2)} $</div></div>
+    <div class="kv"><div class="kv-l">Ultima Azione</div><div class="kv-v" style="font-size:12px;">${s.last_action||'—'}</div></div>`;
+
+  const h = D.history || [];
+  document.getElementById('macro-tag').textContent = D.macro_ok ? `Calendario USD: ${(D.macro||[]).length} eventi` : 'Calendario USD offline';
+  document.getElementById('hist-box').innerHTML = h.length ? `<table><thead><tr><th>Coin</th><th>Ingresso</th><th>Uscita</th><th>PnL</th><th>Motivo</th><th>Data</th></tr></thead><tbody>` +
+    h.slice(0,10).map(r=>`<tr><td><b>${r.coin}</b></td><td>${fmtPx(r.entry)}</td><td>${fmtPx(r.exit)}</td><td class="${r.pnl_usdt>=0?'pos-green':'pos-red'}">${r.pnl_pct>=0?'+':''}${r.pnl_pct}% (${r.pnl_usdt>=0?'+':''}${r.pnl_usdt}$)</td><td>${r.reason}</td><td>${r.closed_at}</td></tr>`).join('') +
+    `</tbody></table>` : `<div class="muted">Nessun trade chiuso finora.</div>`;
 }
 
-function updateLivePrice(code, price) {
-  if (!price || price <= 0) return;
-  live[code] = price;
-  const c = $("px-" + code);
-  if (c) c.textContent = fp(price);
-  if (DATA.position.is_open && DATA.position.coin_code === code) updatePosLive();
+function selCoin(code){ selected = code; renderTabs(); renderDetail(); }
+function toggleCfg(){ const b=document.getElementById('cfg-box'); b.style.display=b.style.display==='none'?'flex':'none'; }
+function saveToken(){ localStorage.setItem('gh_pat', document.getElementById('gh-token').value.trim()); document.getElementById('cmd-msg').textContent='✅ Token salvato nel browser.'; }
+
+async function dispatchCmd(command, coin, amount_usdt){
+  const tok = localStorage.getItem('gh_pat') || document.getElementById('gh-token').value.trim();
+  const msg = document.getElementById('cmd-msg');
+  if(!tok){ toggleCfg(); msg.textContent='⚠️ Inserisci prima un GitHub Personal Access Token (scope: workflow) oppure invia il comando su Telegram.'; return; }
+  if(!D.repo){ msg.textContent='⚠️ Repository GitHub non rilevato.'; return; }
+  msg.textContent = `⏳ Invio comando '${command}' a GitHub Actions...`;
+  try{
+    const r = await fetch(`https://api.github.com/repos/${D.repo}/actions/workflows/${D.workflow}/dispatches`, {
+      method:'POST',
+      headers:{'Authorization':`Bearer ${tok}`,'Accept':'application/vnd.github+json','Content-Type':'application/json'},
+      body: JSON.stringify({ref: D.ref || 'main', inputs:{command, coin: String(coin||''), amount_usdt: String(amount_usdt||0)}})
+    });
+    msg.textContent = r.status===204 ? `✅ Comando '${command}' avviato! Riceverai conferma su Telegram tra ~40s.` : `❌ Errore GitHub API HTTP ${r.status}`;
+  }catch(e){ msg.textContent = '❌ Errore rete: '+e; }
+}
+function manualOpen(){ dispatchCmd('open', document.getElementById('man-coin').value, document.getElementById('man-usdt').value||0); }
+function manualSellAll(){
+  const c = document.getElementById('man-coin').value;
+  if(confirm(`Confermi la vendita immediata a mercato di TUTTO il saldo ${c} su Pionex?`)) dispatchCmd('sell_all', c, 0);
 }
 
-function connectWS() {
-  try {
-    const ws = new WebSocket("wss://ws.kraken.com");
-    ws.onopen = () => ws.send(JSON.stringify({ event: "subscribe", pair: DATA.coins.map(c => c.ws), subscription: { name: "ticker" } }));
-    ws.onmessage = ev => {
+function connectWS(){
+  try{
+    const ws = new WebSocket('wss://ws.kraken.com');
+    const pairToCode = {};
+    D.coins.forEach(c => { pairToCode[c.ws] = c.code; });
+    ws.onopen = () => {
+      document.getElementById('ws-pill').textContent = '🟢 Live Kraken WS';
+      ws.send(JSON.stringify({event:'subscribe', pair: D.coins.map(c=>c.ws), subscription:{name:'ticker'}}));
+    };
+    ws.onmessage = (ev) => {
       const m = JSON.parse(ev.data);
-      if (Array.isArray(m) && m.length >= 4 && m[1] && m[1].c) {
-        const code = wsMap[m[3]], pr = parseFloat(m[1].c[0]);
-        if (code && pr > 0) updateLivePrice(code, pr);
+      if(Array.isArray(m) && m[1] && m[1].c){
+        const code = pairToCode[m[3]];
+        const px = parseFloat(m[1].c[0]);
+        if(code && px>0){
+          livePx[code] = px;
+          const el = document.getElementById('tabpx-'+code);
+          if(el) el.textContent = fmtPx(px);
+          if(code===selected) renderDetail();
+          if(D.position && D.position.is_open && D.position.coin_code===code) renderPosition();
+        }
       }
     };
-    ws.onclose = () => setTimeout(connectWS, 5000);
-  } catch (e) {}
-}
-async function pollPrices() {
-  try {
-    const res = await fetch("https://api.kraken.com/0/public/Ticker?pair=" + DATA.coins.map(c => c.kraken).join(","));
-    const j = await res.json();
-    if (j && j.result) Object.keys(j.result).forEach(k => {
-      const p = parseFloat(j.result[k].c[0]);
-      DATA.coins.forEach(c => { if (k.includes(c.code) || (c.code === "BTC" && k.includes("XBT")) || (c.code === "DOGE" && k.includes("XDG"))) updateLivePrice(c.code, p); });
-    });
-  } catch (e) {}
+    ws.onclose = () => { document.getElementById('ws-pill').textContent = '🟡 Riconnessione WS...'; setTimeout(connectWS, 4000); };
+  }catch(e){}
 }
 
-function tokenNow() {
-  try { const t = localStorage.getItem("gh_token"); if (t) return t; } catch (e) {}
-  return window._tok || "";
-}
-function tokState() { $("tok-state").textContent = tokenNow() ? "impostato ✅" : "non impostato"; }
-function setToken() {
-  const t = prompt("Incolla il token GitHub (fine-grained, SOLO il repo del bot, permesso Actions: Read and write):");
-  if (!t) return;
-  window._tok = t.trim();
-  try { localStorage.setItem("gh_token", t.trim()); } catch (e) {}
-  tokState();
-}
-async function dispatchBot(command, coin, amount) {
-  const log = $("cmd-log");
-  if (!tokenNow()) setToken();
-  const tok = tokenNow();
-  if (!tok) { log.textContent = "❌ Token mancante."; return; }
-  if (!DATA.repo) { log.textContent = "❌ Repo sconosciuta: usa il pulsante GitHub Actions (Run workflow)."; return; }
-  log.textContent = "⏳ Invio comando...";
-  try {
-    const r = await fetch("https://api.github.com/repos/" + DATA.repo + "/actions/workflows/" + DATA.workflow + "/dispatches", {
-      method: "POST",
-      headers: { "Authorization": "Bearer " + tok, "Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28", "Content-Type": "application/json" },
-      body: JSON.stringify({ ref: DATA.ref, inputs: { command: command, coin: coin || "", amount_usdt: String(amount || "") } })
-    });
-    if (r.status === 204) { log.textContent = "✅ Comando '" + command + "' inviato. Conferma su Telegram entro 30-90 secondi."; alert("✅ Comando inviato. Attendi la conferma su Telegram."); }
-    else { const t = await r.text(); log.textContent = "❌ Errore " + r.status + ": " + t.slice(0, 200); alert("❌ Errore " + r.status); }
-  } catch (e) { log.textContent = "❌ Errore di rete: " + e; }
-}
-function cmdClose() {
-  if (!confirm("CHIUDERE a mercato la posizione " + DATA.position.coin_code + " ORA?")) return;
-  dispatchBot("close", DATA.position.coin_code, "");
-}
-function cmdSellAll() {
-  const c = $("m-coin").value;
-  if (!confirm("VENDERE TUTTO il saldo libero di " + c + " a mercato?")) return;
-  dispatchBot("sell_all", c, "");
-}
-function cmdOpen() {
-  if (DATA.position.is_open) { alert("C'e' gia' una posizione aperta su " + DATA.position.coin_code + ": chiudila prima."); return; }
-  const c = $("m-coin").value, a = $("m-amt").value;
-  if (!confirm("APRIRE LONG a mercato su " + c + (a ? " con " + a + " USDT" : " (importo automatico)") + "?")) return;
-  dispatchBot("open", c, a);
-}
-
-$("actions-link").href = "https://github.com/" + DATA.repo + "/actions/workflows/" + DATA.workflow;
-renderHead(); renderPosition(); renderHistory(); renderMacro(); renderScanner(); tokState();
-setInterval(() => { renderHead(); renderMacro(); }, 60000);
-connectWS();
-setInterval(pollPrices, 10000);
+(function init(){
+  document.getElementById('gh-token').value = localStorage.getItem('gh_pat') || '';
+  const sel = document.getElementById('man-coin');
+  sel.innerHTML = D.coins.map(c=>`<option value="${c.code}">${c.code}</option>`).join('');
+  renderTop(); renderPosition(); renderTabs(); renderDetail(); renderStats();
+  setInterval(renderTop, 10000);
+  connectWS();
+})();
 </script>
 </body>
 </html>

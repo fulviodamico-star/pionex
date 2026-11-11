@@ -109,7 +109,9 @@
     "order_id": "SIM",
     "last_check_ts": 1794393679,
     "close_fail_count": 0,
-    "enter_tag": "freqai_fastscalp"
+    "enter_tag": "freqai_fastscalp",
+    "partial_tp_done": false,
+    "realized_partial_usdt": 0.0
   },
   "stats": {
     "total_trades": 2,
@@ -127,6 +129,7 @@
     "last_loss_ts": 0,
     "coin_last_close": {
       "DOT": 1794394316
-    }
+    },
+    "last_tg_update_id": 540276387
   }
 }
