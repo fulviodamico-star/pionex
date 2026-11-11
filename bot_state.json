@@ -117,7 +117,7 @@
     "opened_ts": 1794401676,
     "mode": "SIMULATION",
     "order_id": "SIM",
-    "last_check_ts": 1794406799,
+    "last_check_ts": 1794407107,
     "close_fail_count": 0,
     "enter_tag": "freqai_manuale",
     "partial_tp_done": false,
