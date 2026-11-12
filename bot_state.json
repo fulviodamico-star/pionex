@@ -157,7 +157,7 @@
     "opened_ts": 1794505263,
     "mode": "SIMULATION",
     "order_id": "SIM",
-    "last_check_ts": 1794510294,
+    "last_check_ts": 1794510620,
     "close_fail_count": 0,
     "enter_tag": "freqai_tb_63_ai_50",
     "partial_tp_done": false,
@@ -184,7 +184,7 @@
       "LINK": 1794419902,
       "AVAX": 1794500007
     },
-    "last_tg_update_id": 540276392,
+    "last_tg_update_id": 540276393,
     "last_report_ts": 1794509163
   }
 }
