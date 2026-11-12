@@ -137,7 +137,7 @@
     "opened_ts": 1794466830,
     "mode": "SIMULATION",
     "order_id": "SIM",
-    "last_check_ts": 1794474422,
+    "last_check_ts": 1794474729,
     "close_fail_count": 0,
     "enter_tag": "freqai_tb_58_ai_51",
     "partial_tp_done": false,
@@ -164,6 +164,6 @@
       "LINK": 1794419902
     },
     "last_tg_update_id": 540276390,
-    "last_report_ts": 1794472778
+    "last_report_ts": 1794474729
   }
 }
