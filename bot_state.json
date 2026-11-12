@@ -128,7 +128,7 @@
     "tp_price": 2077.732265363162,
     "initial_sl": 2027.69501,
     "one_r": 18.414989999999996,
-    "highest_price": 2049.92,
+    "highest_price": 2050.82,
     "breakeven_locked": false,
     "tp1_locked": false,
     "tp2_locked": false,
@@ -137,7 +137,7 @@
     "opened_ts": 1794466830,
     "mode": "SIMULATION",
     "order_id": "SIM",
-    "last_check_ts": 1794468451,
+    "last_check_ts": 1794468774,
     "close_fail_count": 0,
     "enter_tag": "freqai_tb_58_ai_51",
     "partial_tp_done": false,
@@ -164,6 +164,6 @@
       "LINK": 1794419902
     },
     "last_tg_update_id": 540276390,
-    "last_report_ts": 1794466830
+    "last_report_ts": 1794468775
   }
 }
