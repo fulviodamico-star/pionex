@@ -149,12 +149,12 @@
     "losses": 3,
     "total_pnl_pct": -1.4,
     "total_pnl_usdt": -0.74,
-    "daily_date": "2026-11-11",
-    "daily_pnl_pct": 0.95,
-    "daily_trades": 4,
+    "daily_date": "2026-11-12",
+    "daily_pnl_pct": 0.0,
+    "daily_trades": 0,
     "last_action": "CHIUSO LINK (-0.14%) il 11/11 17:58 UTC",
-    "daily_pnl_usdt": 0.54,
-    "consec_losses": 1,
+    "daily_pnl_usdt": 0.0,
+    "consec_losses": 0,
     "last_close_ts": 1794419902,
     "last_loss_ts": 1794419902,
     "coin_last_close": {
@@ -164,6 +164,6 @@
       "LINK": 1794419902
     },
     "last_tg_update_id": 540276390,
-    "last_report_ts": 1794426878
+    "last_report_ts": 1794448127
   }
 }
