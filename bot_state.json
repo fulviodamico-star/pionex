@@ -154,12 +154,12 @@
     "entry_price": 8.33,
     "amount_coin": 4.7,
     "invested_usdt": 39.19,
-    "sl_price": 8.183827334084327,
+    "sl_price": 8.342495,
     "tp_price": 8.53825,
     "initial_sl": 8.183827334084327,
     "one_r": 0.1461726659156728,
-    "highest_price": 8.4,
-    "breakeven_locked": false,
+    "highest_price": 8.42,
+    "breakeven_locked": true,
     "tp1_locked": false,
     "tp2_locked": false,
     "alerts_triggered": [],
@@ -167,7 +167,7 @@
     "opened_ts": 1794553813,
     "mode": "SIMULATION",
     "order_id": "SIM",
-    "last_check_ts": 1794564789,
+    "last_check_ts": 1794565096,
     "close_fail_count": 0,
     "enter_tag": "freqai_tb_76_ai_52",
     "partial_tp_done": false,
@@ -195,6 +195,6 @@
       "AVAX": 1794500007
     },
     "last_tg_update_id": 540276393,
-    "last_report_ts": 1794563976
+    "last_report_ts": 1794565097
   }
 }
