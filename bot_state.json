@@ -28,6 +28,16 @@
   "last_action": "CHIUSO LINK (PAPER AUTONOMO): 🎯 TAKE PROFIT GRIGLIA RAGGIUNTO su LINK (10.47$ >= 0.00$) | PnL: -0.00$ (-0.69%) il 10/11/2026 11:26",
   "history": [
     {
+      "coin": "AVAX",
+      "entry": 8.33,
+      "exit": 8.44,
+      "pnl_pct": 1.17,
+      "pnl_usdt": 0.46,
+      "reason": "💰 FAST-SCALP PROFIT TAKE (+1.17% netto su rallentamento 15m)",
+      "closed_at": "13/11 11:20 UTC",
+      "mode": "SIMULATION"
+    },
+    {
       "coin": "ETH",
       "entry": 2013.05,
       "exit": 2018.41,
@@ -148,7 +158,7 @@
   "pending_close_fail": 0,
   "qty_sol": 0.0,
   "position": {
-    "is_open": true,
+    "is_open": false,
     "coin_code": "AVAX",
     "symbol": "AVAX_USDT",
     "entry_price": 8.33,
@@ -167,34 +177,34 @@
     "opened_ts": 1794553813,
     "mode": "SIMULATION",
     "order_id": "SIM",
-    "last_check_ts": 1794568500,
+    "last_check_ts": 1794568797,
     "close_fail_count": 0,
     "enter_tag": "freqai_tb_76_ai_52",
     "partial_tp_done": false,
     "realized_partial_usdt": 0.0
   },
   "stats": {
-    "total_trades": 8,
-    "wins": 3,
+    "total_trades": 9,
+    "wins": 4,
     "losses": 5,
-    "total_pnl_pct": -2.78,
-    "total_pnl_usdt": -1.48,
+    "total_pnl_pct": -1.61,
+    "total_pnl_usdt": -1.02,
     "daily_date": "2026-11-13",
-    "daily_pnl_pct": 0.0,
+    "daily_pnl_pct": 0.83,
     "daily_trades": 1,
-    "last_action": "APERTO LONG AVAX a $8.330 il 13/11 07:10 UTC (FAST-SCALP)",
-    "daily_pnl_usdt": 0.0,
+    "last_action": "CHIUSO AVAX (+1.17%) il 13/11 11:20 UTC",
+    "daily_pnl_usdt": 0.46,
     "consec_losses": 0,
-    "last_close_ts": 1794517387,
+    "last_close_ts": 1794568814,
     "last_loss_ts": 1794517387,
     "coin_last_close": {
       "DOT": 1794394316,
       "ETH": 1794517387,
       "ADA": 1794407221,
       "LINK": 1794419902,
-      "AVAX": 1794500007
+      "AVAX": 1794568814
     },
     "last_tg_update_id": 540276394,
-    "last_report_ts": 1794567058
+    "last_report_ts": 1794568815
   }
 }
