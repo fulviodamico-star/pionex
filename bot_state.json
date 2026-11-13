@@ -158,7 +158,7 @@
     "tp_price": 8.53825,
     "initial_sl": 8.183827334084327,
     "one_r": 0.1461726659156728,
-    "highest_price": 8.35,
+    "highest_price": 8.36,
     "breakeven_locked": false,
     "tp1_locked": false,
     "tp2_locked": false,
@@ -167,7 +167,7 @@
     "opened_ts": 1794553813,
     "mode": "SIMULATION",
     "order_id": "SIM",
-    "last_check_ts": 1794554313,
+    "last_check_ts": 1794554636,
     "close_fail_count": 0,
     "enter_tag": "freqai_tb_76_ai_52",
     "partial_tp_done": false,
@@ -195,6 +195,6 @@
       "AVAX": 1794500007
     },
     "last_tg_update_id": 540276393,
-    "last_report_ts": 1794554313
+    "last_report_ts": 1794554637
   }
 }
