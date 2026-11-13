@@ -167,7 +167,7 @@
     "opened_ts": 1794553813,
     "mode": "SIMULATION",
     "order_id": "SIM",
-    "last_check_ts": 1794558781,
+    "last_check_ts": 1794558824,
     "close_fail_count": 0,
     "enter_tag": "freqai_tb_76_ai_52",
     "partial_tp_done": false,
