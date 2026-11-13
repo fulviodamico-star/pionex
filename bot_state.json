@@ -28,6 +28,16 @@
   "last_action": "CHIUSO LINK (PAPER AUTONOMO): 🎯 TAKE PROFIT GRIGLIA RAGGIUNTO su LINK (10.47$ >= 0.00$) | PnL: -0.00$ (-0.69%) il 10/11/2026 11:26",
   "history": [
     {
+      "coin": "BTC",
+      "entry": 68637.49,
+      "exit": 69072.01,
+      "pnl_pct": 0.19,
+      "pnl_usdt": 0.1,
+      "reason": "🔒 PROFIT LOCK / TRAILING STOP ($69,072.01) (toccato tra due controlli)",
+      "closed_at": "13/11 17:45 UTC",
+      "mode": "SIMULATION"
+    },
+    {
       "coin": "AVAX",
       "entry": 8.33,
       "exit": 8.44,
@@ -158,7 +168,7 @@
   "pending_close_fail": 0,
   "qty_sol": 0.0,
   "position": {
-    "is_open": true,
+    "is_open": false,
     "coin_code": "BTC",
     "symbol": "BTC_USDT",
     "entry_price": 68637.49,
@@ -168,7 +178,7 @@
     "tp_price": 70166.83405096518,
     "initial_sl": 67938.02654197965,
     "one_r": 699.4634580203565,
-    "highest_price": 69120.0,
+    "highest_price": 69134.01,
     "breakeven_locked": true,
     "tp1_locked": false,
     "tp2_locked": false,
@@ -177,34 +187,35 @@
     "opened_ts": 1794590265,
     "mode": "SIMULATION",
     "order_id": "SIM",
-    "last_check_ts": 1794591750,
+    "last_check_ts": 1794591898,
     "close_fail_count": 0,
     "enter_tag": "freqai_tb_62_ai_51",
     "partial_tp_done": false,
     "realized_partial_usdt": 0.0
   },
   "stats": {
-    "total_trades": 9,
-    "wins": 4,
+    "total_trades": 10,
+    "wins": 5,
     "losses": 5,
-    "total_pnl_pct": -1.61,
-    "total_pnl_usdt": -1.02,
+    "total_pnl_pct": -1.42,
+    "total_pnl_usdt": -0.92,
     "daily_date": "2026-11-13",
-    "daily_pnl_pct": 0.83,
+    "daily_pnl_pct": 1.01,
     "daily_trades": 2,
-    "last_action": "APERTO LONG BTC a $68,637.49 il 13/11 17:17 UTC (FAST-SCALP)",
-    "daily_pnl_usdt": 0.46,
+    "last_action": "CHIUSO BTC (+0.19%) il 13/11 17:45 UTC",
+    "daily_pnl_usdt": 0.56,
     "consec_losses": 0,
-    "last_close_ts": 1794568814,
+    "last_close_ts": 1794591913,
     "last_loss_ts": 1794517387,
     "coin_last_close": {
       "DOT": 1794394316,
       "ETH": 1794517387,
       "ADA": 1794407221,
       "LINK": 1794419902,
-      "AVAX": 1794568814
+      "AVAX": 1794568814,
+      "BTC": 1794591913
     },
     "last_tg_update_id": 990621660,
-    "last_report_ts": 1794590265
+    "last_report_ts": 1794591913
   }
 }
