@@ -28,6 +28,16 @@
   "last_action": "CHIUSO LINK (PAPER AUTONOMO): 🎯 TAKE PROFIT GRIGLIA RAGGIUNTO su LINK (10.47$ >= 0.00$) | PnL: -0.00$ (-0.69%) il 10/11/2026 11:26",
   "history": [
     {
+      "coin": "SOL",
+      "entry": 75.91,
+      "exit": 74.86,
+      "pnl_pct": -1.55,
+      "pnl_usdt": -0.81,
+      "reason": "🛑 STOP LOSS ($74.86)",
+      "closed_at": "14/11 14:03 UTC",
+      "mode": "SIMULATION"
+    },
+    {
       "coin": "DOT",
       "entry": 0.786,
       "exit": 0.787,
@@ -178,7 +188,7 @@
   "pending_close_fail": 0,
   "qty_sol": 0.0,
   "position": {
-    "is_open": true,
+    "is_open": false,
     "coin_code": "SOL",
     "symbol": "SOL_USDT",
     "entry_price": 75.91,
@@ -197,33 +207,34 @@
     "opened_ts": 1794655115,
     "mode": "SIMULATION",
     "order_id": "SIM",
-    "last_check_ts": 1794664941,
+    "last_check_ts": 1794664990,
     "close_fail_count": 0,
     "enter_tag": "freqai_tb_60_ai_55",
     "partial_tp_done": false,
     "realized_partial_usdt": 0.0
   },
   "stats": {
-    "total_trades": 11,
+    "total_trades": 12,
     "wins": 6,
-    "losses": 5,
-    "total_pnl_pct": -1.41,
-    "total_pnl_usdt": -0.91,
+    "losses": 6,
+    "total_pnl_pct": -2.96,
+    "total_pnl_usdt": -1.72,
     "daily_date": "2026-11-14",
-    "daily_pnl_pct": 0.01,
+    "daily_pnl_pct": -1.47,
     "daily_trades": 2,
-    "last_action": "APERTO LONG SOL a $75.91 il 14/11 11:18 UTC (FAST-SCALP)",
-    "daily_pnl_usdt": 0.01,
-    "consec_losses": 0,
-    "last_close_ts": 1794650854,
-    "last_loss_ts": 1794517387,
+    "last_action": "CHIUSO SOL (-1.55%) il 14/11 14:03 UTC",
+    "daily_pnl_usdt": -0.8,
+    "consec_losses": 1,
+    "last_close_ts": 1794665006,
+    "last_loss_ts": 1794665006,
     "coin_last_close": {
       "DOT": 1794650854,
       "ETH": 1794517387,
       "ADA": 1794407221,
       "LINK": 1794419902,
       "AVAX": 1794568814,
-      "BTC": 1794591913
+      "BTC": 1794591913,
+      "SOL": 1794665006
     },
     "last_tg_update_id": 990621660,
     "last_report_ts": 1794663624
