@@ -197,7 +197,7 @@
     "opened_ts": 1794655115,
     "mode": "SIMULATION",
     "order_id": "SIM",
-    "last_check_ts": 1794659310,
+    "last_check_ts": 1794659633,
     "close_fail_count": 0,
     "enter_tag": "freqai_tb_60_ai_55",
     "partial_tp_done": false,
@@ -226,6 +226,6 @@
       "BTC": 1794591913
     },
     "last_tg_update_id": 990621660,
-    "last_report_ts": 1794659310
+    "last_report_ts": 1794659633
   }
 }
