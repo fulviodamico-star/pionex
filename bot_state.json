@@ -207,7 +207,7 @@
     "opened_ts": 1794678275,
     "mode": "SIMULATION",
     "order_id": "SIM",
-    "last_check_ts": 1794680221,
+    "last_check_ts": 1794680529,
     "close_fail_count": 0,
     "enter_tag": "freqai_tb_60_ai_50",
     "partial_tp_done": false,
@@ -237,6 +237,6 @@
       "SOL": 1794665006
     },
     "last_tg_update_id": 990621660,
-    "last_report_ts": 1794678462
+    "last_report_ts": 1794680529
   }
 }
