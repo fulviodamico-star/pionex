@@ -204,12 +204,12 @@
     "entry_price": 71.74,
     "amount_coin": 0.517,
     "invested_usdt": 37.13,
-    "sl_price": 70.44868,
+    "sl_price": 71.84761,
     "tp_price": 73.53349999999999,
     "initial_sl": 70.44868,
     "one_r": 1.291319999999999,
-    "highest_price": 72.18,
-    "breakeven_locked": false,
+    "highest_price": 72.46,
+    "breakeven_locked": true,
     "tp1_locked": false,
     "tp2_locked": false,
     "alerts_triggered": [],
@@ -217,7 +217,7 @@
     "opened_ts": 1794733520,
     "mode": "SIMULATION",
     "order_id": "SIM",
-    "last_check_ts": 1794733828,
+    "last_check_ts": 1794734136,
     "close_fail_count": 0,
     "enter_tag": "freqai_tb_67_ai_50",
     "partial_tp_done": false,
@@ -248,6 +248,6 @@
       "DOGE": 1794682963
     },
     "last_tg_update_id": 990621660,
-    "last_report_ts": 1794733828
+    "last_report_ts": 1794734136
   }
 }
