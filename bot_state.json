@@ -217,7 +217,7 @@
     "opened_ts": 1794733520,
     "mode": "SIMULATION",
     "order_id": "SIM",
-    "last_check_ts": 1794734649,
+    "last_check_ts": 1794734958,
     "close_fail_count": 0,
     "enter_tag": "freqai_tb_67_ai_50",
     "partial_tp_done": false,
@@ -248,6 +248,6 @@
       "DOGE": 1794682963
     },
     "last_tg_update_id": 990621660,
-    "last_report_ts": 1794734649
+    "last_report_ts": 1794734958
   }
 }
