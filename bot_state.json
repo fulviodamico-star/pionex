@@ -227,7 +227,7 @@
     "opened_ts": 1794812433,
     "mode": "SIMULATION",
     "order_id": "SIM",
-    "last_check_ts": 1794814180,
+    "last_check_ts": 1794814327,
     "close_fail_count": 0,
     "enter_tag": "freqai_tb_71_ai_50",
     "partial_tp_done": false,
