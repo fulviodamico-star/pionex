@@ -12,6 +12,7 @@ import html as html_lib
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from zoneinfo import ZoneInfo
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import urlencode
@@ -99,7 +100,7 @@ CASH_BUFFER_PCT = 5.0
 MIN_ORDER_USDT = float(_env("MIN_ORDER_USDT", 10.5))
 FEE_PCT_PER_SIDE = float(_env("FEE_PCT_PER_SIDE", 0.05))
 PIONEX_FEE_ROUNDTRIP_PCT = 2.0 * FEE_PCT_PER_SIDE
-SCALP_MIN_NET_PROFIT_PCT = 1.35  # Non tagliare i vincitori a +0.65%!
+SCALP_MIN_NET_PROFIT_PCT = 1.35
 TIME_STOP_PROFIT_HOURS = 8.0
 TIME_STOP_STALE_HOURS = 10.0
 
@@ -114,7 +115,7 @@ STATE_FILE = "bot_state.json"
 WEBAPP_FILE = "index.html"
 HTTP_TIMEOUT = 12
 PIONEX_BASE = "https://api.pionex.com"
-HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; PionexClaudeQuantBot/11.0)"}
+HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; PionexClaudeQuantBot/11.1)"}
 
 COINS = [
     {"code": "SOL",  "name": "Solana",    "kraken": "SOLUSD",  "ws": "SOL/USD",  "futures": "PF_SOLUSD",  "pionex": "SOL_USDT",  "prec": 3},
@@ -761,6 +762,39 @@ def fetch_macro_calendar():
     return events
 
 
+def fetch_crypto_news(limit=8):
+    """Scarica le ultime notizie crypto reali via RSS pubblico (zero API key richieste)."""
+    feeds = [
+        ("CoinDesk", "https://www.coindesk.com/arc/outboundfeeds/rss/"),
+        ("CoinTelegraph", "https://cointelegraph.com/rss"),
+    ]
+    items = []
+    for source, url in feeds:
+        try:
+            r = SESSION.get(url, timeout=5)
+            if r.status_code != 200 or not r.text.strip().startswith("<"):
+                continue
+            root = ET.fromstring(r.text)
+            for it in root.findall(".//item")[:limit]:
+                title = (it.findtext("title") or "").strip()
+                link = (it.findtext("link") or "").strip()
+                pub = (it.findtext("pubDate") or "").strip()
+                ts = int(time.time())
+                if pub:
+                    try:
+                        ts = int(parsedate_to_datetime(pub).timestamp())
+                    except Exception:
+                        pass
+                if title and link:
+                    items.append({"source": source, "title": html_lib.unescape(title), "url": link, "ts": ts})
+            if len(items) >= limit:
+                break
+        except Exception:
+            continue
+    items.sort(key=lambda x: x["ts"], reverse=True)
+    return items[:limit]
+
+
 # ==============================================================================
 # 5. INDICATORI TECNICI + EMULATORE `ta` & `qtpylib`
 # ==============================================================================
@@ -1117,7 +1151,7 @@ def build_feature_matrix(candles_1h):
         f7 = clamp((c - closes[i - 12]) / (3.8 * atr), -2.5, 2.5)
         f8 = clamp(vol_zs[i], -2.5, 2.5)
         rng = max(candles_1h[i]["high"] - candles_1h[i]["low"], 1e-9)
-        close_loc = ((c - candles_1h[i]["low"]) / rng) * 2.0 - 1.0  # +1 chiusura sui max, -1 sui min
+        close_loc = ((c - candles_1h[i]["low"]) / rng) * 2.0 - 1.0
         f9 = clamp(close_loc, -1.5, 1.5)
         atr_pct = (atr / c) * 100.0 if c > 0 else 1.5
         f10 = clamp((atr_pct - 1.5) / 1.2, -2.0, 2.5)
@@ -1239,17 +1273,13 @@ def online_mlp_neural_net(candles_1h, features, tb_labels, horizon=8, epochs=40,
 
 
 def monte_carlo_ev_sim(candles_1h, curr_price, tp_price, sl_price, paths=400, horizon_bars=12):
-    """
-    Monte Carlo basato sull'Aspettativa Matematica (Expected R) pesata sui rendimenti recenti,
-    invece che sul semplice hit-rate (che penalizzava i TP > SL!).
-    """
+    """Monte Carlo basato sull'Aspettativa Matematica (Expected R) pesata sui rendimenti recenti."""
     if len(candles_1h) < 60 or curr_price <= 0 or sl_price >= curr_price or tp_price <= curr_price:
         return 0.50, 0.0
     closes = [c["close"] for c in candles_1h[-120:]]
     rets = [math.log(closes[i] / closes[i - 1]) for i in range(1, len(closes)) if closes[i - 1] > 0]
     if len(rets) < 25:
         return 0.50, 0.0
-    # Pesi maggiori sulle ultime 48 ore (volatility clustering)
     recent_rets = rets[-48:] + rets[-24:] + rets
     risk = curr_price - sl_price
     tp_r = (tp_price - curr_price) / risk
@@ -1366,7 +1396,6 @@ def skill_01_regime_and_structure(candles_4h, candles_1h, candles_15m, price):
     hurst = calc_hurst_exponent(closes_1h, 20)
     z_linreg, lin_slope = calc_linreg_zscore(closes_1h, 40)
 
-    # Struttura HH/HL vs LH/LL sulle ultime 24h vs 24h precedenti
     h_recent = max(c["high"] for c in candles_1h[-12:])
     l_recent = min(c["low"] for c in candles_1h[-12:])
     h_prev = max(c["high"] for c in candles_1h[-28:-12])
@@ -1442,7 +1471,6 @@ def skill_02_btc_correlation_alpha(code, candles_15m, candles_1h, ema20_1h, ob, 
     alpha_4h = ret_4h - BTC_CONTEXT.get("ret_4h", 0.0)
     btc_ok = BTC_REGIME.get("allow_alts", True)
 
-    score = 0
     if not btc_ok:
         return {"score": 0, "alpha_1h": alpha_1h, "alpha_4h": alpha_4h, "btc_ok": False}
     if alpha_1h > 0.25 and alpha_4h > 0.30:
@@ -1466,7 +1494,6 @@ def skill_03_liquidity_vwap_poc(candles_15m, candles_1h, price):
     vwap_diff_pct = ((price - vwap_15m) / vwap_15m * 100.0) if vwap_15m > 0 else 0.0
     overextended = (vwap_diff_pct > 1.65) or (vwap_z > 1.90)
 
-    # Buy pressure sulle ultime 3 candele 15m
     bp_vals = []
     for c in candles_15m[-3:]:
         rng = max(c["high"] - c["low"], 1e-9)
@@ -1475,7 +1502,7 @@ def skill_03_liquidity_vwap_poc(candles_15m, candles_1h, price):
 
     score = 0
     if -0.75 <= vwap_diff_pct <= 1.25:
-        score += 5   # Zona ideale di pullback/reclaim VWAP (mai inseguire!)
+        score += 5
     elif -1.4 <= vwap_diff_pct < -0.75:
         score += 3
     if price >= poc_price * 0.995:
@@ -1535,7 +1562,7 @@ def skill_05_derivatives_sentiment(fut, fng_val, price, ema20_1h):
     if 24 <= fng_val <= 74:
         score += 3
     elif fng_val < 24:
-        score += 4  # Fear contrarian support
+        score += 4
     else:
         score += 1
 
@@ -1584,7 +1611,6 @@ def skill_07_time_machine_backtest(candles_1h, features, horizon_bars=8):
         candidates.append((dist, i))
     candidates.sort(key=lambda x: x[0])
 
-    # Non-Maximum Suppression: almeno 5 barre di distanza tra analoghi
     top, used = [], []
     for dist, idx in candidates:
         if any(abs(idx - u) < 5 for u in used):
@@ -1674,7 +1700,6 @@ def skill_09_adaptive_risk_and_sizing(invest_eur, eur_usd, entry_price, sl_price
     fee_rt = PIONEX_FEE_ROUNDTRIP_PCT
     rr_ratio = (tp_dist_pct - fee_rt) / (sl_dist_pct + fee_rt) if sl_dist_pct > 0 else 0.0
 
-    # Risk-Based Position Sizing: con SL piu' ampio per evitare rumore, la size si adatta automaticamente
     risk_usdt = total_usdt * (RISK_PER_TRADE_PCT / 100.0)
     proposed_usdt = risk_usdt / ((sl_dist_pct + fee_rt) / 100.0) if sl_dist_pct > 0 else usable_usdt
     now = datetime.now(timezone.utc)
@@ -1878,17 +1903,12 @@ def _summarize_eval_for_claude(ev):
 
 
 def skill_11_claude_ai_supervisor(state, mode, ranked_evals=None, open_eval=None, fng_val=50, session_str="", macro_events=None):
-    """
-    Skill 11: Invoca Claude 5.5 solo quando serve davvero (nuovo setup pronto, o supervisione posizione aperta
-    rispettando CLAUDE_COOLDOWN_SEC per efficienza e costi).
-    """
     if not CLAUDE_ENABLED:
         return None
     now_ts = int(time.time())
     last_call = int(state["stats"].get("claude_last_call_ts", 0))
     cached = state["stats"].get("claude_last_verdict") or None
 
-    # Per monitoraggio posizione aperta rispetta il cooldown a meno che il PnL non sia critico
     if mode == "SUPERVISE_OPEN" and (now_ts - last_call) < CLAUDE_COOLDOWN_SEC:
         return cached
 
@@ -2132,7 +2152,6 @@ class PionexFreqAIStrategy(IStrategy):
         macro_events = metadata["macro_events"]
         price = metadata["price"]
 
-        # Esecuzione Skill 01, 03, 04, 05, 06, 02
         s1 = skill_01_regime_and_structure(candles_4h, candles_1h, candles_15m, price)
         s3 = skill_03_liquidity_vwap_poc(candles_15m, candles_1h, price)
         s4 = skill_04_orderbook_microstructure(ob)
@@ -2142,7 +2161,6 @@ class PionexFreqAIStrategy(IStrategy):
             metadata["code"], candles_15m, candles_1h, s1["ema20_1h"], ob, price, s3["vwap_15m"]
         )
 
-        # Calcolo SL / TP Strutturali Adattivi all'ATR (Skill 09 prep)
         atr_1h = calc_atr(candles_1h, 14)
         atr_15m = calc_atr(candles_15m, 14)
         atr_pct = (atr_1h / price) * 100.0 if price > 0 else 1.5
@@ -2151,7 +2169,6 @@ class PionexFreqAIStrategy(IStrategy):
         recent_highs = [c["high"] for c in candles_1h[-36:]]
         swing_high = max(recent_highs) if recent_highs else price * 1.045
 
-        # Stop-Loss con respiro reale anti-rumore (-1.4% .. -3.5%)
         sl_dist = max(price * 0.014, min(price * 0.032, 1.45 * atr_1h))
         sl_price = min(price - sl_dist, swing_low - 0.35 * atr_15m)
         sl_price = clamp(sl_price, price * 0.965, price * 0.986)
@@ -2163,17 +2180,13 @@ class PionexFreqAIStrategy(IStrategy):
         metadata["sl_price"] = sl_price
         metadata["tp_price"] = tp_price
 
-        # FreqAI Engine + Skill 07 (Time Machine)
         dataframe = self.freqai.start(dataframe, metadata, self)
         fai = metadata["freqai_result"]
         ai_ensemble_prob = fai["ai_prob"]
         tm_stats = fai["tm_stats"]
 
-        # Skill 08 (15m Entry Timer)
         s8 = skill_08_chart_scanner_entry_timer(candles_15m, candles_1h, s3, ob["imbalance"], s1["rsi_1h"])
 
-        # Punteggio Unificato 11 Skill (scala 0..100)
-        # S1(20) + S2(10) + S3(15) + S4(10) + S5(8) + S6(7) + FreqAI/S7(20) + S8(10) = 100
         ai_pts = round(clamp((ai_ensemble_prob - 0.42) / 0.28, 0.0, 1.0) * 14.0)
         tm_pts = 6 if (tm_stats["win_rate"] >= 54.0 and tm_stats["expectancy_r"] > 0.12) else (3 if tm_stats["win_rate"] >= 48.0 else 0)
         score_ai_s7 = clamp(ai_pts + tm_pts, 0, 20)
@@ -2289,7 +2302,6 @@ class PionexFreqAIStrategy(IStrategy):
 
     def adjust_trade_position(self, trade: Trade, current_time: datetime, current_rate: float,
                               current_profit: float, min_stake: float, max_stake: float, **kwargs):
-        """Scale-Out Parziale Skill 10: a +1.35R incassa il 50% se entrambe le meta' > min_stake."""
         if not PARTIAL_TP_ENABLED or trade.partial_tp_done:
             return None
         current_r = (current_rate - trade.open_rate) / trade.one_r if trade.one_r > 0 else 0.0
@@ -2300,7 +2312,6 @@ class PionexFreqAIStrategy(IStrategy):
 
     def custom_stoploss(self, pair: str, trade: Trade, current_time: datetime,
                         current_rate: float, current_profit: float, after_fill: bool = False, **kwargs) -> float:
-        """Skill 10: Pazienza + Break-Even solo a +1.0R + Chandelier ATR Trailing."""
         open_eval = kwargs.get("open_eval", {})
         claude_verdict = kwargs.get("claude_verdict")
         entry = trade.open_rate
@@ -2357,7 +2368,6 @@ class PionexFreqAIStrategy(IStrategy):
         hours_open = max(0.0, (current_time - trade.open_date_utc).total_seconds() / 3600.0)
         current_r = (current_rate - trade.open_rate) / trade.one_r if trade.one_r > 0 else 0.0
 
-        # Decisioni esplicite di Claude 5.5 Supervisor
         if claude_verdict and claude_verdict.get("confidence", 0) >= 72:
             dec = claude_verdict.get("decision")
             if dec == "CLOSE_DEFENSIVE":
@@ -2369,7 +2379,6 @@ class PionexFreqAIStrategy(IStrategy):
         rsi_15m_prev = open_eval.get("rsi_15m_prev", rsi_15m)
         ob_imb = open_eval.get("ob", {}).get("imbalance", 0.0)
 
-        # Chiudi su rallentamento SOLO dopo aver raggiunto almeno +1.25R e RSI 15m in ipercomprato reale (>68)
         momentum_fading_peak = (
             current_r >= 1.25
             and (
@@ -2558,7 +2567,6 @@ def _manage_open_position(state, all_evals, capital_usdt, now_str, now_ts, fng_v
                 "detail": "Analisi e ticker non raggiungibili: gestione SL/TP sospesa fino al prossimo giro.",
                 "pnl_pct": 0.0, "pnl_usdt": 0.0, "current_r": 0.0, "alerts_fired": []}
 
-    # FIX CRITICO: Controlla SOLO le candele chiuse o iniziate DOPO l'apertura / ultimo check (no falsi SL dallo stoppino pre-ingresso!)
     last_chk = pos.get("last_check_ts") or opened_ts
     c15 = open_eval.get("c15_recent", [])
     fresh = [c for c in c15 if c["time"] >= last_chk]
@@ -2575,7 +2583,6 @@ def _manage_open_position(state, all_evals, capital_usdt, now_str, now_ts, fng_v
     net_pnl_pct = (pnl_usdt_live / orig_inv) * 100.0 if orig_inv > 0 else 0.0
     current_r = (curr_price - entry) / one_r if one_r > 0 else 0.0
 
-    # Skill 11: Supervisione Claude AI su posizione aperta (solo nei rescan completi per non sprecare chiamate ogni 15s)
     claude_verdict = None
     if allow_claude and not open_eval.get("fallback"):
         claude_verdict = skill_11_claude_ai_supervisor(
@@ -2692,7 +2699,6 @@ def _try_open_position(state, ranked_evals, eur_usd, now_str, now_ts, fng_val=50
     best = candidates[0]
     claude_mult = 1.0
 
-    # Skill 11: Claude 5.5 AI Supervisor Gatekeeper prima dell'acquisto reale!
     if CLAUDE_ENABLED:
         verdict = skill_11_claude_ai_supervisor(
             state, mode="EVALUATE_ENTRY", ranked_evals=candidates,
@@ -2709,7 +2715,6 @@ def _try_open_position(state, ranked_evals, eur_usd, now_str, now_ts, fng_val=50
             if verdict["best_coin"] in [c["code"] for c in candidates]:
                 best = next(c for c in candidates if c["code"] == verdict["best_coin"])
             claude_mult = verdict.get("conviction_mult", 1.0)
-            # Eventuali micro-calibrazioni SL/TP di Claude rispettando comunque i limiti di sicurezza
             if verdict.get("sl_adjustment_pct", 0.0) != 0.0:
                 best["sl_price"] = clamp(
                     best["sl_price"] * (1.0 + verdict["sl_adjustment_pct"] / 100.0),
@@ -2869,7 +2874,7 @@ def trigger_self_chain_dispatch():
 
 
 # ==============================================================================
-# 11. WEB CONSOLE MOBILE-FIRST (index.html)
+# 11. WEB CONSOLE MOBILE-FIRST + CALENDARIO NEWS + MOTORE PREVISIONI REALE
 # ==============================================================================
 def get_public_webapp_url():
     if "/" in GITHUB_REPO:
@@ -2887,31 +2892,31 @@ def build_manual_action_advisor(state, best_eval, all_evals, trade_status):
         ev = all_evals.get(code, best_eval)
         pnl, curr_r = trade_status["pnl_pct"], trade_status["current_r"]
         if ev["final_score"] <= 4 or ev["ai_prob"] < 0.44:
-            return {"badge": "⚠️ CONSIGLIO: VALUTA DI CHIUDERE ORA", "color": "#f59e0b", "bg": "rgba(245,158,11,0.15)",
+            return {"badge": "⚠️ VALUTA DI CHIUDERE ORA", "color": "#f59e0b", "bg": "rgba(245,158,11,0.15)",
                     "instruction": f"La spinta su {code} si sta indebolendo ({ev['final_score']}/10, AI {ev['ai_prob'] * 100:.0f}%).{claude_note}"}
         if pnl >= SCALP_MIN_NET_PROFIT_PCT:
-            return {"badge": f"💰 {code} IN PROFITTO ({pnl:+.2f}%) · GUARDIA ATTIVA", "color": "#10b981", "bg": "rgba(16,185,129,0.15)",
+            return {"badge": f"💰 {code} IN PROFITTO ({pnl:+.2f}%)", "color": "#10b981", "bg": "rgba(16,185,129,0.15)",
                     "instruction": f"Posizione in guadagno ({curr_r:+.2f}R). Target {fmt_price(pos['tp_price'])}.{claude_note}"}
-        return {"badge": f"⏳ MANTIENI {code} (MONITORAGGIO OGNI {GUARDIAN_TICK_SEC}s)", "color": "#38bdf8", "bg": "rgba(56,189,248,0.15)",
-                "instruction": f"Posizione aperta su {code} ({pnl:+.2f}%). SL {fmt_price(pos['sl_price'])} | TP {fmt_price(pos['tp_price'])}.{claude_note}"}
+        return {"badge": f"⏳ MANTIENI {code} (GUARDIA ATTIVA)", "color": "#38bdf8", "bg": "rgba(56,189,248,0.15)",
+                "instruction": f"Controllo prezzi ogni {GUARDIAN_TICK_SEC}s. SL {fmt_price(pos['sl_price'])} · TP {fmt_price(pos['tp_price'])}.{claude_note}"}
 
     if trade_status.get("action_state") in ("ENTRY_FAILED", "CLOSE_FAILED"):
-        return {"badge": "🚨 ATTENZIONE: ORDINE PIONEX NON RIUSCITO", "color": "#ef4444", "bg": "rgba(239,68,68,0.15)",
+        return {"badge": "🚨 ORDINE PIONEX NON RIUSCITO", "color": "#ef4444", "bg": "rgba(239,68,68,0.15)",
                 "instruction": "Verifica l'app Pionex: " + trade_status["detail"]}
 
     score, raw_100, code = best_eval["final_score"], best_eval["raw_100"], best_eval["code"]
     rm, tm = best_eval["risk_manager"], best_eval["scanner_timer"]
     if entry_conditions(best_eval):
-        return {"badge": f"🟢 SEGNALE FORTE: COMPRA {code} ORA", "color": "#10b981", "bg": "rgba(16,185,129,0.16)",
-                "instruction": f"Confluenza 11-Skill su {code} ({score}/10 · {raw_100}/100, R:R {rm['rr_ratio']:.2f}x). Size {rm['position_usdt']:.2f} USDT.{claude_note}"}
+        return {"badge": f"🟢 SEGNALE ATTIVO: COMPRA {code}", "color": "#10b981", "bg": "rgba(16,185,129,0.16)",
+                "instruction": f"Confluenza 11-Skill su {code} ({score}/10 · {raw_100}%, R:R {rm['rr_ratio']:.2f}x). Size {rm['position_usdt']:.2f} USDT.{claude_note}"}
     if raw_100 >= 58:
-        return {"badge": f"🟡 {code} QUASI PRONTA ({raw_100}/100) · ATTENDI", "color": "#f59e0b", "bg": "rgba(245,158,11,0.14)",
-                "instruction": f"{code} in preparazione ({raw_100}/100): {tm['summary']}."}
-    return {"badge": "🛡️ RESTA FERMO IN USDT (MERCATO SELETTIVO)", "color": "#94a3b8", "bg": "rgba(148,163,184,0.12)",
-            "instruction": f"Nessun setup ad alta probabilita' ora. Migliore: {code} ({raw_100}/100) · {BTC_REGIME['label']}."}
+        return {"badge": f"🟡 {code} QUASI PRONTA ({raw_100}%)", "color": "#f59e0b", "bg": "rgba(245,158,11,0.14)",
+                "instruction": f"Setup in formazione su {code}: {tm['summary']}."}
+    return {"badge": "🛡️ RESTA IN USDT (ATTESA)", "color": "#94a3b8", "bg": "rgba(148,163,184,0.12)",
+            "instruction": f"Nessuna occasione sicura ora. Migliore: {code} ({raw_100}%) · {BTC_REGIME['label']}."}
 
 
-def generate_webapp_html(ranked_evals, state, trade_status, fng_val, fng_class, session_str, eur_usd=1.08, macro_events=None):
+def generate_webapp_html(ranked_evals, state, trade_status, fng_val, fng_class, session_str, eur_usd=1.08, macro_events=None, news_items=None):
     focus = next((e for e in ranked_evals if entry_conditions(e)), ranked_evals[0])
     advisor = build_manual_action_advisor(state, focus, {e["code"]: e for e in ranked_evals}, trade_status)
     now = datetime.now(timezone.utc)
@@ -2919,25 +2924,57 @@ def generate_webapp_html(ranked_evals, state, trade_status, fng_val, fng_class, 
     coins_payload = []
     for e in ranked_evals:
         rm = e.get("risk_manager") or skill_09_adaptive_risk_and_sizing(INVEST_EUR, eur_usd, e["price"], e["sl_price"], e["tp_price"], state, e["high_soon"], e["code"], e)
+        s = e.get("skills", {})
+        tm = e.get("tm_stats", {})
         coins_payload.append({
             "code": e["code"], "name": e["coin"]["name"], "ws": e["coin"]["ws"], "kraken": e["coin"]["kraken"],
             "price": e["price"], "sl_price": e["sl_price"], "tp_price": e["tp_price"],
-            "final_score": e["final_score"], "raw_100": e["raw_100"], "ai_prob": round(e["ai_prob"] * 100),
+            "final_score": e["final_score"], "raw_100": e["raw_100"],
+            "ai_prob": round(e["ai_prob"] * 100),
+            "prob_mlp": round(e.get("prob_mlp", 0.5) * 100),
+            "prob_knn": round(e.get("prob_knn", 0.5) * 100),
+            "prob_mc": round(e.get("prob_mc", 0.5) * 100),
+            "mc_ev_r": round(e.get("mc_ev_r", 0.0), 2),
+            "tm_wr": round(tm.get("win_rate", 50.0), 1),
+            "tm_ev_r": round(tm.get("expectancy_r", 0.0), 2),
+            "tm_matches": int(tm.get("matches", 0)),
+            "rsi_1h": round(e.get("rsi_1h", 50.0), 1),
+            "rsi_15m": round(e.get("rsi_15m", 50.0), 1),
+            "adx_1h": round(e.get("adx_1h", 20.0), 1),
+            "vwap_diff": round(s.get("s3", {}).get("vwap_diff_pct", 0.0), 2),
+            "ob_imb": round(e.get("ob", {}).get("imbalance", 0.0) * 100, 1),
+            "funding_pct": round(e.get("fut", {}).get("funding_8h_pct", 0.0), 4),
             "timer_summary": e["scanner_timer"]["summary"], "triggers": e["scanner_timer"]["triggers"],
-            "regime": e["skills"]["s1"]["regime"], "alpha_btc": round(e["skills"]["s2"]["alpha_1h"], 2),
+            "regime": s.get("s1", {}).get("regime", "NEUTRAL"),
+            "alpha_btc": round(s.get("s2", {}).get("alpha_1h", 0.0), 2),
+            "sk_scores": {
+                "trend": int(s.get("s1", {}).get("score", 0)),
+                "btc": int(s.get("s2", {}).get("score", 0)),
+                "vwap": int(s.get("s3", {}).get("score", 0)),
+                "book": int(s.get("s4", {}).get("score", 0)),
+                "deriv": int(s.get("s5", {}).get("score", 0)),
+                "macro": int(s.get("s6", {}).get("score", 0)),
+                "ai": int(e.get("score_ai", 0)),
+                "timer": int(e.get("score_mom", 0)),
+            },
             "risk_ok": rm["passed"], "risk_status": rm["status_str"],
-            "rr_ratio": round(rm["rr_ratio"], 2), "pos_usdt": round(rm["position_usdt"], 2), "entry_ok": entry_conditions(e)})
+            "rr_ratio": round(rm["rr_ratio"], 2), "pos_usdt": round(rm["position_usdt"], 2),
+            "entry_ok": entry_conditions(e),
+        })
 
     macro = [{"title": ev["title"], "impact": ev["impact"], "ts": ev["ts"]} for ev in (macro_events or []) if "ts" in ev]
     payload = {
         "updated_ts": int(now.timestamp()), "session": session_str, "btc_regime": BTC_REGIME["label"],
         "fng_val": fng_val, "fng_class": fng_class, "mode": "LIVE" if pionex_live_enabled() else "SIMULAZIONE",
-        "claude_enabled": CLAUDE_ENABLED, "claude_verdict": state["stats"].get("claude_last_verdict") or {},
+        "claude_enabled": CLAUDE_ENABLED, "claude_model": CLAUDE_MODEL,
+        "claude_verdict": state["stats"].get("claude_last_verdict") or {},
         "advisor": advisor, "waiting": trade_status["detail"] if trade_status.get("action_state") == "WAITING" else "",
         "position": state["position"], "stats": state["stats"], "history": state.get("history", []),
         "coins": coins_payload, "macro": macro, "macro_ok": bool(MACRO_STATUS.get("ok")),
+        "news": news_items or [],
         "repo": GITHUB_REPO, "workflow": "bot.yml", "ref": os.getenv("GITHUB_REF_NAME") or "main",
-        "limits": {"max_trades": MAX_TRADES_PER_DAY, "daily_max_loss": DAILY_MAX_LOSS_PCT, "fee_rt": PIONEX_FEE_ROUNDTRIP_PCT}}
+        "limits": {"max_trades": MAX_TRADES_PER_DAY, "daily_max_loss": DAILY_MAX_LOSS_PCT, "fee_rt": PIONEX_FEE_ROUNDTRIP_PCT},
+    }
     payload_json = json.dumps(payload, ensure_ascii=False).replace("</", "<\\/")
 
     html = """<!DOCTYPE html>
@@ -2945,23 +2982,24 @@ def generate_webapp_html(ranked_evals, state, trade_status, fng_val, fng_class, 
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>Pionex Bot Console</title>
+<title>Pionex AI Console</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <style>
-  :root { --bg:#090f1d; --card:#131c31; --card2:#192540; --line:#263554; --text:#f8fafc; --muted:#94a3b8; --green:#10b981; --red:#ef4444; --amber:#f59e0b; --blue:#38bdf8; }
+  :root { --bg:#080e1c; --card:#111a2e; --card2:#182440; --line:#253455; --text:#f8fafc; --muted:#94a3b8; --green:#10b981; --red:#ef4444; --amber:#f59e0b; --blue:#38bdf8; --purple:#a78bfa; }
   * { box-sizing:border-box; margin:0; padding:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; -webkit-tap-highlight-color:transparent; }
-  body { background:var(--bg); color:var(--text); padding:12px; max-width:600px; margin:0 auto 80px; line-height:1.4; }
+  body { background:var(--bg); color:var(--text); padding:12px 12px 86px; max-width:600px; margin:0 auto; line-height:1.4; }
   .header { display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; gap:8px; }
   .h-title { font-size:18px; font-weight:900; letter-spacing:-0.3px; }
-  .h-sub { font-size:12px; color:var(--muted); margin-top:2px; }
-  .badge-pill { font-size:11px; font-weight:800; padding:5px 10px; border-radius:99px; background:var(--card2); border:1px solid var(--line); white-space:nowrap; }
-  .hero { padding:16px; border-radius:16px; border:2px solid var(--line); margin-bottom:14px; }
-  .hero-t { font-size:17px; font-weight:900; margin-bottom:6px; }
+  .h-sub { font-size:11px; color:var(--muted); margin-top:2px; }
+  .pill { font-size:11px; font-weight:800; padding:5px 9px; border-radius:99px; background:var(--card2); border:1px solid var(--line); white-space:nowrap; }
+  .view { display:none; } .view.active { display:block; }
+  .hero { padding:15px; border-radius:16px; border:2px solid var(--line); margin-bottom:12px; }
+  .hero-t { font-size:17px; font-weight:900; margin-bottom:5px; }
   .hero-s { font-size:13px; color:#e2e8f0; }
-  .card { background:var(--card); border:1px solid var(--line); border-radius:16px; padding:14px; margin-bottom:14px; }
-  .sec-title { font-size:12px; font-weight:800; text-transform:uppercase; color:var(--muted); letter-spacing:0.5px; margin-bottom:12px; display:flex; justify-content:space-between; align-items:center; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:16px; padding:14px; margin-bottom:12px; }
+  .sec-title { font-size:11px; font-weight:800; text-transform:uppercase; color:var(--muted); letter-spacing:0.6px; margin-bottom:10px; display:flex; justify-content:space-between; align-items:center; gap:8px; }
   .big-actions { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
-  .act-btn { border:none; border-radius:14px; padding:14px 12px; font-size:14px; font-weight:800; color:#fff; cursor:pointer; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:4px; text-align:center; transition:transform .1s; }
+  .act-btn { border:none; border-radius:13px; padding:13px 10px; font-size:14px; font-weight:800; color:#fff; cursor:pointer; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px; text-align:center; }
   .act-btn:active { transform:scale(0.97); }
   .act-btn small { font-size:11px; font-weight:600; opacity:0.85; }
   .b-green { background:linear-gradient(135deg,#059669,#10b981); }
@@ -2969,111 +3007,227 @@ def generate_webapp_html(ranked_evals, state, trade_status, fng_val, fng_class, 
   .b-blue { background:linear-gradient(135deg,#0284c7,#38bdf8); }
   .b-amber { background:linear-gradient(135deg,#d97706,#f59e0b); }
   .kv-grid { display:grid; grid-template-columns:repeat(2,1fr); gap:8px; }
-  .kv { background:#0c1426; padding:10px 12px; border-radius:12px; border:1px solid #1e2d4a; }
+  .kv { background:#0b1325; padding:10px 11px; border-radius:12px; border:1px solid #1d2c4b; }
   .kv-l { font-size:11px; color:var(--muted); }
-  .kv-v { font-size:16px; font-weight:900; margin-top:2px; font-variant-numeric:tabular-nums; }
-  .prog-bar { height:10px; background:#0c1426; border-radius:99px; overflow:hidden; margin:12px 0 6px; border:1px solid #1e2d4a; }
-  .prog-bar > div { height:100%; transition:width .3s; }
-  .coin-list { display:flex; flex-direction:column; gap:10px; }
-  .coin-item { background:#0d1629; border:1px solid var(--line); border-radius:14px; padding:12px; }
+  .kv-v { font-size:15px; font-weight:900; margin-top:2px; font-variant-numeric:tabular-nums; }
+  .prog-bar { height:9px; background:#0b1325; border-radius:99px; overflow:hidden; margin:8px 0; border:1px solid #1d2c4b; }
+  .prog-bar > div { height:100%; transition:width .3s; border-radius:99px; }
+  .chip-row { display:flex; gap:6px; margin-bottom:10px; flex-wrap:wrap; }
+  .chip { padding:6px 11px; border-radius:99px; font-size:12px; font-weight:800; background:var(--card2); border:1px solid var(--line); color:var(--muted); cursor:pointer; }
+  .chip.active { background:var(--blue); color:#061224; border-color:var(--blue); }
+  .coin-item { background:#0b1325; border:1px solid var(--line); border-radius:14px; padding:12px; margin-bottom:10px; }
   .coin-item.ready { border-color:var(--green); background:rgba(16,185,129,0.07); }
-  .coin-top { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; }
-  .coin-name { font-size:16px; font-weight:900; display:flex; align-items:center; gap:6px; }
-  .coin-px { font-size:16px; font-weight:900; font-variant-numeric:tabular-nums; }
-  .coin-meta { display:grid; grid-template-columns:repeat(3,1fr); gap:6px; font-size:12px; margin-bottom:10px; background:var(--card); padding:8px; border-radius:10px; }
+  .coin-top { display:flex; justify-content:space-between; align-items:center; }
+  .coin-name { font-size:15px; font-weight:900; }
+  .coin-px { font-size:15px; font-weight:900; font-variant-numeric:tabular-nums; }
+  .coin-meta { display:grid; grid-template-columns:repeat(3,1fr); gap:6px; font-size:12px; margin:8px 0; background:var(--card); padding:8px; border-radius:10px; }
   .coin-meta div span { display:block; font-size:10px; color:var(--muted); }
-  .coin-foot { display:flex; justify-content:space-between; align-items:center; gap:8px; }
   .mini-btn { padding:8px 12px; border-radius:10px; font-size:12px; font-weight:800; border:none; cursor:pointer; color:#fff; white-space:nowrap; }
-  input, select { width:100%; background:#0c1426; color:var(--text); border:1px solid var(--line); padding:11px 12px; border-radius:12px; font-size:14px; font-weight:600; }
-  .toast { position:fixed; bottom:16px; left:12px; right:12px; max-width:576px; margin:0 auto; background:#1e293b; border:2px solid var(--blue); color:#fff; padding:13px 16px; border-radius:14px; font-size:13px; font-weight:700; display:none; z-index:99; box-shadow:0 10px 25px rgba(0,0,0,.6); }
-  .pos-green { color:var(--green); } .pos-red { color:var(--red); } .pos-amber { color:var(--amber); }
+  .skill-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:10px; }
+  .skill-row { background:#0b1325; border:1px solid #1d2c4b; border-radius:10px; padding:8px 10px; font-size:12px; }
+  .skill-row .top { display:flex; justify-content:space-between; font-weight:800; margin-bottom:4px; }
+  .ev-row { display:flex; justify-content:space-between; align-items:center; gap:10px; padding:10px 0; border-bottom:1px solid #1d2c4b; }
+  .ev-row:last-child { border-bottom:none; }
+  .news-link { display:block; padding:10px 0; border-bottom:1px solid #1d2c4b; color:var(--text); text-decoration:none; }
+  .news-link:last-child { border-bottom:none; }
+  .news-t { font-size:13px; font-weight:700; line-height:1.35; }
+  .news-m { font-size:11px; color:var(--muted); margin-top:3px; }
+  input, select { width:100%; background:#0b1325; color:var(--text); border:1px solid var(--line); padding:10px 12px; border-radius:11px; font-size:14px; font-weight:600; }
+  .tabbar { position:fixed; bottom:0; left:0; right:0; background:rgba(11,19,37,0.96); backdrop-filter:blur(10px); border-top:1px solid var(--line); display:grid; grid-template-columns:repeat(4,1fr); max-width:600px; margin:0 auto; z-index:90; }
+  .tab-btn { background:none; border:none; color:var(--muted); padding:9px 4px 11px; font-size:11px; font-weight:800; cursor:pointer; display:flex; flex-direction:column; align-items:center; gap:3px; }
+  .tab-btn span { font-size:17px; }
+  .tab-btn.active { color:var(--blue); }
+  .toast { position:fixed; bottom:72px; left:12px; right:12px; max-width:576px; margin:0 auto; background:#1e293b; border:2px solid var(--blue); color:#fff; padding:12px 15px; border-radius:13px; font-size:13px; font-weight:700; display:none; z-index:99; box-shadow:0 10px 25px rgba(0,0,0,.6); }
+  .pos-green { color:var(--green); } .pos-red { color:var(--red); } .pos-amber { color:var(--amber); } .pos-blue { color:var(--blue); }
   .muted { color:var(--muted); font-size:12px; }
 </style>
 </head>
 <body>
+
 <div class="header">
   <div>
-    <div class="h-title">⚡ Pionex Claude 5.5 Console</div>
+    <div class="h-title">⚡ Pionex AI Console</div>
     <div class="h-sub" id="subline">Caricamento...</div>
   </div>
-  <div style="display:flex;gap:6px;align-items:center;">
-    <span class="badge-pill" id="ws-pill">🔴 Live</span>
-    <span class="badge-pill" id="mode-pill">MODO</span>
+  <div style="display:flex;gap:5px;align-items:center;">
+    <span class="pill" id="ws-pill">🔴 Live</span>
+    <span class="pill" id="mode-pill">MODO</span>
   </div>
 </div>
-<div class="hero" id="advisor">
-  <div class="hero-t" id="adv-title"></div>
-  <div class="hero-s" id="adv-sub"></div>
-</div>
-<div class="card" id="pos-card"></div>
-<div class="card">
-  <div class="sec-title">
-    <span>🎛️ Telecomando Rapido (1-Tap)</span>
-    <button class="badge-pill" onclick="toggleSetup()" id="key-btn" style="cursor:pointer;">🔑 Chiave GitHub</button>
+
+<!-- ======================= TAB 1: HOME ======================= -->
+<section id="view-home" class="view active">
+  <div class="hero" id="advisor">
+    <div class="hero-t" id="adv-title"></div>
+    <div class="hero-s" id="adv-sub"></div>
   </div>
-  <div id="setup-box" style="display:none; background:#0c1426; padding:12px; border-radius:12px; margin-bottom:12px; border:1px solid var(--amber);">
-    <div style="font-size:13px; font-weight:800; margin-bottom:6px; color:var(--amber);">Configurazione Rapida (solo la prima volta):</div>
-    <div class="muted" style="margin-bottom:8px;">
-      Per far eseguire i pulsanti istantaneamente, incolla un Token GitHub.
-      <a href="https://github.com/settings/tokens/new?description=PionexTelegramConsole&scopes=repo,workflow" target="_blank" style="color:var(--blue);font-weight:800;display:block;margin-top:4px;">👉 1. Tocca qui per generare il Token su GitHub</a>
+
+  <div class="card" id="pos-card"></div>
+
+  <div class="card">
+    <div class="sec-title">
+      <span>🎛️ Telecomando Rapido</span>
+      <button class="pill" onclick="toggleSetup()" id="key-btn" style="cursor:pointer;">🔑 Chiave GitHub</button>
     </div>
-    <input id="gh-token" type="password" placeholder="2. Incolla qui il Token ghp_... e premi Salva" style="margin-bottom:8px;">
-    <button class="act-btn b-green" style="width:100%;padding:10px;" onclick="saveToken()">💾 Salva Chiave nel Telefono</button>
-  </div>
-  <div class="big-actions" style="margin-bottom:10px;">
-    <button class="act-btn b-blue" onclick="sendCmd('status','',0)">🔄 Aggiorna Ora<small>Ricalcola 11 Skill + AI</small></button>
-    <button class="act-btn b-red" onclick="confirmClose()">🛑 Chiudi Posizione<small>Vendi trade attivo</small></button>
-  </div>
-  <div style="background:#0c1426; padding:10px; border-radius:12px; border:1px solid #1e2d4a;">
-    <div class="muted" style="margin-bottom:6px; font-weight:700;">Operazione manuale su singola Coin:</div>
-    <div style="display:grid; grid-template-columns:1.2fr 1fr; gap:8px; margin-bottom:8px;">
-      <select id="man-coin"></select>
-      <input id="man-usdt" type="number" inputmode="decimal" placeholder="USDT (0 = Auto)">
+    <div id="setup-box" style="display:none; background:#0b1325; padding:12px; border-radius:12px; margin-bottom:10px; border:1px solid var(--amber);">
+      <div style="font-size:12px; font-weight:800; color:var(--amber); margin-bottom:6px;">Attiva i pulsanti remoti (solo la prima volta):</div>
+      <a href="https://github.com/settings/tokens/new?description=PionexTelegramConsole&scopes=repo,workflow" target="_blank" style="color:var(--blue);font-size:12px;font-weight:800;display:block;margin-bottom:8px;">👉 Genera Token GitHub (permesso workflow)</a>
+      <input id="gh-token" type="password" placeholder="Incolla Token ghp_... e salva" style="margin-bottom:8px;">
+      <button class="act-btn b-green" style="width:100%;padding:10px;" onclick="saveToken()">💾 Salva nel Telefono</button>
     </div>
-    <div class="big-actions">
-      <button class="act-btn b-green" style="padding:11px;" onclick="manualOpen()">🚀 Compra (Long)</button>
-      <button class="act-btn b-amber" style="padding:11px;" onclick="manualSellAll()">🧹 Vendi Tutto Saldo</button>
+    <div class="big-actions" style="margin-bottom:10px;">
+      <button class="act-btn b-blue" onclick="sendCmd('status','',0)">🔄 Aggiorna Ora<small>Ricalcola Previsioni</small></button>
+      <button class="act-btn b-red" onclick="confirmClose()">🛑 Chiudi Posizione<small>Vendi trade attivo</small></button>
+    </div>
+    <div style="background:#0b1325; padding:10px; border-radius:12px; border:1px solid #1d2c4b;">
+      <div class="muted" style="margin-bottom:6px; font-weight:700;">Operazione manuale rapida:</div>
+      <div style="display:grid; grid-template-columns:1.2fr 1fr; gap:8px; margin-bottom:8px;">
+        <select id="man-coin"></select>
+        <input id="man-usdt" type="number" inputmode="decimal" placeholder="USDT (0 = Auto)">
+      </div>
+      <div class="big-actions">
+        <button class="act-btn b-green" style="padding:10px;" onclick="manualOpen()">🚀 Compra Long</button>
+        <button class="act-btn b-amber" style="padding:10px;" onclick="manualSellAll()">🧹 Vendi Tutto</button>
+      </div>
     </div>
   </div>
-</div>
-<div class="card">
-  <div class="sec-title"><span>🏆 Classifica 10 Coin (11 Skill)</span><span id="btc-pill" class="muted"></span></div>
-  <div class="coin-list" id="coin-list"></div>
-</div>
-<div class="card">
-  <div class="sec-title"><span>📊 Rendimento & Sicurezza</span><span id="daily-tag" class="muted"></span></div>
-  <div class="kv-grid" id="stats-grid"></div>
-  <div id="hist-box" style="margin-top:12px;"></div>
-</div>
+</section>
+
+<!-- ======================= TAB 2: PREVISIONI AI ======================= -->
+<section id="view-pred" class="view">
+  <div class="card" id="claude-card"></div>
+
+  <div class="card">
+    <div class="sec-title">
+      <span>🔮 Motore Previsioni Reale (12h)</span>
+      <span class="pill" id="fng-pill">F&G</span>
+    </div>
+    <select id="pred-coin-sel" onchange="renderPrediction()" style="margin-bottom:10px;"></select>
+    <div id="pred-box"></div>
+  </div>
+</section>
+
+<!-- ======================= TAB 3: MERCATO 10 COIN ======================= -->
+<section id="view-market" class="view">
+  <div class="card">
+    <div class="sec-title">
+      <span>🏆 Classifica 10 Coin</span>
+      <span id="btc-pill" class="muted"></span>
+    </div>
+    <div class="chip-row">
+      <button class="chip active" onclick="setFilter('all',this)">Tutte (10)</button>
+      <button class="chip" onclick="setFilter('ready',this)">🟢 Pronte</button>
+      <button class="chip" onclick="setFilter('hot',this)">🟡 Quasi Pronte</button>
+    </div>
+    <div id="coin-list"></div>
+  </div>
+</section>
+
+<!-- ======================= TAB 4: CALENDARIO, NEWS & STORICO ======================= -->
+<section id="view-cal" class="view">
+  <div class="card">
+    <div class="sec-title">
+      <span>📅 Calendario Economico USD</span>
+      <span id="macro-pill" class="muted"></span>
+    </div>
+    <div id="macro-list"></div>
+  </div>
+
+  <div class="card">
+    <div class="sec-title"><span>📰 Ultime Notizie Crypto</span><span class="muted">Feed Reale</span></div>
+    <div id="news-list"></div>
+  </div>
+
+  <div class="card">
+    <div class="sec-title"><span>📊 Rendimento & Storico</span><span id="daily-tag" class="muted"></span></div>
+    <div class="kv-grid" id="stats-grid"></div>
+    <div id="hist-box" style="margin-top:10px;"></div>
+  </div>
+</section>
+
+<nav class="tabbar">
+  <button class="tab-btn active" onclick="switchTab('home',this)"><span>🏠</span>Home</button>
+  <button class="tab-btn" onclick="switchTab('pred',this)"><span>🔮</span>Previsioni</button>
+  <button class="tab-btn" onclick="switchTab('market',this)"><span>🏆</span>Mercato</button>
+  <button class="tab-btn" onclick="switchTab('cal',this)"><span>📅</span>News & Cal</button>
+</nav>
+
 <div class="toast" id="toast"></div>
+
 <script>
 const D = __PAYLOAD_JSON__;
 const livePx = {};
+let marketFilter = 'all';
+
 try { if (window.Telegram && window.Telegram.WebApp) { window.Telegram.WebApp.ready(); window.Telegram.WebApp.expand(); } } catch(e){}
-function showToast(msg, border='#38bdf8'){
-  const t = document.getElementById('toast'); t.style.borderColor = border; t.innerHTML = msg; t.style.display = 'block';
-  clearTimeout(window._toastTimer); window._toastTimer = setTimeout(()=>{ t.style.display='none'; }, 6000);
+
+function switchTab(name, btn){
+  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('view-' + name).classList.add('active');
+  btn.classList.add('active');
+  window.scrollTo({top: 0, behavior: 'smooth'});
 }
-function fmtPx(p){ p=Number(p||0); if(p<=0)return '$0.00'; if(p>=1000)return '$'+p.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); if(p>=10)return '$'+p.toFixed(2); if(p>=1)return '$'+p.toFixed(3); return '$'+p.toFixed(4); }
-function ageStr(ts){ const s=Math.max(0,Math.floor(Date.now()/1000-ts)); if(s<60)return s+'s fa'; if(s<3600)return Math.floor(s/60)+' min fa'; return (s/3600).toFixed(1)+' ore fa'; }
+
+function showToast(msg, border='#38bdf8'){
+  const t = document.getElementById('toast');
+  t.style.borderColor = border; t.innerHTML = msg; t.style.display = 'block';
+  clearTimeout(window._toastTimer);
+  window._toastTimer = setTimeout(()=>{ t.style.display='none'; }, 5500);
+}
+
+function fmtPx(p){
+  p = Number(p||0);
+  if(p<=0) return '$0.00';
+  if(p>=1000) return '$'+p.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+  if(p>=10) return '$'+p.toFixed(2);
+  if(p>=1) return '$'+p.toFixed(3);
+  return '$'+p.toFixed(4);
+}
+function ageStr(ts){
+  const s = Math.max(0, Math.floor(Date.now()/1000 - ts));
+  if(s<60) return s+'s fa';
+  if(s<3600) return Math.floor(s/60)+'m fa';
+  return (s/3600).toFixed(1)+'h fa';
+}
+function fmtLocalDT(ts){
+  return new Date(ts * 1000).toLocaleString('it-IT',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
+}
+function countdownStr(ts){
+  const diff = ts - Math.floor(Date.now()/1000);
+  if(diff <= 0){
+    const ago = Math.abs(diff);
+    return ago < 3600 ? `${Math.floor(ago/60)}m fa` : `${(ago/3600).toFixed(1)}h fa`;
+  }
+  const h = Math.floor(diff/3600), m = Math.floor((diff%3600)/60);
+  return h > 0 ? `tra ${h}h ${m}m` : `tra ${m}m`;
+}
+
 function renderHeader(){
-  document.getElementById('subline').textContent = `Aggiornato ${ageStr(D.updated_ts)} · ${D.session}`;
+  document.getElementById('subline').textContent = `${ageStr(D.updated_ts)} · ${D.session}`;
   const mp = document.getElementById('mode-pill');
-  mp.textContent = D.mode === 'LIVE' ? '🟢 LIVE REALE' : '🧪 SIMULAZIONE';
+  mp.textContent = D.mode === 'LIVE' ? '🟢 LIVE' : '🧪 SIM';
   mp.style.borderColor = D.mode === 'LIVE' ? '#10b981' : '#f59e0b';
   document.getElementById('btc-pill').textContent = D.btc_regime || '';
-  const adv = document.getElementById('advisor'); adv.style.background = D.advisor.bg; adv.style.borderColor = D.advisor.color;
+  document.getElementById('fng-pill').textContent = `F&G ${D.fng_val} (${D.fng_class})`;
+
+  const adv = document.getElementById('advisor');
+  adv.style.background = D.advisor.bg; adv.style.borderColor = D.advisor.color;
   const t = document.getElementById('adv-title'); t.style.color = D.advisor.color; t.textContent = D.advisor.badge;
   document.getElementById('adv-sub').textContent = D.advisor.instruction;
+
   const hasKey = Boolean(localStorage.getItem('gh_pat'));
   const kb = document.getElementById('key-btn');
-  kb.textContent = hasKey ? '🟢 Telecomando Attivo' : '🔑 Attiva Telecomando';
+  kb.textContent = hasKey ? '🟢 Telecomando OK' : '🔑 Chiave GitHub';
   kb.style.borderColor = hasKey ? '#10b981' : '#f59e0b';
 }
+
 function renderPosition(){
-  const box = document.getElementById('pos-card'); const p = D.position;
+  const box = document.getElementById('pos-card');
+  const p = D.position;
   if(!p || !p.is_open){
-    box.innerHTML = `<div class="sec-title"><span>💼 Posizione Attiva</span><span>NESSUNA (100% USDT)</span></div><div class="muted">${D.waiting || 'Capitale protetto in USDT.'}</div>`;
+    box.innerHTML = `<div class="sec-title"><span>💼 Portafoglio</span><span>100% USDT</span></div>
+      <div class="muted">${D.waiting || 'Nessun trade aperto: il capitale è protetto in USDT.'}</div>`;
     return;
   }
   const coin = D.coins.find(c=>c.code===p.coin_code) || {};
@@ -3085,52 +3239,176 @@ function renderPosition(){
   const span = Math.max(p.tp_price - p.sl_price, 1e-9);
   const prog = Math.max(0, Math.min(100, ((cur - p.sl_price) / span) * 100));
   const col = netUsdt >= 0 ? 'pos-green' : 'pos-red';
-  box.innerHTML = `<div class="sec-title"><span>🔥 POSIZIONE APERTA SU ${p.coin_code}</span><span>${p.opened_at}</span></div>
+
+  box.innerHTML = `<div class="sec-title"><span>🔥 TRADE APERTO: ${p.coin_code}</span><span>${p.opened_at}</span></div>
     <div class="kv-grid">
-      <div class="kv"><div class="kv-l">Prezzo Acquisto</div><div class="kv-v">${fmtPx(p.entry_price)}</div></div>
+      <div class="kv"><div class="kv-l">Ingresso</div><div class="kv-v">${fmtPx(p.entry_price)}</div></div>
       <div class="kv"><div class="kv-l">Prezzo Attuale</div><div class="kv-v">${fmtPx(cur)}</div></div>
-      <div class="kv"><div class="kv-l">Guadagno / Perdita</div><div class="kv-v ${col}">${netPct>=0?'+':''}${netPct.toFixed(2)}% (${netUsdt>=0?'+':''}${netUsdt.toFixed(2)}$)</div></div>
+      <div class="kv"><div class="kv-l">Risultato Netto</div><div class="kv-v ${col}">${netPct>=0?'+':''}${netPct.toFixed(2)}% (${netUsdt>=0?'+':''}${netUsdt.toFixed(2)}$)</div></div>
       <div class="kv"><div class="kv-l">Investito</div><div class="kv-v">${Number(p.invested_usdt).toFixed(2)} USDT</div></div>
       <div class="kv"><div class="kv-l">Stop-Loss ${p.breakeven_locked?'🔒':''}</div><div class="kv-v pos-red">${fmtPx(p.sl_price)}</div></div>
       <div class="kv"><div class="kv-l">Take-Profit 🎯</div><div class="kv-v pos-green">${fmtPx(p.tp_price)}</div></div>
     </div>
     <div class="prog-bar"><div style="width:${prog}%; background:${netUsdt>=0?'#10b981':'#ef4444'}"></div></div>
-    <button class="act-btn b-red" style="width:100%; margin-top:8px; padding:12px;" onclick="confirmClose()">🛑 CHIUDI SUBITO ${p.coin_code} A MERCATO</button>`;
+    <button class="act-btn b-red" style="width:100%; margin-top:6px; padding:11px;" onclick="confirmClose()">🛑 CHIUDI SUBITO ${p.coin_code}</button>`;
 }
+
+function renderPrediction(){
+  const clBox = document.getElementById('claude-card');
+  const cv = D.claude_verdict || {};
+  if(D.claude_enabled && cv.reason_it){
+    const dCol = cv.decision==='APPROVE'||cv.decision==='HOLD' ? 'pos-green' : (cv.decision==='WAIT_PULLBACK'||cv.decision==='TIGHTEN_SL' ? 'pos-amber' : 'pos-red');
+    clBox.innerHTML = `<div class="sec-title"><span>🧠 Supervisore Claude 5.5</span><span class="pill">${cv.model_used || D.claude_model}</span></div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+        <b class="${dCol}" style="font-size:15px;">${cv.decision} ${cv.best_coin || ''}</b>
+        <span class="pill">Confidenza: ${cv.confidence || 0}%</span>
+      </div>
+      <div style="font-size:13px;color:#e2e8f0;">${cv.reason_it}</div>
+      <div class="muted" style="margin-top:5px;">Regime: ${cv.market_regime_note || D.btc_regime}</div>`;
+  } else {
+    clBox.innerHTML = `<div class="sec-title"><span>🧠 Supervisore Claude 5.5</span><span class="pill">${D.claude_enabled ? 'In attesa setup' : 'Solo Quant'}</span></div>
+      <div class="muted">${D.claude_enabled ? 'Claude interviene automaticamente appena una coin supera i filtri o su posizione aperta.' : 'Aggiungi ANTHROPIC_API_KEY nei Secrets GitHub per attivare anche il giudizio di Claude 5.5.'}</div>`;
+  }
+
+  const sel = document.getElementById('pred-coin-sel').value;
+  const c = D.coins.find(x => x.code === sel) || D.coins[0];
+  if(!c) return;
+  const px = livePx[c.code] || c.price;
+  const slPct = ((c.sl_price - px)/px*100).toFixed(2);
+  const tpPct = ((c.tp_price - px)/px*100).toFixed(2);
+  const dirLabel = c.ai_prob >= 58 && c.raw_100 >= 65 ? '📈 RIALZISTA FORTE'
+                 : (c.ai_prob >= 53 ? '↗️ RIALZISTA MODERATO' : (c.ai_prob <= 45 ? '📉 DEBOLE / PRUDENZA' : '↔️ LATERALE'));
+  const dirCol = c.ai_prob >= 56 ? 'pos-green' : (c.ai_prob <= 45 ? 'pos-red' : 'pos-amber');
+
+  const sk = c.sk_scores || {};
+  const bar = (val, max, col='#38bdf8') => `<div class="prog-bar" style="height:6px;margin:4px 0 0;"><div style="width:${Math.min(100,Math.round(val/max*100))}%;background:${col}"></div></div>`;
+
+  document.getElementById('pred-box').innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;background:#0b1325;padding:11px;border-radius:12px;border:1px solid #1d2c4b;">
+      <div>
+        <div style="font-size:11px;color:var(--muted);">Previsione Direzionale 12h</div>
+        <div class="${dirCol}" style="font-size:16px;font-weight:900;">${dirLabel}</div>
+      </div>
+      <div style="text-align:right;">
+        <div style="font-size:11px;color:var(--muted);">Probabilità AI</div>
+        <div style="font-size:18px;font-weight:900;">${c.ai_prob}%</div>
+      </div>
+    </div>
+
+    <div class="kv-grid" style="margin-bottom:10px;">
+      <div class="kv"><div class="kv-l">Target Atteso (TP)</div><div class="kv-v pos-green">${fmtPx(c.tp_price)} <small>(+${tpPct}%)</small></div></div>
+      <div class="kv"><div class="kv-l">Protezione (SL)</div><div class="kv-v pos-red">${fmtPx(c.sl_price)} <small>(${slPct}%)</small></div></div>
+      <div class="kv"><div class="kv-l">Rendimento / Rischio</div><div class="kv-v pos-blue">${c.rr_ratio}x netto</div></div>
+      <div class="kv"><div class="kv-l">Monte Carlo (12h)</div><div class="kv-v ${c.mc_ev_r>=0?'pos-green':'pos-red'}">${c.mc_ev_r>=0?'+':''}${c.mc_ev_r}R atteso</div></div>
+    </div>
+
+    <div class="sec-title" style="margin-top:8px;"><span>⚙️ I 4 Motori Predittivi</span><span>${c.regime}</span></div>
+    <div class="skill-grid">
+      <div class="skill-row"><div class="top"><span>Rete Neurale</span><span>${c.prob_mlp}%</span></div>${bar(c.prob_mlp,100,'#a78bfa')}</div>
+      <div class="skill-row"><div class="top"><span>k-NN Lorentziano</span><span>${c.prob_knn}%</span></div>${bar(c.prob_knn,100,'#38bdf8')}</div>
+      <div class="skill-row"><div class="top"><span>Monte Carlo 400</span><span>${c.prob_mc}%</span></div>${bar(c.prob_mc,100,'#10b981')}</div>
+      <div class="skill-row"><div class="top"><span>Time Machine (${c.tm_matches})</span><span>${c.tm_wr}% WR</span></div>${bar(c.tm_wr,100,'#f59e0b')}</div>
+    </div>
+
+    <div class="sec-title" style="margin-top:12px;"><span>🧩 Semaforo 11 Skill (${c.raw_100}/100)</span><span>Alpha BTC: ${c.alpha_btc>=0?'+':''}${c.alpha_btc}%</span></div>
+    <div class="skill-grid">
+      <div class="skill-row"><div class="top"><span>Trend 4H/1H</span><span>${sk.trend||0}/20</span></div>${bar(sk.trend||0,20)}</div>
+      <div class="skill-row"><div class="top"><span>Forza vs BTC</span><span>${sk.btc||0}/10</span></div>${bar(sk.btc||0,10)}</div>
+      <div class="skill-row"><div class="top"><span>VWAP & Volumi</span><span>${sk.vwap||0}/15</span></div>${bar(sk.vwap||0,15)}</div>
+      <div class="skill-row"><div class="top"><span>Book L2 (${c.ob_imb>=0?'+':''}${c.ob_imb}%)</span><span>${sk.book||0}/10</span></div>${bar(sk.book||0,10)}</div>
+      <div class="skill-row"><div class="top"><span>Derivati/F&G</span><span>${sk.deriv||0}/8</span></div>${bar(sk.deriv||0,8)}</div>
+      <div class="skill-row"><div class="top"><span>Timer 15m</span><span>${c.triggers||0}/5</span></div>${bar(c.triggers||0,5,'#10b981')}</div>
+    </div>`;
+}
+
+function setFilter(f, btn){
+  marketFilter = f;
+  document.querySelectorAll('.chip').forEach(c=>c.classList.remove('active'));
+  btn.classList.add('active');
+  renderCoins();
+}
+
 function renderCoins(){
   const box = document.getElementById('coin-list');
-  box.innerHTML = D.coins.map((c, idx) => {
+  const list = D.coins.filter(c => {
+    if(marketFilter === 'ready') return c.entry_ok;
+    if(marketFilter === 'hot') return c.raw_100 >= 58;
+    return true;
+  });
+  if(!list.length){
+    box.innerHTML = `<div class="muted" style="padding:12px 0;">Nessuna coin corrisponde a questo filtro al momento.</div>`;
+    return;
+  }
+  box.innerHTML = list.map((c, idx) => {
     const px = livePx[c.code] || c.price;
     const icon = c.entry_ok ? '🟢' : (c.raw_100 >= 58 ? '🟡' : '⚪');
     const barCol = c.entry_ok ? '#10b981' : (c.raw_100 >= 58 ? '#f59e0b' : '#38bdf8');
     return `<div class="coin-item ${c.entry_ok?'ready':''}">
       <div class="coin-top"><div class="coin-name">${icon} #${idx+1} ${c.name} (${c.code})</div><div class="coin-px" id="px-${c.code}">${fmtPx(px)}</div></div>
-      <div class="prog-bar" style="margin:6px 0 10px;height:7px;"><div style="width:${c.raw_100}%;background:${barCol}"></div></div>
+      <div class="prog-bar" style="height:6px;"><div style="width:${c.raw_100}%;background:${barCol}"></div></div>
       <div class="coin-meta">
-        <div><span>11-Skill Score</span><b>${c.final_score}/10 (${c.raw_100}%)</b></div>
-        <div><span>FreqAI Prob</span><b>${c.ai_prob}%</b></div>
-        <div><span>Trigger 15m</span><b>${c.triggers || 0}/5 (${c.rr_ratio}R)</b></div>
+        <div><span>Punteggio</span><b>${c.final_score}/10 (${c.raw_100}%)</b></div>
+        <div><span>Previsione AI</span><b>${c.ai_prob}%</b></div>
+        <div><span>R:R Netto</span><b>${c.rr_ratio}x</b></div>
         <div><span>Stop-Loss</span><b class="pos-red">${fmtPx(c.sl_price)}</b></div>
         <div><span>Take-Profit</span><b class="pos-green">${fmtPx(c.tp_price)}</b></div>
-        <div><span>Size Auto</span><b>${c.pos_usdt.toFixed(1)} USDT</b></div>
+        <div><span>Trigger 15m</span><b>${c.triggers || 0}/5</b></div>
       </div>
-      <div class="coin-foot"><span class="muted" style="font-size:11px;">${c.risk_ok ? '✅ Rischio OK' : c.risk_status}</span>
-      <button class="mini-btn b-green" onclick="quickBuy('${c.code}', ${c.pos_usdt.toFixed(2)})">🚀 Compra ${c.code}</button></div></div>`;
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+        <span class="muted" style="font-size:11px;">${c.risk_ok ? '✅ Rischio OK' : c.risk_status}</span>
+        <button class="mini-btn b-green" onclick="quickBuy('${c.code}', ${c.pos_usdt.toFixed(2)})">🚀 Compra ${c.code}</button>
+      </div>
+    </div>`;
   }).join('');
 }
+
+function renderCalendarAndNews(){
+  document.getElementById('macro-pill').textContent = D.macro_ok ? '🟢 Live USD' : '⚠️ Feed Offline';
+  const mBox = document.getElementById('macro-list');
+  const mList = (D.macro || []).slice(0, 10);
+  mBox.innerHTML = mList.length
+    ? mList.map(ev => {
+        const badge = ev.impact === 'High' ? '🔴 ALTO' : '🟡 MEDIO';
+        const isFuture = ev.ts > Math.floor(Date.now()/1000);
+        return `<div class="ev-row">
+          <div>
+            <div style="font-size:13px;font-weight:800;">${ev.title}</div>
+            <div class="muted">${fmtLocalDT(ev.ts)} · ${badge}</div>
+          </div>
+          <span class="pill" style="border-color:${isFuture && ev.impact==='High'?'#ef4444':'#253455'}">${countdownStr(ev.ts)}</span>
+        </div>`;
+      }).join('')
+    : `<div class="muted">Nessun evento USD ad alto/medio impatto nelle prossime 36 ore.</div>`;
+
+  const nBox = document.getElementById('news-list');
+  const news = D.news || [];
+  nBox.innerHTML = news.length
+    ? news.map(n => `<a class="news-link" href="${n.url}" target="_blank" rel="noopener">
+        <div class="news-t">${n.title}</div>
+        <div class="news-m">${n.source} · ${ageStr(n.ts)} (${fmtLocalDT(n.ts)}) ↗</div>
+      </a>`).join('')
+    : `<div class="muted">Notizie momentaneamente non disponibili. Riprova con 'Aggiorna Ora'.</div>`;
+}
+
 function renderStats(){
-  const s = D.stats || {}; const wr = s.total_trades ? ((s.wins/s.total_trades)*100).toFixed(0)+'%' : '—';
+  const s = D.stats || {};
+  const wr = s.total_trades ? ((s.wins/s.total_trades)*100).toFixed(0)+'%' : '—';
   document.getElementById('daily-tag').textContent = `Oggi: ${s.daily_trades||0}/${D.limits.max_trades} trade`;
   document.getElementById('stats-grid').innerHTML = `
-    <div class="kv"><div class="kv-l">Operazioni Totali</div><div class="kv-v">${s.total_trades||0} (${s.wins||0} V / ${s.losses||0} P)</div></div>
-    <div class="kv"><div class="kv-l">Precisione (Win Rate)</div><div class="kv-v">${wr}</div></div>
+    <div class="kv"><div class="kv-l">Operazioni Totali</div><div class="kv-v">${s.total_trades||0} (${s.wins||0}V / ${s.losses||0}P)</div></div>
+    <div class="kv"><div class="kv-l">Win Rate</div><div class="kv-v">${wr}</div></div>
     <div class="kv"><div class="kv-l">Profitto Totale</div><div class="kv-v ${(s.total_pnl_usdt||0)>=0?'pos-green':'pos-red'}">${(s.total_pnl_usdt||0)>=0?'+':''}${(s.total_pnl_usdt||0).toFixed(2)} $</div></div>
-    <div class="kv"><div class="kv-l">Profitto Oggi</div><div class="kv-v ${(s.daily_pnl_pct||0)>=0?'pos-green':'pos-red'}">${(s.daily_pnl_pct||0)>=0?'+':''}${(s.daily_pnl_pct||0).toFixed(2)}%</div></div>`;
+    <div class="kv"><div class="kv-l">Oggi</div><div class="kv-v ${(s.daily_pnl_pct||0)>=0?'pos-green':'pos-red'}">${(s.daily_pnl_pct||0)>=0?'+':''}${(s.daily_pnl_pct||0).toFixed(2)}%</div></div>`;
   const h = D.history || [];
   document.getElementById('hist-box').innerHTML = h.length
-    ? `<div class="muted" style="margin-bottom:6px;font-weight:700;">Ultime chiusure:</div>` + h.slice(0,6).map(r=>`<div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid #1e2d4a;font-size:12px;"><span><b>${r.coin}</b> · ${r.closed_at}</span><span class="${r.pnl_usdt>=0?'pos-green':'pos-red'}"><b>${r.pnl_pct>=0?'+':''}${r.pnl_pct}% (${r.pnl_usdt>=0?'+':''}${r.pnl_usdt}$)</b></span></div>`).join('')
+    ? `<div class="muted" style="margin-bottom:6px;font-weight:700;">Ultime chiusure:</div>` +
+      h.slice(0,8).map(r=>`<div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid #1d2c4b;font-size:12px;">
+        <span><b>${r.coin}</b> · ${r.closed_at}</span>
+        <span class="${r.pnl_usdt>=0?'pos-green':'pos-red'}"><b>${r.pnl_pct>=0?'+':''}${r.pnl_pct}% (${r.pnl_usdt>=0?'+':''}${r.pnl_usdt}$)</b></span>
+      </div>`).join('')
     : `<div class="muted">Nessuna operazione chiusa finora.</div>`;
 }
+
 function toggleSetup(){ const b=document.getElementById('setup-box'); b.style.display=b.style.display==='none'?'block':'none'; }
 function saveToken(){
   const v=document.getElementById('gh-token').value.trim();
@@ -3147,32 +3425,47 @@ async function sendCmd(command, coin, amount_usdt){
       method:'POST', headers:{'Authorization':`Bearer ${tok}`,'Accept':'application/vnd.github+json','Content-Type':'application/json'},
       body: JSON.stringify({ref: D.ref || 'main', inputs:{command, coin: String(coin||''), amount_usdt: String(amount_usdt||0)}})
     });
-    if(r.status === 204) showToast(`✅ Comando avviato!`, '#10b981');
-    else showToast(`❌ Errore HTTP ${r.status}`, '#ef4444');
+    if(r.status === 204) showToast(`✅ Comando avviato! Risposta su Telegram tra ~35s.`, '#10b981');
+    else showToast(`❌ Errore GitHub HTTP ${r.status}`, '#ef4444');
   }catch(e){ showToast('❌ Errore: '+e, '#ef4444'); }
 }
 function confirmClose(){ if(confirm('Chiudere subito la posizione aperta?')) sendCmd('close','',0); }
 function quickBuy(code, usdt){ if(confirm(`Aprire LONG su ${code} (~${usdt} USDT)?`)) sendCmd('open', code, usdt); }
 function manualOpen(){ const c=document.getElementById('man-coin').value, u=document.getElementById('man-usdt').value||0; if(confirm(`LONG su ${c}?`)) sendCmd('open', c, u); }
 function manualSellAll(){ const c=document.getElementById('man-coin').value; if(confirm(`Vendere TUTTO ${c}?`)) sendCmd('sell_all', c, 0); }
+
 function connectWS(){
   try{
-    const ws = new WebSocket('wss://ws.kraken.com'); const pairToCode = {}; D.coins.forEach(c => { pairToCode[c.ws] = c.code; });
-    ws.onopen = () => { document.getElementById('ws-pill').textContent = '🟢 Prezzi Live'; ws.send(JSON.stringify({event:'subscribe', pair: D.coins.map(c=>c.ws), subscription:{name:'ticker'}})); };
+    const ws = new WebSocket('wss://ws.kraken.com');
+    const pairToCode = {}; D.coins.forEach(c => { pairToCode[c.ws] = c.code; });
+    ws.onopen = () => {
+      document.getElementById('ws-pill').textContent = '🟢 Live';
+      ws.send(JSON.stringify({event:'subscribe', pair: D.coins.map(c=>c.ws), subscription:{name:'ticker'}}));
+    };
     ws.onmessage = (ev) => {
       const m = JSON.parse(ev.data);
       if(Array.isArray(m) && m[1] && m[1].c){
         const code = pairToCode[m[3]], px = parseFloat(m[1].c[0]);
-        if(code && px>0){ livePx[code]=px; const el=document.getElementById('px-'+code); if(el) el.textContent=fmtPx(px); if(D.position&&D.position.is_open&&D.position.coin_code===code) renderPosition(); }
+        if(code && px>0){
+          livePx[code] = px;
+          const el = document.getElementById('px-'+code);
+          if(el) el.textContent = fmtPx(px);
+          if(D.position && D.position.is_open && D.position.coin_code===code) renderPosition();
+        }
       }
     };
     ws.onclose = () => { document.getElementById('ws-pill').textContent = '🟡 Riconnessione...'; setTimeout(connectWS, 4000); };
   }catch(e){}
 }
+
 (function init(){
   document.getElementById('gh-token').value = localStorage.getItem('gh_pat') || '';
+  const opts = D.coins.map(c=>`<option value="${c.code}">${c.name} (${c.code}) — ${c.raw_100}%</option>`).join('');
   document.getElementById('man-coin').innerHTML = D.coins.map(c=>`<option value="${c.code}">${c.name} (${c.code})</option>`).join('');
-  renderHeader(); renderPosition(); renderCoins(); renderStats(); setInterval(renderHeader, 10000); connectWS();
+  document.getElementById('pred-coin-sel').innerHTML = opts;
+  renderHeader(); renderPosition(); renderPrediction(); renderCoins(); renderCalendarAndNews(); renderStats();
+  setInterval(() => { renderHeader(); renderCalendarAndNews(); }, 15000);
+  connectWS();
 })();
 </script>
 </body>
@@ -3277,7 +3570,7 @@ def build_telegram_report(ranked_evals, state, trade_status, fng_val, fng_class,
     mode_str = "🟢 LIVE PIONEX" if pionex_live_enabled() else "🧪 SIMULAZIONE"
     claude_badge = f"🧠 {CLAUDE_MODEL}" if CLAUDE_ENABLED else "⚙️ Quant-Only"
     lines = [
-        f"🤖 <b>PIONEX CLAUDE 11-SKILLS v11</b> ({mode_str} | {html_lib.escape(claude_badge)})",
+        f"🤖 <b>PIONEX CLAUDE 11-SKILLS v11.1</b> ({mode_str} | {html_lib.escape(claude_badge)})",
         f"🌍 {html_lib.escape(session_str)} | {html_lib.escape(BTC_REGIME['label'])} | F&G: <b>{fng_val}</b>",
         "",
         f"<b>{html_lib.escape(trade_status['headline'])}</b>",
@@ -3363,6 +3656,7 @@ def run_full_cycle(state, manual_override=None, force_telegram=False):
     futures_map = fetch_all_kraken_futures()
     fng_val, fng_class = fetch_fear_and_greed()
     macro_events = fetch_macro_calendar()
+    news_items = fetch_crypto_news(limit=8)
     s6_global = skill_06_macro_and_session(macro_events)
     session_str = s6_global["session_str"]
 
@@ -3400,7 +3694,7 @@ def run_full_cycle(state, manual_override=None, force_telegram=False):
             fng_val=fng_val, session_str=session_str, macro_events=macro_events
         )
 
-    generate_webapp_html(ranked_evals, state, trade_status, fng_val, fng_class, session_str, eur_usd, macro_events)
+    generate_webapp_html(ranked_evals, state, trade_status, fng_val, fng_class, session_str, eur_usd, macro_events, news_items)
 
     if should_send_telegram_now(state, trade_status, ranked_evals, force=force_telegram):
         report = build_telegram_report(ranked_evals, state, trade_status, fng_val, fng_class, session_str, eur_usd)
@@ -3420,6 +3714,7 @@ def run_full_cycle(state, manual_override=None, force_telegram=False):
         "fng_class": fng_class,
         "session_str": session_str,
         "macro_events": macro_events,
+        "news_items": news_items,
     }
 
 
@@ -3465,7 +3760,7 @@ def run_continuous_guardian(state, ctx):
                 ctx["trade_status"] = st
                 kb = build_telegram_inline_keyboard(ctx["ranked_evals"], state)
                 send_telegram_message(f"<b>{html_lib.escape(st['headline'])}</b>\n{html_lib.escape(st['detail'])}", reply_markup=kb)
-                generate_webapp_html(ctx["ranked_evals"], state, st, ctx["fng_val"], ctx["fng_class"], ctx["session_str"], ctx["eur_usd"], ctx["macro_events"])
+                generate_webapp_html(ctx["ranked_evals"], state, st, ctx["fng_val"], ctx["fng_class"], ctx["session_str"], ctx["eur_usd"], ctx["macro_events"], ctx.get("news_items"))
                 sync_live_files_to_github()
 
         if state["position"]["is_open"]:
@@ -3477,13 +3772,13 @@ def run_continuous_guardian(state, ctx):
                 kb = build_telegram_inline_keyboard(ctx["ranked_evals"], state)
                 for al in st["alerts_fired"]:
                     send_telegram_message(f"⚡ <b>TICK GUARDIAN ({state['position']['coin_code']})</b>\n{html_lib.escape(al)}", reply_markup=kb)
-                generate_webapp_html(ctx["ranked_evals"], state, st, ctx["fng_val"], ctx["fng_class"], ctx["session_str"], ctx["eur_usd"], ctx["macro_events"])
+                generate_webapp_html(ctx["ranked_evals"], state, st, ctx["fng_val"], ctx["fng_class"], ctx["session_str"], ctx["eur_usd"], ctx["macro_events"], ctx.get("news_items"))
                 sync_live_files_to_github()
 
             if st["action_state"] in ("CLOSED_NOW", "CLOSE_FAILED"):
                 kb = build_telegram_inline_keyboard(ctx["ranked_evals"], state)
                 send_telegram_message(f"<b>{html_lib.escape(st['headline'])}</b>\n{html_lib.escape(st['detail'])}", reply_markup=kb)
-                generate_webapp_html(ctx["ranked_evals"], state, st, ctx["fng_val"], ctx["fng_class"], ctx["session_str"], ctx["eur_usd"], ctx["macro_events"])
+                generate_webapp_html(ctx["ranked_evals"], state, st, ctx["fng_val"], ctx["fng_class"], ctx["session_str"], ctx["eur_usd"], ctx["macro_events"], ctx.get("news_items"))
                 sync_live_files_to_github()
 
         if time.monotonic() - last_rescan >= GUARDIAN_RESCAN_SEC:
@@ -3495,7 +3790,7 @@ def run_continuous_guardian(state, ctx):
 
 
 def main():
-    log("INFO", f"Avvio Pionex Claude 11-Skills Engine v11.0 (Claude={CLAUDE_ENABLED}/{CLAUDE_MODEL}, 24/7={ALWAYS_ON_24_7}, Live={pionex_live_enabled()})")
+    log("INFO", f"Avvio Pionex Claude 11-Skills Engine v11.1 (Claude={CLAUDE_ENABLED}/{CLAUDE_MODEL}, 24/7={ALWAYS_ON_24_7}, Live={pionex_live_enabled()})")
     state = load_state()
 
     manual_override = None
