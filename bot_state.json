@@ -262,7 +262,14 @@
     "enter_tag": "freqai_tb_82_ai_52",
     "partial_tp_done": false,
     "realized_partial_usdt": 0.0,
-    "atr_15m": 0.0
+    "atr_15m": 0.0,
+    "setup": "",
+    "level": 0.0,
+    "max_loss_usdt": 0.0,
+    "lowest_price": 0.0,
+    "be_locked": false,
+    "trail_on": false,
+    "time_warned": false
   },
   "stats": {
     "total_trades": 17,
@@ -290,8 +297,12 @@
       "XRP": 1794917999
     },
     "last_tg_update_id": 990621660,
-    "last_report_ts": 1795018623,
+    "last_report_ts": 1795019797,
     "claude_last_call_ts": 0,
-    "claude_last_verdict": {}
-  }
+    "claude_last_verdict": {},
+    "daily_risk_usdt": 0.0,
+    "paused_until_ts": 0
+  },
+  "pending": null,
+  "reviews": []
 }
