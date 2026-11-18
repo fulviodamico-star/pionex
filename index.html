@@ -3,23 +3,24 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>Pionex Bot Console</title>
+<title>Pionex AI Console</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <style>
-  :root { --bg:#090f1d; --card:#131c31; --card2:#192540; --line:#263554; --text:#f8fafc; --muted:#94a3b8; --green:#10b981; --red:#ef4444; --amber:#f59e0b; --blue:#38bdf8; }
+  :root { --bg:#080e1c; --card:#111a2e; --card2:#182440; --line:#253455; --text:#f8fafc; --muted:#94a3b8; --green:#10b981; --red:#ef4444; --amber:#f59e0b; --blue:#38bdf8; --purple:#a78bfa; }
   * { box-sizing:border-box; margin:0; padding:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; -webkit-tap-highlight-color:transparent; }
-  body { background:var(--bg); color:var(--text); padding:12px; max-width:600px; margin:0 auto 80px; line-height:1.4; }
+  body { background:var(--bg); color:var(--text); padding:12px 12px 86px; max-width:600px; margin:0 auto; line-height:1.4; }
   .header { display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; gap:8px; }
   .h-title { font-size:18px; font-weight:900; letter-spacing:-0.3px; }
-  .h-sub { font-size:12px; color:var(--muted); margin-top:2px; }
-  .badge-pill { font-size:11px; font-weight:800; padding:5px 10px; border-radius:99px; background:var(--card2); border:1px solid var(--line); white-space:nowrap; }
-  .hero { padding:16px; border-radius:16px; border:2px solid var(--line); margin-bottom:14px; }
-  .hero-t { font-size:17px; font-weight:900; margin-bottom:6px; }
+  .h-sub { font-size:11px; color:var(--muted); margin-top:2px; }
+  .pill { font-size:11px; font-weight:800; padding:5px 9px; border-radius:99px; background:var(--card2); border:1px solid var(--line); white-space:nowrap; }
+  .view { display:none; } .view.active { display:block; }
+  .hero { padding:15px; border-radius:16px; border:2px solid var(--line); margin-bottom:12px; }
+  .hero-t { font-size:17px; font-weight:900; margin-bottom:5px; }
   .hero-s { font-size:13px; color:#e2e8f0; }
-  .card { background:var(--card); border:1px solid var(--line); border-radius:16px; padding:14px; margin-bottom:14px; }
-  .sec-title { font-size:12px; font-weight:800; text-transform:uppercase; color:var(--muted); letter-spacing:0.5px; margin-bottom:12px; display:flex; justify-content:space-between; align-items:center; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:16px; padding:14px; margin-bottom:12px; }
+  .sec-title { font-size:11px; font-weight:800; text-transform:uppercase; color:var(--muted); letter-spacing:0.6px; margin-bottom:10px; display:flex; justify-content:space-between; align-items:center; gap:8px; }
   .big-actions { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
-  .act-btn { border:none; border-radius:14px; padding:14px 12px; font-size:14px; font-weight:800; color:#fff; cursor:pointer; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:4px; text-align:center; transition:transform .1s; }
+  .act-btn { border:none; border-radius:13px; padding:13px 10px; font-size:14px; font-weight:800; color:#fff; cursor:pointer; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px; text-align:center; }
   .act-btn:active { transform:scale(0.97); }
   .act-btn small { font-size:11px; font-weight:600; opacity:0.85; }
   .b-green { background:linear-gradient(135deg,#059669,#10b981); }
@@ -27,111 +28,227 @@
   .b-blue { background:linear-gradient(135deg,#0284c7,#38bdf8); }
   .b-amber { background:linear-gradient(135deg,#d97706,#f59e0b); }
   .kv-grid { display:grid; grid-template-columns:repeat(2,1fr); gap:8px; }
-  .kv { background:#0c1426; padding:10px 12px; border-radius:12px; border:1px solid #1e2d4a; }
+  .kv { background:#0b1325; padding:10px 11px; border-radius:12px; border:1px solid #1d2c4b; }
   .kv-l { font-size:11px; color:var(--muted); }
-  .kv-v { font-size:16px; font-weight:900; margin-top:2px; font-variant-numeric:tabular-nums; }
-  .prog-bar { height:10px; background:#0c1426; border-radius:99px; overflow:hidden; margin:12px 0 6px; border:1px solid #1e2d4a; }
-  .prog-bar > div { height:100%; transition:width .3s; }
-  .coin-list { display:flex; flex-direction:column; gap:10px; }
-  .coin-item { background:#0d1629; border:1px solid var(--line); border-radius:14px; padding:12px; }
+  .kv-v { font-size:15px; font-weight:900; margin-top:2px; font-variant-numeric:tabular-nums; }
+  .prog-bar { height:9px; background:#0b1325; border-radius:99px; overflow:hidden; margin:8px 0; border:1px solid #1d2c4b; }
+  .prog-bar > div { height:100%; transition:width .3s; border-radius:99px; }
+  .chip-row { display:flex; gap:6px; margin-bottom:10px; flex-wrap:wrap; }
+  .chip { padding:6px 11px; border-radius:99px; font-size:12px; font-weight:800; background:var(--card2); border:1px solid var(--line); color:var(--muted); cursor:pointer; }
+  .chip.active { background:var(--blue); color:#061224; border-color:var(--blue); }
+  .coin-item { background:#0b1325; border:1px solid var(--line); border-radius:14px; padding:12px; margin-bottom:10px; }
   .coin-item.ready { border-color:var(--green); background:rgba(16,185,129,0.07); }
-  .coin-top { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; }
-  .coin-name { font-size:16px; font-weight:900; display:flex; align-items:center; gap:6px; }
-  .coin-px { font-size:16px; font-weight:900; font-variant-numeric:tabular-nums; }
-  .coin-meta { display:grid; grid-template-columns:repeat(3,1fr); gap:6px; font-size:12px; margin-bottom:10px; background:var(--card); padding:8px; border-radius:10px; }
+  .coin-top { display:flex; justify-content:space-between; align-items:center; }
+  .coin-name { font-size:15px; font-weight:900; }
+  .coin-px { font-size:15px; font-weight:900; font-variant-numeric:tabular-nums; }
+  .coin-meta { display:grid; grid-template-columns:repeat(3,1fr); gap:6px; font-size:12px; margin:8px 0; background:var(--card); padding:8px; border-radius:10px; }
   .coin-meta div span { display:block; font-size:10px; color:var(--muted); }
-  .coin-foot { display:flex; justify-content:space-between; align-items:center; gap:8px; }
   .mini-btn { padding:8px 12px; border-radius:10px; font-size:12px; font-weight:800; border:none; cursor:pointer; color:#fff; white-space:nowrap; }
-  input, select { width:100%; background:#0c1426; color:var(--text); border:1px solid var(--line); padding:11px 12px; border-radius:12px; font-size:14px; font-weight:600; }
-  .toast { position:fixed; bottom:16px; left:12px; right:12px; max-width:576px; margin:0 auto; background:#1e293b; border:2px solid var(--blue); color:#fff; padding:13px 16px; border-radius:14px; font-size:13px; font-weight:700; display:none; z-index:99; box-shadow:0 10px 25px rgba(0,0,0,.6); }
-  .pos-green { color:var(--green); } .pos-red { color:var(--red); } .pos-amber { color:var(--amber); }
+  .skill-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:10px; }
+  .skill-row { background:#0b1325; border:1px solid #1d2c4b; border-radius:10px; padding:8px 10px; font-size:12px; }
+  .skill-row .top { display:flex; justify-content:space-between; font-weight:800; margin-bottom:4px; }
+  .ev-row { display:flex; justify-content:space-between; align-items:center; gap:10px; padding:10px 0; border-bottom:1px solid #1d2c4b; }
+  .ev-row:last-child { border-bottom:none; }
+  .news-link { display:block; padding:10px 0; border-bottom:1px solid #1d2c4b; color:var(--text); text-decoration:none; }
+  .news-link:last-child { border-bottom:none; }
+  .news-t { font-size:13px; font-weight:700; line-height:1.35; }
+  .news-m { font-size:11px; color:var(--muted); margin-top:3px; }
+  input, select { width:100%; background:#0b1325; color:var(--text); border:1px solid var(--line); padding:10px 12px; border-radius:11px; font-size:14px; font-weight:600; }
+  .tabbar { position:fixed; bottom:0; left:0; right:0; background:rgba(11,19,37,0.96); backdrop-filter:blur(10px); border-top:1px solid var(--line); display:grid; grid-template-columns:repeat(4,1fr); max-width:600px; margin:0 auto; z-index:90; }
+  .tab-btn { background:none; border:none; color:var(--muted); padding:9px 4px 11px; font-size:11px; font-weight:800; cursor:pointer; display:flex; flex-direction:column; align-items:center; gap:3px; }
+  .tab-btn span { font-size:17px; }
+  .tab-btn.active { color:var(--blue); }
+  .toast { position:fixed; bottom:72px; left:12px; right:12px; max-width:576px; margin:0 auto; background:#1e293b; border:2px solid var(--blue); color:#fff; padding:12px 15px; border-radius:13px; font-size:13px; font-weight:700; display:none; z-index:99; box-shadow:0 10px 25px rgba(0,0,0,.6); }
+  .pos-green { color:var(--green); } .pos-red { color:var(--red); } .pos-amber { color:var(--amber); } .pos-blue { color:var(--blue); }
   .muted { color:var(--muted); font-size:12px; }
 </style>
 </head>
 <body>
+
 <div class="header">
   <div>
-    <div class="h-title">⚡ Pionex Claude 5.5 Console</div>
+    <div class="h-title">⚡ Pionex AI Console</div>
     <div class="h-sub" id="subline">Caricamento...</div>
   </div>
-  <div style="display:flex;gap:6px;align-items:center;">
-    <span class="badge-pill" id="ws-pill">🔴 Live</span>
-    <span class="badge-pill" id="mode-pill">MODO</span>
+  <div style="display:flex;gap:5px;align-items:center;">
+    <span class="pill" id="ws-pill">🔴 Live</span>
+    <span class="pill" id="mode-pill">MODO</span>
   </div>
 </div>
-<div class="hero" id="advisor">
-  <div class="hero-t" id="adv-title"></div>
-  <div class="hero-s" id="adv-sub"></div>
-</div>
-<div class="card" id="pos-card"></div>
-<div class="card">
-  <div class="sec-title">
-    <span>🎛️ Telecomando Rapido (1-Tap)</span>
-    <button class="badge-pill" onclick="toggleSetup()" id="key-btn" style="cursor:pointer;">🔑 Chiave GitHub</button>
+
+<!-- ======================= TAB 1: HOME ======================= -->
+<section id="view-home" class="view active">
+  <div class="hero" id="advisor">
+    <div class="hero-t" id="adv-title"></div>
+    <div class="hero-s" id="adv-sub"></div>
   </div>
-  <div id="setup-box" style="display:none; background:#0c1426; padding:12px; border-radius:12px; margin-bottom:12px; border:1px solid var(--amber);">
-    <div style="font-size:13px; font-weight:800; margin-bottom:6px; color:var(--amber);">Configurazione Rapida (solo la prima volta):</div>
-    <div class="muted" style="margin-bottom:8px;">
-      Per far eseguire i pulsanti istantaneamente, incolla un Token GitHub.
-      <a href="https://github.com/settings/tokens/new?description=PionexTelegramConsole&scopes=repo,workflow" target="_blank" style="color:var(--blue);font-weight:800;display:block;margin-top:4px;">👉 1. Tocca qui per generare il Token su GitHub</a>
+
+  <div class="card" id="pos-card"></div>
+
+  <div class="card">
+    <div class="sec-title">
+      <span>🎛️ Telecomando Rapido</span>
+      <button class="pill" onclick="toggleSetup()" id="key-btn" style="cursor:pointer;">🔑 Chiave GitHub</button>
     </div>
-    <input id="gh-token" type="password" placeholder="2. Incolla qui il Token ghp_... e premi Salva" style="margin-bottom:8px;">
-    <button class="act-btn b-green" style="width:100%;padding:10px;" onclick="saveToken()">💾 Salva Chiave nel Telefono</button>
-  </div>
-  <div class="big-actions" style="margin-bottom:10px;">
-    <button class="act-btn b-blue" onclick="sendCmd('status','',0)">🔄 Aggiorna Ora<small>Ricalcola 11 Skill + AI</small></button>
-    <button class="act-btn b-red" onclick="confirmClose()">🛑 Chiudi Posizione<small>Vendi trade attivo</small></button>
-  </div>
-  <div style="background:#0c1426; padding:10px; border-radius:12px; border:1px solid #1e2d4a;">
-    <div class="muted" style="margin-bottom:6px; font-weight:700;">Operazione manuale su singola Coin:</div>
-    <div style="display:grid; grid-template-columns:1.2fr 1fr; gap:8px; margin-bottom:8px;">
-      <select id="man-coin"></select>
-      <input id="man-usdt" type="number" inputmode="decimal" placeholder="USDT (0 = Auto)">
+    <div id="setup-box" style="display:none; background:#0b1325; padding:12px; border-radius:12px; margin-bottom:10px; border:1px solid var(--amber);">
+      <div style="font-size:12px; font-weight:800; color:var(--amber); margin-bottom:6px;">Attiva i pulsanti remoti (solo la prima volta):</div>
+      <a href="https://github.com/settings/tokens/new?description=PionexTelegramConsole&scopes=repo,workflow" target="_blank" style="color:var(--blue);font-size:12px;font-weight:800;display:block;margin-bottom:8px;">👉 Genera Token GitHub (permesso workflow)</a>
+      <input id="gh-token" type="password" placeholder="Incolla Token ghp_... e salva" style="margin-bottom:8px;">
+      <button class="act-btn b-green" style="width:100%;padding:10px;" onclick="saveToken()">💾 Salva nel Telefono</button>
     </div>
-    <div class="big-actions">
-      <button class="act-btn b-green" style="padding:11px;" onclick="manualOpen()">🚀 Compra (Long)</button>
-      <button class="act-btn b-amber" style="padding:11px;" onclick="manualSellAll()">🧹 Vendi Tutto Saldo</button>
+    <div class="big-actions" style="margin-bottom:10px;">
+      <button class="act-btn b-blue" onclick="sendCmd('status','',0)">🔄 Aggiorna Ora<small>Ricalcola Previsioni</small></button>
+      <button class="act-btn b-red" onclick="confirmClose()">🛑 Chiudi Posizione<small>Vendi trade attivo</small></button>
+    </div>
+    <div style="background:#0b1325; padding:10px; border-radius:12px; border:1px solid #1d2c4b;">
+      <div class="muted" style="margin-bottom:6px; font-weight:700;">Operazione manuale rapida:</div>
+      <div style="display:grid; grid-template-columns:1.2fr 1fr; gap:8px; margin-bottom:8px;">
+        <select id="man-coin"></select>
+        <input id="man-usdt" type="number" inputmode="decimal" placeholder="USDT (0 = Auto)">
+      </div>
+      <div class="big-actions">
+        <button class="act-btn b-green" style="padding:10px;" onclick="manualOpen()">🚀 Compra Long</button>
+        <button class="act-btn b-amber" style="padding:10px;" onclick="manualSellAll()">🧹 Vendi Tutto</button>
+      </div>
     </div>
   </div>
-</div>
-<div class="card">
-  <div class="sec-title"><span>🏆 Classifica 10 Coin (11 Skill)</span><span id="btc-pill" class="muted"></span></div>
-  <div class="coin-list" id="coin-list"></div>
-</div>
-<div class="card">
-  <div class="sec-title"><span>📊 Rendimento & Sicurezza</span><span id="daily-tag" class="muted"></span></div>
-  <div class="kv-grid" id="stats-grid"></div>
-  <div id="hist-box" style="margin-top:12px;"></div>
-</div>
+</section>
+
+<!-- ======================= TAB 2: PREVISIONI AI ======================= -->
+<section id="view-pred" class="view">
+  <div class="card" id="claude-card"></div>
+
+  <div class="card">
+    <div class="sec-title">
+      <span>🔮 Motore Previsioni Reale (12h)</span>
+      <span class="pill" id="fng-pill">F&G</span>
+    </div>
+    <select id="pred-coin-sel" onchange="renderPrediction()" style="margin-bottom:10px;"></select>
+    <div id="pred-box"></div>
+  </div>
+</section>
+
+<!-- ======================= TAB 3: MERCATO 10 COIN ======================= -->
+<section id="view-market" class="view">
+  <div class="card">
+    <div class="sec-title">
+      <span>🏆 Classifica 10 Coin</span>
+      <span id="btc-pill" class="muted"></span>
+    </div>
+    <div class="chip-row">
+      <button class="chip active" onclick="setFilter('all',this)">Tutte (10)</button>
+      <button class="chip" onclick="setFilter('ready',this)">🟢 Pronte</button>
+      <button class="chip" onclick="setFilter('hot',this)">🟡 Quasi Pronte</button>
+    </div>
+    <div id="coin-list"></div>
+  </div>
+</section>
+
+<!-- ======================= TAB 4: CALENDARIO, NEWS & STORICO ======================= -->
+<section id="view-cal" class="view">
+  <div class="card">
+    <div class="sec-title">
+      <span>📅 Calendario Economico USD</span>
+      <span id="macro-pill" class="muted"></span>
+    </div>
+    <div id="macro-list"></div>
+  </div>
+
+  <div class="card">
+    <div class="sec-title"><span>📰 Ultime Notizie Crypto</span><span class="muted">Feed Reale</span></div>
+    <div id="news-list"></div>
+  </div>
+
+  <div class="card">
+    <div class="sec-title"><span>📊 Rendimento & Storico</span><span id="daily-tag" class="muted"></span></div>
+    <div class="kv-grid" id="stats-grid"></div>
+    <div id="hist-box" style="margin-top:10px;"></div>
+  </div>
+</section>
+
+<nav class="tabbar">
+  <button class="tab-btn active" onclick="switchTab('home',this)"><span>🏠</span>Home</button>
+  <button class="tab-btn" onclick="switchTab('pred',this)"><span>🔮</span>Previsioni</button>
+  <button class="tab-btn" onclick="switchTab('market',this)"><span>🏆</span>Mercato</button>
+  <button class="tab-btn" onclick="switchTab('cal',this)"><span>📅</span>News & Cal</button>
+</nav>
+
 <div class="toast" id="toast"></div>
+
 <script>
-const D = {"updated_ts": 1795010525, "session": "🌏 Sessione Asiatica / Notturna", "btc_regime": "⚪ BTC Neutrale / Range", "fng_val": 11, "fng_class": "Extreme Fear", "mode": "SIMULAZIONE", "claude_enabled": false, "claude_verdict": {}, "advisor": {"badge": "🟡 XRP QUASI PRONTA (60/100) · ATTENDI", "color": "#f59e0b", "bg": "rgba(245,158,11,0.14)", "instruction": "XRP in preparazione (60/100): VWAP Reclaim + EMA20 15m Hold."}, "waiting": "Migliore: XRP (6/10 - 60/100) -> Score XRP 60/100 < 68 | AI 46% < 56% | Book L2/Spread sfavorevole | Timer 15m (2/5) | BLOCCATO: Cooldown post-perdita (180m).", "position": {"is_open": false, "coin_code": "SOL", "symbol": "SOL_USDT", "entry_price": 75.13, "amount_coin": 0.693, "invested_usdt": 52.11, "sl_price": 74.40923729597904, "tp_price": 76.144255, "initial_sl": 74.40923729597904, "one_r": 0.7207627040209559, "highest_price": 75.22, "breakeven_locked": false, "tp1_locked": false, "tp2_locked": false, "alerts_triggered": [], "opened_at": "18/11 08:07 UTC", "opened_ts": 1794989226, "mode": "SIMULATION", "order_id": "SIM", "last_check_ts": 1795000055, "close_fail_count": 0, "enter_tag": "freqai_tb_82_ai_52", "partial_tp_done": false, "realized_partial_usdt": 0.0, "atr_15m": 0.0}, "stats": {"total_trades": 17, "wins": 7, "losses": 10, "total_pnl_pct": -4.56, "total_pnl_usdt": -2.42, "daily_date": "2026-11-18", "daily_pnl_pct": -1.05, "daily_trades": 1, "last_action": "CHIUSO SOL (-1.11%) il 18/11 11:07 UTC", "daily_pnl_usdt": -0.58, "consec_losses": 1, "last_close_ts": 1795000071, "last_loss_ts": 1795000071, "coin_last_close": {"DOT": 1794650854, "ETH": 1794517387, "ADA": 1794407221, "LINK": 1794419902, "AVAX": 1794815075, "BTC": 1794591913, "SOL": 1795000071, "DOGE": 1794682963, "XRP": 1794917999}, "last_tg_update_id": 990621660, "last_report_ts": 1795010122, "claude_last_call_ts": 0, "claude_last_verdict": {}}, "history": [{"coin": "SOL", "entry": 75.13, "exit": 74.4, "pnl_pct": -1.11, "pnl_usdt": -0.58, "reason": "🛑 STOP LOSS ($74.40)", "closed_at": "18/11 11:07 UTC", "mode": "SIMULATION"}, {"coin": "XRP", "entry": 0.9622, "exit": 0.9695, "pnl_pct": 0.65, "pnl_usdt": 0.34, "reason": "💰 FAST-SCALP PROFIT TAKE (+0.65% netto su rallentamento 15m)", "closed_at": "17/11 12:19 UTC", "mode": "SIMULATION"}, {"coin": "AVAX", "entry": 7.14, "exit": 7.15, "pnl_pct": -0.08, "pnl_usdt": -0.04, "reason": "🔒 PROFIT LOCK / TRAILING STOP ($7.150)", "closed_at": "16/11 07:44 UTC", "mode": "SIMULATION"}, {"coin": "SOL", "entry": 71.74, "exit": 71.84, "pnl_pct": -0.02, "pnl_usdt": -0.01, "reason": "🔒 PROFIT LOCK / TRAILING STOP ($71.84)", "closed_at": "15/11 09:35 UTC", "mode": "SIMULATION"}, {"coin": "DOGE", "entry": 0.06071, "exit": 0.06014, "pnl_pct": -1.04, "pnl_usdt": -0.41, "reason": "⚠️ USCITA DIFENSIVA AI (Score DOGE sceso a 3/10)", "closed_at": "14/11 19:02 UTC", "mode": "SIMULATION"}, {"coin": "SOL", "entry": 75.91, "exit": 74.86, "pnl_pct": -1.55, "pnl_usdt": -0.81, "reason": "🛑 STOP LOSS ($74.86)", "closed_at": "14/11 14:03 UTC", "mode": "SIMULATION"}, {"coin": "DOT", "entry": 0.786, "exit": 0.787, "pnl_pct": 0.01, "pnl_usdt": 0.01, "reason": "🔒 PROFIT LOCK / TRAILING STOP ($0.7870)", "closed_at": "14/11 10:07 UTC", "mode": "SIMULATION"}, {"coin": "BTC", "entry": 68637.49, "exit": 69072.01, "pnl_pct": 0.19, "pnl_usdt": 0.1, "reason": "🔒 PROFIT LOCK / TRAILING STOP ($69,072.01) (toccato tra due controlli)", "closed_at": "13/11 17:45 UTC", "mode": "SIMULATION"}, {"coin": "AVAX", "entry": 8.33, "exit": 8.44, "pnl_pct": 1.17, "pnl_usdt": 0.46, "reason": "💰 FAST-SCALP PROFIT TAKE (+1.17% netto su rallentamento 15m)", "closed_at": "13/11 11:20 UTC", "mode": "SIMULATION"}, {"coin": "ETH", "entry": 2013.05, "exit": 2018.41, "pnl_pct": -0.05, "pnl_usdt": -0.03, "reason": "⚠️ USCITA DIFENSIVA AI (Score ETH sceso a 3/10)", "closed_at": "12/11 21:03 UTC", "mode": "SIMULATION"}, {"coin": "AVAX", "entry": 8.33, "exit": 8.34, "pnl_pct": 0.01, "pnl_usdt": 0.0, "reason": "🔒 PROFIT LOCK / TRAILING STOP ($8.340)", "closed_at": "12/11 16:13 UTC", "mode": "SIMULATION"}, {"coin": "ETH", "entry": 2046.11, "exit": 2027.35, "pnl_pct": -1.34, "pnl_usdt": -0.71, "reason": "🛑 STOP LOSS ($2,027.35)", "closed_at": "12/11 11:36 UTC", "mode": "SIMULATION"}, {"coin": "LINK", "entry": 10.5, "exit": 10.51, "pnl_pct": -0.14, "pnl_usdt": -0.07, "reason": "🔒 PROFIT LOCK / TRAILING STOP ($10.51)", "closed_at": "11/11 17:58 UTC", "mode": "SIMULATION"}, {"coin": "ADA", "entry": 0.1764, "exit": 0.1766, "pnl_pct": 0.01, "pnl_usdt": 0.01, "reason": "🔒 PROFIT LOCK / TRAILING STOP ($0.1766)", "closed_at": "11/11 14:27 UTC", "mode": "SIMULATION"}, {"coin": "ETH", "entry": 2052.58, "exit": 2052.02, "pnl_pct": -0.32, "pnl_usdt": -0.17, "reason": "🖐️ CHIUSURA MANUALE D'EMERGENZA", "closed_at": "11/11 12:33 UTC", "mode": "SIMULATION"}, {"coin": "DOT", "entry": 0.84, "exit": 0.853, "pnl_pct": 1.45, "pnl_usdt": 0.77, "reason": "💰 FAST-SCALP PROFIT TAKE (+1.45% netto su rallentamento 15m)", "closed_at": "11/11 10:51 UTC", "mode": "SIMULATION"}, {"coin": "AVAX", "entry": 8.38, "exit": 8.187, "pnl_pct": -2.4, "pnl_usdt": -1.28, "reason": "🛑 STOP LOSS TOCCATO ($8.187)", "closed_at": "10/11 16:54 UTC", "mode": "SIMULATION"}, {"closed_at": "10/11/2026 11:26", "coin": "LINK", "entry": 10.6168, "exit": 10.4738, "pnl_usdt": -0.0, "pnl_pct": -0.69, "reason": "🎯 TAKE PROFIT GRIGLIA RAGGIUNTO su LINK (10.47$ >= 0.00$)"}], "coins": [{"code": "XRP", "name": "Ripple", "ws": "XRP/USD", "kraken": "XRPUSD", "price": 0.9889, "sl_price": 0.9745417915080189, "tp_price": 1.015462685710165, "final_score": 6, "raw_100": 60, "ai_prob": 46, "timer_summary": "VWAP Reclaim + EMA20 15m Hold", "triggers": 2, "regime": "ACCUMULATION_RANGE", "alpha_btc": 0.67, "risk_ok": false, "risk_status": "BLOCCATO: Cooldown post-perdita (180m)", "rr_ratio": 1.67, "pos_usdt": 40.23, "entry_ok": false}, {"code": "ADA", "name": "Cardano", "ws": "ADA/USD", "kraken": "ADAUSD", "price": 0.1539, "sl_price": 0.1517454, "tp_price": 0.15788601000000002, "final_score": 6, "raw_100": 56, "ai_prob": 30, "timer_summary": "Flow/L2 Bid", "triggers": 1, "regime": "ACCUMULATION_RANGE", "alpha_btc": 0.88, "risk_ok": false, "risk_status": "BLOCCATO: Cooldown post-perdita (180m)", "rr_ratio": 1.66, "pos_usdt": 41.12, "entry_ok": false}, {"code": "DOGE", "name": "Dogecoin", "ws": "XDG/USD", "kraken": "XDGUSD", "price": 0.0593, "sl_price": 0.058469799999999995, "tp_price": 0.06083587000000001, "final_score": 5, "raw_100": 49, "ai_prob": 38, "timer_summary": "Flow/L2 Bid", "triggers": 1, "regime": "ACCUMULATION_RANGE", "alpha_btc": 0.32, "risk_ok": false, "risk_status": "BLOCCATO: Cooldown post-perdita (180m)", "rr_ratio": 1.66, "pos_usdt": 41.12, "entry_ok": false}, {"code": "DOT", "name": "Polkadot", "ws": "DOT/USD", "kraken": "DOTUSD", "price": 0.725, "sl_price": 0.71485, "tp_price": 0.7437775, "final_score": 5, "raw_100": 47, "ai_prob": 33, "timer_summary": "Flow/L2 Bid + Filtro Anti-Top (RSI15=45, Wick=67%)", "triggers": 1, "regime": "BEAR_TREND", "alpha_btc": 0.45, "risk_ok": false, "risk_status": "BLOCCATO: Cooldown post-perdita (180m)", "rr_ratio": 1.66, "pos_usdt": 41.12, "entry_ok": false}, {"code": "SOL", "name": "Solana", "ws": "SOL/USD", "kraken": "SOLUSD", "price": 74.24, "sl_price": 73.20063999999999, "tp_price": 76.16281599999999, "final_score": 5, "raw_100": 46, "ai_prob": 36, "timer_summary": "Flow/L2 Bid", "triggers": 1, "regime": "ACCUMULATION_RANGE", "alpha_btc": 0.15, "risk_ok": false, "risk_status": "BLOCCATO: Cooldown post-perdita (180m), SOL in cooldown (6h)", "rr_ratio": 1.66, "pos_usdt": 41.12, "entry_ok": false}, {"code": "LINK", "name": "Chainlink", "ws": "LINK/USD", "kraken": "LINKUSD", "price": 9.12, "sl_price": 8.99232, "tp_price": 9.356207999999999, "final_score": 4, "raw_100": 45, "ai_prob": 30, "timer_summary": "Flow/L2 Bid", "triggers": 1, "regime": "ACCUMULATION_RANGE", "alpha_btc": -0.03, "risk_ok": false, "risk_status": "BLOCCATO: Cooldown post-perdita (180m)", "rr_ratio": 1.66, "pos_usdt": 41.12, "entry_ok": false}, {"code": "AVAX", "name": "Avalanche", "ws": "AVAX/USD", "kraken": "AVAXUSD", "price": 7.1, "sl_price": 7.0005999999999995, "tp_price": 7.287928288302396, "final_score": 4, "raw_100": 43, "ai_prob": 37, "timer_summary": "Flow/L2 Bid", "triggers": 1, "regime": "ACCUMULATION_RANGE", "alpha_btc": 0.37, "risk_ok": false, "risk_status": "BLOCCATO: Cooldown post-perdita (180m)", "rr_ratio": 1.7, "pos_usdt": 41.12, "entry_ok": false}, {"code": "SUI", "name": "Sui", "ws": "SUI/USD", "kraken": "SUIUSD", "price": 0.7238, "sl_price": 0.7136667999999999, "tp_price": 0.7425464200000002, "final_score": 4, "raw_100": 41, "ai_prob": 39, "timer_summary": "In attesa trigger 15m", "triggers": 0, "regime": "ACCUMULATION_RANGE", "alpha_btc": 0.34, "risk_ok": false, "risk_status": "BLOCCATO: Cooldown post-perdita (180m)", "rr_ratio": 1.66, "pos_usdt": 41.12, "entry_ok": false}, {"code": "ETH", "name": "Ethereum", "ws": "ETH/USD", "kraken": "ETHUSD", "price": 1791.34, "sl_price": 1766.2612399999998, "tp_price": 1837.7357060000002, "final_score": 4, "raw_100": 37, "ai_prob": 37, "timer_summary": "Flow/L2 Bid", "triggers": 1, "regime": "ACCUMULATION_RANGE", "alpha_btc": -0.07, "risk_ok": false, "risk_status": "BLOCCATO: Cooldown post-perdita (180m)", "rr_ratio": 1.66, "pos_usdt": 41.12, "entry_ok": false}, {"code": "BTC", "name": "Bitcoin", "ws": "XBT/USD", "kraken": "XBTUSD", "price": 63955.55, "sl_price": 63060.172300000006, "tp_price": 65611.998745, "final_score": 4, "raw_100": 35, "ai_prob": 37, "timer_summary": "Filtro Anti-Top (RSI15=29, Wick=24%)", "triggers": 0, "regime": "ACCUMULATION_RANGE", "alpha_btc": 0.0, "risk_ok": false, "risk_status": "BLOCCATO: Cooldown post-perdita (180m)", "rr_ratio": 1.66, "pos_usdt": 41.12, "entry_ok": false}], "macro": [{"title": "FOMC Meeting Minutes", "impact": "High", "ts": 1795028400}, {"title": "Philly Fed Manufacturing Index", "impact": "Medium", "ts": 1795095000}, {"title": "Unemployment Claims", "impact": "Medium", "ts": 1795095000}], "macro_ok": true, "repo": "fulviodamico-star/pionex", "workflow": "bot.yml", "ref": "main", "limits": {"max_trades": 4, "daily_max_loss": 4.0, "fee_rt": 0.1}};
+const D = {"updated_ts": 1795012577, "session": "🔔 NYSE OPENING BELL (Whipsaw Risk USA)", "btc_regime": "⚪ BTC Neutrale / Range", "fng_val": 11, "fng_class": "Extreme Fear", "mode": "SIMULAZIONE", "claude_enabled": false, "claude_model": "claude-sonnet-5-5", "claude_verdict": {}, "advisor": {"badge": "🟡 XRP QUASI PRONTA (71%)", "color": "#f59e0b", "bg": "rgba(245,158,11,0.14)", "instruction": "Setup in formazione su XRP: VWAP Reclaim + EMA20 15m Hold + RSI Turn (52) + Clean Candle + Flow/L2 Bid."}, "waiting": "Migliore: XRP (7/10 - 71/100) -> AI 46% < 56%.", "position": {"is_open": false, "coin_code": "SOL", "symbol": "SOL_USDT", "entry_price": 75.13, "amount_coin": 0.693, "invested_usdt": 52.11, "sl_price": 74.40923729597904, "tp_price": 76.144255, "initial_sl": 74.40923729597904, "one_r": 0.7207627040209559, "highest_price": 75.22, "breakeven_locked": false, "tp1_locked": false, "tp2_locked": false, "alerts_triggered": [], "opened_at": "18/11 08:07 UTC", "opened_ts": 1794989226, "mode": "SIMULATION", "order_id": "SIM", "last_check_ts": 1795000055, "close_fail_count": 0, "enter_tag": "freqai_tb_82_ai_52", "partial_tp_done": false, "realized_partial_usdt": 0.0, "atr_15m": 0.0}, "stats": {"total_trades": 17, "wins": 7, "losses": 10, "total_pnl_pct": -4.56, "total_pnl_usdt": -2.42, "daily_date": "2026-11-18", "daily_pnl_pct": -1.05, "daily_trades": 1, "last_action": "CHIUSO SOL (-1.11%) il 18/11 11:07 UTC", "daily_pnl_usdt": -0.58, "consec_losses": 1, "last_close_ts": 1795000071, "last_loss_ts": 1795000071, "coin_last_close": {"DOT": 1794650854, "ETH": 1794517387, "ADA": 1794407221, "LINK": 1794419902, "AVAX": 1794815075, "BTC": 1794591913, "SOL": 1795000071, "DOGE": 1794682963, "XRP": 1794917999}, "last_tg_update_id": 990621660, "last_report_ts": 1795010525, "claude_last_call_ts": 0, "claude_last_verdict": {}}, "history": [{"coin": "SOL", "entry": 75.13, "exit": 74.4, "pnl_pct": -1.11, "pnl_usdt": -0.58, "reason": "🛑 STOP LOSS ($74.40)", "closed_at": "18/11 11:07 UTC", "mode": "SIMULATION"}, {"coin": "XRP", "entry": 0.9622, "exit": 0.9695, "pnl_pct": 0.65, "pnl_usdt": 0.34, "reason": "💰 FAST-SCALP PROFIT TAKE (+0.65% netto su rallentamento 15m)", "closed_at": "17/11 12:19 UTC", "mode": "SIMULATION"}, {"coin": "AVAX", "entry": 7.14, "exit": 7.15, "pnl_pct": -0.08, "pnl_usdt": -0.04, "reason": "🔒 PROFIT LOCK / TRAILING STOP ($7.150)", "closed_at": "16/11 07:44 UTC", "mode": "SIMULATION"}, {"coin": "SOL", "entry": 71.74, "exit": 71.84, "pnl_pct": -0.02, "pnl_usdt": -0.01, "reason": "🔒 PROFIT LOCK / TRAILING STOP ($71.84)", "closed_at": "15/11 09:35 UTC", "mode": "SIMULATION"}, {"coin": "DOGE", "entry": 0.06071, "exit": 0.06014, "pnl_pct": -1.04, "pnl_usdt": -0.41, "reason": "⚠️ USCITA DIFENSIVA AI (Score DOGE sceso a 3/10)", "closed_at": "14/11 19:02 UTC", "mode": "SIMULATION"}, {"coin": "SOL", "entry": 75.91, "exit": 74.86, "pnl_pct": -1.55, "pnl_usdt": -0.81, "reason": "🛑 STOP LOSS ($74.86)", "closed_at": "14/11 14:03 UTC", "mode": "SIMULATION"}, {"coin": "DOT", "entry": 0.786, "exit": 0.787, "pnl_pct": 0.01, "pnl_usdt": 0.01, "reason": "🔒 PROFIT LOCK / TRAILING STOP ($0.7870)", "closed_at": "14/11 10:07 UTC", "mode": "SIMULATION"}, {"coin": "BTC", "entry": 68637.49, "exit": 69072.01, "pnl_pct": 0.19, "pnl_usdt": 0.1, "reason": "🔒 PROFIT LOCK / TRAILING STOP ($69,072.01) (toccato tra due controlli)", "closed_at": "13/11 17:45 UTC", "mode": "SIMULATION"}, {"coin": "AVAX", "entry": 8.33, "exit": 8.44, "pnl_pct": 1.17, "pnl_usdt": 0.46, "reason": "💰 FAST-SCALP PROFIT TAKE (+1.17% netto su rallentamento 15m)", "closed_at": "13/11 11:20 UTC", "mode": "SIMULATION"}, {"coin": "ETH", "entry": 2013.05, "exit": 2018.41, "pnl_pct": -0.05, "pnl_usdt": -0.03, "reason": "⚠️ USCITA DIFENSIVA AI (Score ETH sceso a 3/10)", "closed_at": "12/11 21:03 UTC", "mode": "SIMULATION"}, {"coin": "AVAX", "entry": 8.33, "exit": 8.34, "pnl_pct": 0.01, "pnl_usdt": 0.0, "reason": "🔒 PROFIT LOCK / TRAILING STOP ($8.340)", "closed_at": "12/11 16:13 UTC", "mode": "SIMULATION"}, {"coin": "ETH", "entry": 2046.11, "exit": 2027.35, "pnl_pct": -1.34, "pnl_usdt": -0.71, "reason": "🛑 STOP LOSS ($2,027.35)", "closed_at": "12/11 11:36 UTC", "mode": "SIMULATION"}, {"coin": "LINK", "entry": 10.5, "exit": 10.51, "pnl_pct": -0.14, "pnl_usdt": -0.07, "reason": "🔒 PROFIT LOCK / TRAILING STOP ($10.51)", "closed_at": "11/11 17:58 UTC", "mode": "SIMULATION"}, {"coin": "ADA", "entry": 0.1764, "exit": 0.1766, "pnl_pct": 0.01, "pnl_usdt": 0.01, "reason": "🔒 PROFIT LOCK / TRAILING STOP ($0.1766)", "closed_at": "11/11 14:27 UTC", "mode": "SIMULATION"}, {"coin": "ETH", "entry": 2052.58, "exit": 2052.02, "pnl_pct": -0.32, "pnl_usdt": -0.17, "reason": "🖐️ CHIUSURA MANUALE D'EMERGENZA", "closed_at": "11/11 12:33 UTC", "mode": "SIMULATION"}, {"coin": "DOT", "entry": 0.84, "exit": 0.853, "pnl_pct": 1.45, "pnl_usdt": 0.77, "reason": "💰 FAST-SCALP PROFIT TAKE (+1.45% netto su rallentamento 15m)", "closed_at": "11/11 10:51 UTC", "mode": "SIMULATION"}, {"coin": "AVAX", "entry": 8.38, "exit": 8.187, "pnl_pct": -2.4, "pnl_usdt": -1.28, "reason": "🛑 STOP LOSS TOCCATO ($8.187)", "closed_at": "10/11 16:54 UTC", "mode": "SIMULATION"}, {"closed_at": "10/11/2026 11:26", "coin": "LINK", "entry": 10.6168, "exit": 10.4738, "pnl_usdt": -0.0, "pnl_pct": -0.69, "reason": "🎯 TAKE PROFIT GRIGLIA RAGGIUNTO su LINK (10.47$ >= 0.00$)"}], "coins": [{"code": "XRP", "name": "Ripple", "ws": "XRP/USD", "kraken": "XRPUSD", "price": 0.9872, "sl_price": 0.9728417915080189, "tp_price": 1.013762685710165, "final_score": 7, "raw_100": 71, "ai_prob": 46, "prob_mlp": 45, "prob_knn": 43, "prob_mc": 51, "mc_ev_r": 0.04, "tm_wr": 55.0, "tm_ev_r": 0.22, "tm_matches": 20, "rsi_1h": 55.8, "rsi_15m": 51.6, "adx_1h": 34.1, "vwap_diff": 0.86, "ob_imb": 51.5, "funding_pct": 0.0062, "timer_summary": "VWAP Reclaim + EMA20 15m Hold + RSI Turn (52) + Clean Candle + Flow/L2 Bid", "triggers": 5, "regime": "ACCUMULATION_RANGE", "alpha_btc": 0.61, "sk_scores": {"trend": 15, "btc": 7, "vwap": 9, "book": 10, "deriv": 8, "macro": 4, "ai": 8, "timer": 10}, "risk_ok": true, "risk_status": "PASS (Rischio OK)", "rr_ratio": 1.67, "pos_usdt": 40.16, "entry_ok": false}, {"code": "ADA", "name": "Cardano", "ws": "ADA/USD", "kraken": "ADAUSD", "price": 0.1532, "sl_price": 0.1510552, "tp_price": 0.15716788, "final_score": 6, "raw_100": 55, "ai_prob": 30, "prob_mlp": 27, "prob_knn": 25, "prob_mc": 45, "mc_ev_r": -0.14, "tm_wr": 35.0, "tm_ev_r": -0.2, "tm_matches": 20, "rsi_1h": 51.8, "rsi_15m": 51.9, "adx_1h": 18.1, "vwap_diff": -0.11, "ob_imb": 49.8, "funding_pct": 0.0016, "timer_summary": "VWAP Reclaim + EMA20 15m Hold + RSI Turn (52) + Clean Candle + Flow/L2 Bid", "triggers": 5, "regime": "ACCUMULATION_RANGE", "alpha_btc": 0.13, "sk_scores": {"trend": 7, "btc": 7, "vwap": 9, "book": 10, "deriv": 8, "macro": 4, "ai": 0, "timer": 10}, "risk_ok": true, "risk_status": "PASS (Rischio OK)", "rr_ratio": 1.66, "pos_usdt": 41.12, "entry_ok": false}, {"code": "SUI", "name": "Sui", "ws": "SUI/USD", "kraken": "SUIUSD", "price": 0.7222, "sl_price": 0.7120892, "tp_price": 0.7409049799999999, "final_score": 5, "raw_100": 49, "ai_prob": 39, "prob_mlp": 41, "prob_knn": 33, "prob_mc": 44, "mc_ev_r": -0.16, "tm_wr": 55.0, "tm_ev_r": 0.06, "tm_matches": 20, "rsi_1h": 45.7, "rsi_15m": 45.4, "adx_1h": 19.7, "vwap_diff": -0.35, "ob_imb": 9.4, "funding_pct": 0.0032, "timer_summary": "VWAP Reclaim + EMA20 15m Hold + RSI Turn (45) + Clean Candle + Flow/L2 Bid", "triggers": 5, "regime": "ACCUMULATION_RANGE", "alpha_btc": -0.03, "sk_scores": {"trend": 3, "btc": 4, "vwap": 9, "book": 8, "deriv": 8, "macro": 4, "ai": 3, "timer": 10}, "risk_ok": true, "risk_status": "PASS (Rischio OK)", "rr_ratio": 1.66, "pos_usdt": 41.12, "entry_ok": false}, {"code": "DOT", "name": "Polkadot", "ws": "DOT/USD", "kraken": "DOTUSD", "price": 0.724, "sl_price": 0.7138639999999999, "tp_price": 0.7427516000000001, "final_score": 5, "raw_100": 47, "ai_prob": 33, "prob_mlp": 28, "prob_knn": 34, "prob_mc": 40, "mc_ev_r": -0.27, "tm_wr": 50.0, "tm_ev_r": 0.15, "tm_matches": 20, "rsi_1h": 44.0, "rsi_15m": 46.5, "adx_1h": 24.3, "vwap_diff": -0.78, "ob_imb": 37.7, "funding_pct": -0.0112, "timer_summary": "VWAP Reclaim + EMA20 15m Hold + RSI Turn (47) + Clean Candle + Flow/L2 Bid", "triggers": 5, "regime": "BEAR_TREND", "alpha_btc": -0.29, "sk_scores": {"trend": 0, "btc": 7, "vwap": 7, "book": 10, "deriv": 6, "macro": 4, "ai": 3, "timer": 10}, "risk_ok": true, "risk_status": "PASS (Rischio OK)", "rr_ratio": 1.66, "pos_usdt": 41.12, "entry_ok": false}, {"code": "DOGE", "name": "Dogecoin", "ws": "XDG/USD", "kraken": "XDGUSD", "price": 0.05917, "sl_price": 0.05834162, "tp_price": 0.060702503000000005, "final_score": 5, "raw_100": 46, "ai_prob": 38, "prob_mlp": 41, "prob_knn": 30, "prob_mc": 45, "mc_ev_r": -0.14, "tm_wr": 25.0, "tm_ev_r": -0.14, "tm_matches": 20, "rsi_1h": 49.0, "rsi_15m": 54.2, "adx_1h": 15.4, "vwap_diff": 0.13, "ob_imb": -7.2, "funding_pct": -0.0002, "timer_summary": "VWAP Reclaim + EMA20 15m Hold + RSI Turn (54) + Clean Candle", "triggers": 4, "regime": "ACCUMULATION_RANGE", "alpha_btc": 0.46, "sk_scores": {"trend": 3, "btc": 10, "vwap": 12, "book": 1, "deriv": 8, "macro": 4, "ai": 0, "timer": 8}, "risk_ok": true, "risk_status": "PASS (Rischio OK)", "rr_ratio": 1.66, "pos_usdt": 41.12, "entry_ok": false}, {"code": "SOL", "name": "Solana", "ws": "SOL/USD", "kraken": "SOLUSD", "price": 74.18, "sl_price": 73.14148, "tp_price": 76.10126200000002, "final_score": 4, "raw_100": 45, "ai_prob": 36, "prob_mlp": 31, "prob_knn": 34, "prob_mc": 50, "mc_ev_r": -0.0, "tm_wr": 30.0, "tm_ev_r": -0.26, "tm_matches": 20, "rsi_1h": 51.8, "rsi_15m": 50.1, "adx_1h": 21.5, "vwap_diff": 0.46, "ob_imb": -10.9, "funding_pct": -0.1999, "timer_summary": "VWAP Reclaim + EMA20 15m Hold + RSI Turn (50) + Clean Candle + Flow/L2 Bid", "triggers": 5, "regime": "ACCUMULATION_RANGE", "alpha_btc": 0.54, "sk_scores": {"trend": 6, "btc": 7, "vwap": 9, "book": 1, "deriv": 8, "macro": 4, "ai": 0, "timer": 10}, "risk_ok": false, "risk_status": "BLOCCATO: SOL in cooldown (6h)", "rr_ratio": 1.66, "pos_usdt": 41.12, "entry_ok": false}, {"code": "LINK", "name": "Chainlink", "ws": "LINK/USD", "kraken": "LINKUSD", "price": 9.1, "sl_price": 8.9726, "tp_price": 9.33569, "final_score": 4, "raw_100": 43, "ai_prob": 30, "prob_mlp": 27, "prob_knn": 25, "prob_mc": 43, "mc_ev_r": -0.18, "tm_wr": 40.0, "tm_ev_r": -0.05, "tm_matches": 20, "rsi_1h": 43.2, "rsi_15m": 45.4, "adx_1h": 19.5, "vwap_diff": -0.74, "ob_imb": -8.3, "funding_pct": 0.0349, "timer_summary": "VWAP Reclaim + EMA20 15m Hold + RSI Turn (45) + Clean Candle + Flow/L2 Bid", "triggers": 5, "regime": "ACCUMULATION_RANGE", "alpha_btc": 0.11, "sk_scores": {"trend": 3, "btc": 7, "vwap": 12, "book": 1, "deriv": 6, "macro": 4, "ai": 0, "timer": 10}, "risk_ok": true, "risk_status": "PASS (Rischio OK)", "rr_ratio": 1.66, "pos_usdt": 41.12, "entry_ok": false}, {"code": "AVAX", "name": "Avalanche", "ws": "AVAX/USD", "kraken": "AVAXUSD", "price": 7.05, "sl_price": 6.9513, "tp_price": 7.237928288302396, "final_score": 4, "raw_100": 39, "ai_prob": 37, "prob_mlp": 35, "prob_knn": 37, "prob_mc": 41, "mc_ev_r": -0.24, "tm_wr": 40.0, "tm_ev_r": -0.09, "tm_matches": 20, "rsi_1h": 44.8, "rsi_15m": 42.7, "adx_1h": 20.0, "vwap_diff": -1.27, "ob_imb": 12.5, "funding_pct": 0.0449, "timer_summary": "RSI Turn (43) + Clean Candle + Flow/L2 Bid", "triggers": 3, "regime": "ACCUMULATION_RANGE", "alpha_btc": -0.4, "sk_scores": {"trend": 3, "btc": 7, "vwap": 3, "book": 10, "deriv": 6, "macro": 4, "ai": 0, "timer": 6}, "risk_ok": true, "risk_status": "PASS (Rischio OK)", "rr_ratio": 1.71, "pos_usdt": 41.12, "entry_ok": false}, {"code": "BTC", "name": "Bitcoin", "ws": "XBT/USD", "kraken": "XBTUSD", "price": 63557.77, "sl_price": 62667.96122, "tp_price": 65203.916243, "final_score": 3, "raw_100": 31, "ai_prob": 37, "prob_mlp": 35, "prob_knn": 38, "prob_mc": 41, "mc_ev_r": -0.25, "tm_wr": 45.0, "tm_ev_r": 0.02, "tm_matches": 20, "rsi_1h": 40.1, "rsi_15m": 34.2, "adx_1h": 22.0, "vwap_diff": -1.04, "ob_imb": -73.2, "funding_pct": 0.5, "timer_summary": "RSI Turn (34) + Clean Candle", "triggers": 2, "regime": "ACCUMULATION_RANGE", "alpha_btc": 0.0, "sk_scores": {"trend": 3, "btc": 7, "vwap": 6, "book": 1, "deriv": 6, "macro": 4, "ai": 0, "timer": 4}, "risk_ok": true, "risk_status": "PASS (Rischio OK)", "rr_ratio": 1.66, "pos_usdt": 41.12, "entry_ok": false}, {"code": "ETH", "name": "Ethereum", "ws": "ETH/USD", "kraken": "ETHUSD", "price": 1779.26, "sl_price": 1754.35036, "tp_price": 1825.342834, "final_score": 3, "raw_100": 31, "ai_prob": 37, "prob_mlp": 38, "prob_knn": 31, "prob_mc": 43, "mc_ev_r": -0.19, "tm_wr": 45.0, "tm_ev_r": -0.07, "tm_matches": 20, "rsi_1h": 40.2, "rsi_15m": 41.0, "adx_1h": 21.8, "vwap_diff": -1.03, "ob_imb": -1.7, "funding_pct": 0.5, "timer_summary": "RSI Turn (41) + Clean Candle", "triggers": 2, "regime": "ACCUMULATION_RANGE", "alpha_btc": 0.07, "sk_scores": {"trend": 3, "btc": 7, "vwap": 3, "book": 4, "deriv": 6, "macro": 4, "ai": 0, "timer": 4}, "risk_ok": true, "risk_status": "PASS (Rischio OK)", "rr_ratio": 1.66, "pos_usdt": 41.12, "entry_ok": false}], "macro": [{"title": "FOMC Meeting Minutes", "impact": "High", "ts": 1795028400}, {"title": "Philly Fed Manufacturing Index", "impact": "Medium", "ts": 1795095000}, {"title": "Unemployment Claims", "impact": "Medium", "ts": 1795095000}], "macro_ok": true, "news": [{"source": "CoinDesk", "title": "Bitcoin miner MARA raises $185 million in debt after selling $1 billion BTC to repay loans", "url": "https://www.coindesk.com/markets/2026/11/18/bitcoin-miner-mara-raises-usd185-million-in-debt-after-selling-usd1-billion-btc-to-repay-loans", "ts": 1795006414}, {"source": "CoinDesk", "title": "Bullish beats revenue estimates as institutional services offset sluggish spot crypto volumes", "url": "https://www.coindesk.com/markets/2026/11/18/bullish-beats-revenue-estimates-as-institutional-services-offset-sluggish-spot-crypto-volumes", "ts": 1795005669}, {"source": "CoinDesk", "title": "Circle turns to DBS as banks build rival digital payment systems across Asia", "url": "https://www.coindesk.com/business/2026/11/18/circle-turns-to-dbs-as-banks-build-rival-digital-payment-systems-across-asia", "ts": 1795004714}, {"source": "CoinDesk", "title": "Blaming Anthropic’s IPO for bitcoin’s slide is 'easy to believe,' but flawed, analysts say", "url": "https://www.coindesk.com/daybook-us/2026/11/18/blaming-anthropic-s-ipo-for-bitcoin-s-slide-is-easy-to-believe-but-flawed-analysts-say", "ts": 1795004100}, {"source": "CoinDesk", "title": "Bitcoin drops as Nvidia earnings report drives stock index futures higher", "url": "https://www.coindesk.com/markets/2026/11/18/bitcoin-drops-as-nvidia-earnings-report-drives-stock-index-futures-higher", "ts": 1795002172}, {"source": "CoinDesk", "title": "Bitcoin outpaces gold even as both assets tumble ahead of a likely Fed rate hike", "url": "https://www.coindesk.com/markets/2026/11/18/bitcoin-outpaces-gold-even-as-both-assets-tumble-ahead-of-a-likely-fed-rate-hike", "ts": 1794999516}, {"source": "CoinDesk", "title": "Strategy stock could plunge 76% to $23, chart analyst warns", "url": "https://www.coindesk.com/markets/2026/11/18/strategy-stock-could-crash-76-to-usd23-chart-analyst-warns", "ts": 1794994301}, {"source": "CoinDesk", "title": "Hyundai tests AI agent commerce on JPMorgan’s Kinexys blockchain", "url": "https://www.coindesk.com/business/2026/11/18/hyundai-tests-ai-agent-commerce-on-jpmorgan-s-kinexys-blockchain", "ts": 1794993255}], "repo": "fulviodamico-star/pionex", "workflow": "bot.yml", "ref": "main", "limits": {"max_trades": 4, "daily_max_loss": 4.0, "fee_rt": 0.1}};
 const livePx = {};
+let marketFilter = 'all';
+
 try { if (window.Telegram && window.Telegram.WebApp) { window.Telegram.WebApp.ready(); window.Telegram.WebApp.expand(); } } catch(e){}
-function showToast(msg, border='#38bdf8'){
-  const t = document.getElementById('toast'); t.style.borderColor = border; t.innerHTML = msg; t.style.display = 'block';
-  clearTimeout(window._toastTimer); window._toastTimer = setTimeout(()=>{ t.style.display='none'; }, 6000);
+
+function switchTab(name, btn){
+  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('view-' + name).classList.add('active');
+  btn.classList.add('active');
+  window.scrollTo({top: 0, behavior: 'smooth'});
 }
-function fmtPx(p){ p=Number(p||0); if(p<=0)return '$0.00'; if(p>=1000)return '$'+p.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); if(p>=10)return '$'+p.toFixed(2); if(p>=1)return '$'+p.toFixed(3); return '$'+p.toFixed(4); }
-function ageStr(ts){ const s=Math.max(0,Math.floor(Date.now()/1000-ts)); if(s<60)return s+'s fa'; if(s<3600)return Math.floor(s/60)+' min fa'; return (s/3600).toFixed(1)+' ore fa'; }
+
+function showToast(msg, border='#38bdf8'){
+  const t = document.getElementById('toast');
+  t.style.borderColor = border; t.innerHTML = msg; t.style.display = 'block';
+  clearTimeout(window._toastTimer);
+  window._toastTimer = setTimeout(()=>{ t.style.display='none'; }, 5500);
+}
+
+function fmtPx(p){
+  p = Number(p||0);
+  if(p<=0) return '$0.00';
+  if(p>=1000) return '$'+p.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+  if(p>=10) return '$'+p.toFixed(2);
+  if(p>=1) return '$'+p.toFixed(3);
+  return '$'+p.toFixed(4);
+}
+function ageStr(ts){
+  const s = Math.max(0, Math.floor(Date.now()/1000 - ts));
+  if(s<60) return s+'s fa';
+  if(s<3600) return Math.floor(s/60)+'m fa';
+  return (s/3600).toFixed(1)+'h fa';
+}
+function fmtLocalDT(ts){
+  return new Date(ts * 1000).toLocaleString('it-IT',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
+}
+function countdownStr(ts){
+  const diff = ts - Math.floor(Date.now()/1000);
+  if(diff <= 0){
+    const ago = Math.abs(diff);
+    return ago < 3600 ? `${Math.floor(ago/60)}m fa` : `${(ago/3600).toFixed(1)}h fa`;
+  }
+  const h = Math.floor(diff/3600), m = Math.floor((diff%3600)/60);
+  return h > 0 ? `tra ${h}h ${m}m` : `tra ${m}m`;
+}
+
 function renderHeader(){
-  document.getElementById('subline').textContent = `Aggiornato ${ageStr(D.updated_ts)} · ${D.session}`;
+  document.getElementById('subline').textContent = `${ageStr(D.updated_ts)} · ${D.session}`;
   const mp = document.getElementById('mode-pill');
-  mp.textContent = D.mode === 'LIVE' ? '🟢 LIVE REALE' : '🧪 SIMULAZIONE';
+  mp.textContent = D.mode === 'LIVE' ? '🟢 LIVE' : '🧪 SIM';
   mp.style.borderColor = D.mode === 'LIVE' ? '#10b981' : '#f59e0b';
   document.getElementById('btc-pill').textContent = D.btc_regime || '';
-  const adv = document.getElementById('advisor'); adv.style.background = D.advisor.bg; adv.style.borderColor = D.advisor.color;
+  document.getElementById('fng-pill').textContent = `F&G ${D.fng_val} (${D.fng_class})`;
+
+  const adv = document.getElementById('advisor');
+  adv.style.background = D.advisor.bg; adv.style.borderColor = D.advisor.color;
   const t = document.getElementById('adv-title'); t.style.color = D.advisor.color; t.textContent = D.advisor.badge;
   document.getElementById('adv-sub').textContent = D.advisor.instruction;
+
   const hasKey = Boolean(localStorage.getItem('gh_pat'));
   const kb = document.getElementById('key-btn');
-  kb.textContent = hasKey ? '🟢 Telecomando Attivo' : '🔑 Attiva Telecomando';
+  kb.textContent = hasKey ? '🟢 Telecomando OK' : '🔑 Chiave GitHub';
   kb.style.borderColor = hasKey ? '#10b981' : '#f59e0b';
 }
+
 function renderPosition(){
-  const box = document.getElementById('pos-card'); const p = D.position;
+  const box = document.getElementById('pos-card');
+  const p = D.position;
   if(!p || !p.is_open){
-    box.innerHTML = `<div class="sec-title"><span>💼 Posizione Attiva</span><span>NESSUNA (100% USDT)</span></div><div class="muted">${D.waiting || 'Capitale protetto in USDT.'}</div>`;
+    box.innerHTML = `<div class="sec-title"><span>💼 Portafoglio</span><span>100% USDT</span></div>
+      <div class="muted">${D.waiting || 'Nessun trade aperto: il capitale è protetto in USDT.'}</div>`;
     return;
   }
   const coin = D.coins.find(c=>c.code===p.coin_code) || {};
@@ -143,52 +260,176 @@ function renderPosition(){
   const span = Math.max(p.tp_price - p.sl_price, 1e-9);
   const prog = Math.max(0, Math.min(100, ((cur - p.sl_price) / span) * 100));
   const col = netUsdt >= 0 ? 'pos-green' : 'pos-red';
-  box.innerHTML = `<div class="sec-title"><span>🔥 POSIZIONE APERTA SU ${p.coin_code}</span><span>${p.opened_at}</span></div>
+
+  box.innerHTML = `<div class="sec-title"><span>🔥 TRADE APERTO: ${p.coin_code}</span><span>${p.opened_at}</span></div>
     <div class="kv-grid">
-      <div class="kv"><div class="kv-l">Prezzo Acquisto</div><div class="kv-v">${fmtPx(p.entry_price)}</div></div>
+      <div class="kv"><div class="kv-l">Ingresso</div><div class="kv-v">${fmtPx(p.entry_price)}</div></div>
       <div class="kv"><div class="kv-l">Prezzo Attuale</div><div class="kv-v">${fmtPx(cur)}</div></div>
-      <div class="kv"><div class="kv-l">Guadagno / Perdita</div><div class="kv-v ${col}">${netPct>=0?'+':''}${netPct.toFixed(2)}% (${netUsdt>=0?'+':''}${netUsdt.toFixed(2)}$)</div></div>
+      <div class="kv"><div class="kv-l">Risultato Netto</div><div class="kv-v ${col}">${netPct>=0?'+':''}${netPct.toFixed(2)}% (${netUsdt>=0?'+':''}${netUsdt.toFixed(2)}$)</div></div>
       <div class="kv"><div class="kv-l">Investito</div><div class="kv-v">${Number(p.invested_usdt).toFixed(2)} USDT</div></div>
       <div class="kv"><div class="kv-l">Stop-Loss ${p.breakeven_locked?'🔒':''}</div><div class="kv-v pos-red">${fmtPx(p.sl_price)}</div></div>
       <div class="kv"><div class="kv-l">Take-Profit 🎯</div><div class="kv-v pos-green">${fmtPx(p.tp_price)}</div></div>
     </div>
     <div class="prog-bar"><div style="width:${prog}%; background:${netUsdt>=0?'#10b981':'#ef4444'}"></div></div>
-    <button class="act-btn b-red" style="width:100%; margin-top:8px; padding:12px;" onclick="confirmClose()">🛑 CHIUDI SUBITO ${p.coin_code} A MERCATO</button>`;
+    <button class="act-btn b-red" style="width:100%; margin-top:6px; padding:11px;" onclick="confirmClose()">🛑 CHIUDI SUBITO ${p.coin_code}</button>`;
 }
+
+function renderPrediction(){
+  const clBox = document.getElementById('claude-card');
+  const cv = D.claude_verdict || {};
+  if(D.claude_enabled && cv.reason_it){
+    const dCol = cv.decision==='APPROVE'||cv.decision==='HOLD' ? 'pos-green' : (cv.decision==='WAIT_PULLBACK'||cv.decision==='TIGHTEN_SL' ? 'pos-amber' : 'pos-red');
+    clBox.innerHTML = `<div class="sec-title"><span>🧠 Supervisore Claude 5.5</span><span class="pill">${cv.model_used || D.claude_model}</span></div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+        <b class="${dCol}" style="font-size:15px;">${cv.decision} ${cv.best_coin || ''}</b>
+        <span class="pill">Confidenza: ${cv.confidence || 0}%</span>
+      </div>
+      <div style="font-size:13px;color:#e2e8f0;">${cv.reason_it}</div>
+      <div class="muted" style="margin-top:5px;">Regime: ${cv.market_regime_note || D.btc_regime}</div>`;
+  } else {
+    clBox.innerHTML = `<div class="sec-title"><span>🧠 Supervisore Claude 5.5</span><span class="pill">${D.claude_enabled ? 'In attesa setup' : 'Solo Quant'}</span></div>
+      <div class="muted">${D.claude_enabled ? 'Claude interviene automaticamente appena una coin supera i filtri o su posizione aperta.' : 'Aggiungi ANTHROPIC_API_KEY nei Secrets GitHub per attivare anche il giudizio di Claude 5.5.'}</div>`;
+  }
+
+  const sel = document.getElementById('pred-coin-sel').value;
+  const c = D.coins.find(x => x.code === sel) || D.coins[0];
+  if(!c) return;
+  const px = livePx[c.code] || c.price;
+  const slPct = ((c.sl_price - px)/px*100).toFixed(2);
+  const tpPct = ((c.tp_price - px)/px*100).toFixed(2);
+  const dirLabel = c.ai_prob >= 58 && c.raw_100 >= 65 ? '📈 RIALZISTA FORTE'
+                 : (c.ai_prob >= 53 ? '↗️ RIALZISTA MODERATO' : (c.ai_prob <= 45 ? '📉 DEBOLE / PRUDENZA' : '↔️ LATERALE'));
+  const dirCol = c.ai_prob >= 56 ? 'pos-green' : (c.ai_prob <= 45 ? 'pos-red' : 'pos-amber');
+
+  const sk = c.sk_scores || {};
+  const bar = (val, max, col='#38bdf8') => `<div class="prog-bar" style="height:6px;margin:4px 0 0;"><div style="width:${Math.min(100,Math.round(val/max*100))}%;background:${col}"></div></div>`;
+
+  document.getElementById('pred-box').innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;background:#0b1325;padding:11px;border-radius:12px;border:1px solid #1d2c4b;">
+      <div>
+        <div style="font-size:11px;color:var(--muted);">Previsione Direzionale 12h</div>
+        <div class="${dirCol}" style="font-size:16px;font-weight:900;">${dirLabel}</div>
+      </div>
+      <div style="text-align:right;">
+        <div style="font-size:11px;color:var(--muted);">Probabilità AI</div>
+        <div style="font-size:18px;font-weight:900;">${c.ai_prob}%</div>
+      </div>
+    </div>
+
+    <div class="kv-grid" style="margin-bottom:10px;">
+      <div class="kv"><div class="kv-l">Target Atteso (TP)</div><div class="kv-v pos-green">${fmtPx(c.tp_price)} <small>(+${tpPct}%)</small></div></div>
+      <div class="kv"><div class="kv-l">Protezione (SL)</div><div class="kv-v pos-red">${fmtPx(c.sl_price)} <small>(${slPct}%)</small></div></div>
+      <div class="kv"><div class="kv-l">Rendimento / Rischio</div><div class="kv-v pos-blue">${c.rr_ratio}x netto</div></div>
+      <div class="kv"><div class="kv-l">Monte Carlo (12h)</div><div class="kv-v ${c.mc_ev_r>=0?'pos-green':'pos-red'}">${c.mc_ev_r>=0?'+':''}${c.mc_ev_r}R atteso</div></div>
+    </div>
+
+    <div class="sec-title" style="margin-top:8px;"><span>⚙️ I 4 Motori Predittivi</span><span>${c.regime}</span></div>
+    <div class="skill-grid">
+      <div class="skill-row"><div class="top"><span>Rete Neurale</span><span>${c.prob_mlp}%</span></div>${bar(c.prob_mlp,100,'#a78bfa')}</div>
+      <div class="skill-row"><div class="top"><span>k-NN Lorentziano</span><span>${c.prob_knn}%</span></div>${bar(c.prob_knn,100,'#38bdf8')}</div>
+      <div class="skill-row"><div class="top"><span>Monte Carlo 400</span><span>${c.prob_mc}%</span></div>${bar(c.prob_mc,100,'#10b981')}</div>
+      <div class="skill-row"><div class="top"><span>Time Machine (${c.tm_matches})</span><span>${c.tm_wr}% WR</span></div>${bar(c.tm_wr,100,'#f59e0b')}</div>
+    </div>
+
+    <div class="sec-title" style="margin-top:12px;"><span>🧩 Semaforo 11 Skill (${c.raw_100}/100)</span><span>Alpha BTC: ${c.alpha_btc>=0?'+':''}${c.alpha_btc}%</span></div>
+    <div class="skill-grid">
+      <div class="skill-row"><div class="top"><span>Trend 4H/1H</span><span>${sk.trend||0}/20</span></div>${bar(sk.trend||0,20)}</div>
+      <div class="skill-row"><div class="top"><span>Forza vs BTC</span><span>${sk.btc||0}/10</span></div>${bar(sk.btc||0,10)}</div>
+      <div class="skill-row"><div class="top"><span>VWAP & Volumi</span><span>${sk.vwap||0}/15</span></div>${bar(sk.vwap||0,15)}</div>
+      <div class="skill-row"><div class="top"><span>Book L2 (${c.ob_imb>=0?'+':''}${c.ob_imb}%)</span><span>${sk.book||0}/10</span></div>${bar(sk.book||0,10)}</div>
+      <div class="skill-row"><div class="top"><span>Derivati/F&G</span><span>${sk.deriv||0}/8</span></div>${bar(sk.deriv||0,8)}</div>
+      <div class="skill-row"><div class="top"><span>Timer 15m</span><span>${c.triggers||0}/5</span></div>${bar(c.triggers||0,5,'#10b981')}</div>
+    </div>`;
+}
+
+function setFilter(f, btn){
+  marketFilter = f;
+  document.querySelectorAll('.chip').forEach(c=>c.classList.remove('active'));
+  btn.classList.add('active');
+  renderCoins();
+}
+
 function renderCoins(){
   const box = document.getElementById('coin-list');
-  box.innerHTML = D.coins.map((c, idx) => {
+  const list = D.coins.filter(c => {
+    if(marketFilter === 'ready') return c.entry_ok;
+    if(marketFilter === 'hot') return c.raw_100 >= 58;
+    return true;
+  });
+  if(!list.length){
+    box.innerHTML = `<div class="muted" style="padding:12px 0;">Nessuna coin corrisponde a questo filtro al momento.</div>`;
+    return;
+  }
+  box.innerHTML = list.map((c, idx) => {
     const px = livePx[c.code] || c.price;
     const icon = c.entry_ok ? '🟢' : (c.raw_100 >= 58 ? '🟡' : '⚪');
     const barCol = c.entry_ok ? '#10b981' : (c.raw_100 >= 58 ? '#f59e0b' : '#38bdf8');
     return `<div class="coin-item ${c.entry_ok?'ready':''}">
       <div class="coin-top"><div class="coin-name">${icon} #${idx+1} ${c.name} (${c.code})</div><div class="coin-px" id="px-${c.code}">${fmtPx(px)}</div></div>
-      <div class="prog-bar" style="margin:6px 0 10px;height:7px;"><div style="width:${c.raw_100}%;background:${barCol}"></div></div>
+      <div class="prog-bar" style="height:6px;"><div style="width:${c.raw_100}%;background:${barCol}"></div></div>
       <div class="coin-meta">
-        <div><span>11-Skill Score</span><b>${c.final_score}/10 (${c.raw_100}%)</b></div>
-        <div><span>FreqAI Prob</span><b>${c.ai_prob}%</b></div>
-        <div><span>Trigger 15m</span><b>${c.triggers || 0}/5 (${c.rr_ratio}R)</b></div>
+        <div><span>Punteggio</span><b>${c.final_score}/10 (${c.raw_100}%)</b></div>
+        <div><span>Previsione AI</span><b>${c.ai_prob}%</b></div>
+        <div><span>R:R Netto</span><b>${c.rr_ratio}x</b></div>
         <div><span>Stop-Loss</span><b class="pos-red">${fmtPx(c.sl_price)}</b></div>
         <div><span>Take-Profit</span><b class="pos-green">${fmtPx(c.tp_price)}</b></div>
-        <div><span>Size Auto</span><b>${c.pos_usdt.toFixed(1)} USDT</b></div>
+        <div><span>Trigger 15m</span><b>${c.triggers || 0}/5</b></div>
       </div>
-      <div class="coin-foot"><span class="muted" style="font-size:11px;">${c.risk_ok ? '✅ Rischio OK' : c.risk_status}</span>
-      <button class="mini-btn b-green" onclick="quickBuy('${c.code}', ${c.pos_usdt.toFixed(2)})">🚀 Compra ${c.code}</button></div></div>`;
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+        <span class="muted" style="font-size:11px;">${c.risk_ok ? '✅ Rischio OK' : c.risk_status}</span>
+        <button class="mini-btn b-green" onclick="quickBuy('${c.code}', ${c.pos_usdt.toFixed(2)})">🚀 Compra ${c.code}</button>
+      </div>
+    </div>`;
   }).join('');
 }
+
+function renderCalendarAndNews(){
+  document.getElementById('macro-pill').textContent = D.macro_ok ? '🟢 Live USD' : '⚠️ Feed Offline';
+  const mBox = document.getElementById('macro-list');
+  const mList = (D.macro || []).slice(0, 10);
+  mBox.innerHTML = mList.length
+    ? mList.map(ev => {
+        const badge = ev.impact === 'High' ? '🔴 ALTO' : '🟡 MEDIO';
+        const isFuture = ev.ts > Math.floor(Date.now()/1000);
+        return `<div class="ev-row">
+          <div>
+            <div style="font-size:13px;font-weight:800;">${ev.title}</div>
+            <div class="muted">${fmtLocalDT(ev.ts)} · ${badge}</div>
+          </div>
+          <span class="pill" style="border-color:${isFuture && ev.impact==='High'?'#ef4444':'#253455'}">${countdownStr(ev.ts)}</span>
+        </div>`;
+      }).join('')
+    : `<div class="muted">Nessun evento USD ad alto/medio impatto nelle prossime 36 ore.</div>`;
+
+  const nBox = document.getElementById('news-list');
+  const news = D.news || [];
+  nBox.innerHTML = news.length
+    ? news.map(n => `<a class="news-link" href="${n.url}" target="_blank" rel="noopener">
+        <div class="news-t">${n.title}</div>
+        <div class="news-m">${n.source} · ${ageStr(n.ts)} (${fmtLocalDT(n.ts)}) ↗</div>
+      </a>`).join('')
+    : `<div class="muted">Notizie momentaneamente non disponibili. Riprova con 'Aggiorna Ora'.</div>`;
+}
+
 function renderStats(){
-  const s = D.stats || {}; const wr = s.total_trades ? ((s.wins/s.total_trades)*100).toFixed(0)+'%' : '—';
+  const s = D.stats || {};
+  const wr = s.total_trades ? ((s.wins/s.total_trades)*100).toFixed(0)+'%' : '—';
   document.getElementById('daily-tag').textContent = `Oggi: ${s.daily_trades||0}/${D.limits.max_trades} trade`;
   document.getElementById('stats-grid').innerHTML = `
-    <div class="kv"><div class="kv-l">Operazioni Totali</div><div class="kv-v">${s.total_trades||0} (${s.wins||0} V / ${s.losses||0} P)</div></div>
-    <div class="kv"><div class="kv-l">Precisione (Win Rate)</div><div class="kv-v">${wr}</div></div>
+    <div class="kv"><div class="kv-l">Operazioni Totali</div><div class="kv-v">${s.total_trades||0} (${s.wins||0}V / ${s.losses||0}P)</div></div>
+    <div class="kv"><div class="kv-l">Win Rate</div><div class="kv-v">${wr}</div></div>
     <div class="kv"><div class="kv-l">Profitto Totale</div><div class="kv-v ${(s.total_pnl_usdt||0)>=0?'pos-green':'pos-red'}">${(s.total_pnl_usdt||0)>=0?'+':''}${(s.total_pnl_usdt||0).toFixed(2)} $</div></div>
-    <div class="kv"><div class="kv-l">Profitto Oggi</div><div class="kv-v ${(s.daily_pnl_pct||0)>=0?'pos-green':'pos-red'}">${(s.daily_pnl_pct||0)>=0?'+':''}${(s.daily_pnl_pct||0).toFixed(2)}%</div></div>`;
+    <div class="kv"><div class="kv-l">Oggi</div><div class="kv-v ${(s.daily_pnl_pct||0)>=0?'pos-green':'pos-red'}">${(s.daily_pnl_pct||0)>=0?'+':''}${(s.daily_pnl_pct||0).toFixed(2)}%</div></div>`;
   const h = D.history || [];
   document.getElementById('hist-box').innerHTML = h.length
-    ? `<div class="muted" style="margin-bottom:6px;font-weight:700;">Ultime chiusure:</div>` + h.slice(0,6).map(r=>`<div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid #1e2d4a;font-size:12px;"><span><b>${r.coin}</b> · ${r.closed_at}</span><span class="${r.pnl_usdt>=0?'pos-green':'pos-red'}"><b>${r.pnl_pct>=0?'+':''}${r.pnl_pct}% (${r.pnl_usdt>=0?'+':''}${r.pnl_usdt}$)</b></span></div>`).join('')
+    ? `<div class="muted" style="margin-bottom:6px;font-weight:700;">Ultime chiusure:</div>` +
+      h.slice(0,8).map(r=>`<div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid #1d2c4b;font-size:12px;">
+        <span><b>${r.coin}</b> · ${r.closed_at}</span>
+        <span class="${r.pnl_usdt>=0?'pos-green':'pos-red'}"><b>${r.pnl_pct>=0?'+':''}${r.pnl_pct}% (${r.pnl_usdt>=0?'+':''}${r.pnl_usdt}$)</b></span>
+      </div>`).join('')
     : `<div class="muted">Nessuna operazione chiusa finora.</div>`;
 }
+
 function toggleSetup(){ const b=document.getElementById('setup-box'); b.style.display=b.style.display==='none'?'block':'none'; }
 function saveToken(){
   const v=document.getElementById('gh-token').value.trim();
@@ -205,32 +446,47 @@ async function sendCmd(command, coin, amount_usdt){
       method:'POST', headers:{'Authorization':`Bearer ${tok}`,'Accept':'application/vnd.github+json','Content-Type':'application/json'},
       body: JSON.stringify({ref: D.ref || 'main', inputs:{command, coin: String(coin||''), amount_usdt: String(amount_usdt||0)}})
     });
-    if(r.status === 204) showToast(`✅ Comando avviato!`, '#10b981');
-    else showToast(`❌ Errore HTTP ${r.status}`, '#ef4444');
+    if(r.status === 204) showToast(`✅ Comando avviato! Risposta su Telegram tra ~35s.`, '#10b981');
+    else showToast(`❌ Errore GitHub HTTP ${r.status}`, '#ef4444');
   }catch(e){ showToast('❌ Errore: '+e, '#ef4444'); }
 }
 function confirmClose(){ if(confirm('Chiudere subito la posizione aperta?')) sendCmd('close','',0); }
 function quickBuy(code, usdt){ if(confirm(`Aprire LONG su ${code} (~${usdt} USDT)?`)) sendCmd('open', code, usdt); }
 function manualOpen(){ const c=document.getElementById('man-coin').value, u=document.getElementById('man-usdt').value||0; if(confirm(`LONG su ${c}?`)) sendCmd('open', c, u); }
 function manualSellAll(){ const c=document.getElementById('man-coin').value; if(confirm(`Vendere TUTTO ${c}?`)) sendCmd('sell_all', c, 0); }
+
 function connectWS(){
   try{
-    const ws = new WebSocket('wss://ws.kraken.com'); const pairToCode = {}; D.coins.forEach(c => { pairToCode[c.ws] = c.code; });
-    ws.onopen = () => { document.getElementById('ws-pill').textContent = '🟢 Prezzi Live'; ws.send(JSON.stringify({event:'subscribe', pair: D.coins.map(c=>c.ws), subscription:{name:'ticker'}})); };
+    const ws = new WebSocket('wss://ws.kraken.com');
+    const pairToCode = {}; D.coins.forEach(c => { pairToCode[c.ws] = c.code; });
+    ws.onopen = () => {
+      document.getElementById('ws-pill').textContent = '🟢 Live';
+      ws.send(JSON.stringify({event:'subscribe', pair: D.coins.map(c=>c.ws), subscription:{name:'ticker'}}));
+    };
     ws.onmessage = (ev) => {
       const m = JSON.parse(ev.data);
       if(Array.isArray(m) && m[1] && m[1].c){
         const code = pairToCode[m[3]], px = parseFloat(m[1].c[0]);
-        if(code && px>0){ livePx[code]=px; const el=document.getElementById('px-'+code); if(el) el.textContent=fmtPx(px); if(D.position&&D.position.is_open&&D.position.coin_code===code) renderPosition(); }
+        if(code && px>0){
+          livePx[code] = px;
+          const el = document.getElementById('px-'+code);
+          if(el) el.textContent = fmtPx(px);
+          if(D.position && D.position.is_open && D.position.coin_code===code) renderPosition();
+        }
       }
     };
     ws.onclose = () => { document.getElementById('ws-pill').textContent = '🟡 Riconnessione...'; setTimeout(connectWS, 4000); };
   }catch(e){}
 }
+
 (function init(){
   document.getElementById('gh-token').value = localStorage.getItem('gh_pat') || '';
+  const opts = D.coins.map(c=>`<option value="${c.code}">${c.name} (${c.code}) — ${c.raw_100}%</option>`).join('');
   document.getElementById('man-coin').innerHTML = D.coins.map(c=>`<option value="${c.code}">${c.name} (${c.code})</option>`).join('');
-  renderHeader(); renderPosition(); renderCoins(); renderStats(); setInterval(renderHeader, 10000); connectWS();
+  document.getElementById('pred-coin-sel').innerHTML = opts;
+  renderHeader(); renderPosition(); renderPrediction(); renderCoins(); renderCalendarAndNews(); renderStats();
+  setInterval(() => { renderHeader(); renderCalendarAndNews(); }, 15000);
+  connectWS();
 })();
 </script>
 </body>
