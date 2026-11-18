@@ -56,6 +56,15 @@ GITHUB_TOKEN = (os.getenv("GH_PAT") or os.getenv("GITHUB_TOKEN") or "").strip()
 GITHUB_REPO = _env("GITHUB_REPOSITORY", "")
 GITHUB_EVENT_NAME = _env("GITHUB_EVENT_NAME", "manual")
 
+# Configurazione Claude 5.5 AI (API version 2026-10-21)
+ANTHROPIC_API_KEY = (os.getenv("ANTHROPIC_API_KEY") or os.getenv("CLAUDE_API_KEY") or "").strip()
+CLAUDE_ENABLED = _env("CLAUDE_ENABLED", "true").lower() == "true" and bool(ANTHROPIC_API_KEY)
+CLAUDE_MODEL = _env("CLAUDE_MODEL", "claude-sonnet-5-5")          # claude-sonnet-5-5 | claude-opus-5-5 | claude-fable-5-2
+CLAUDE_FAST_MODEL = _env("CLAUDE_FAST_MODEL", "claude-haiku-5-5")  # Modello veloce per triage aperto
+CLAUDE_EFFORT = _env("CLAUDE_EFFORT", "high")                      # low | medium | high
+CLAUDE_COOLDOWN_SEC = int(_env("CLAUDE_COOLDOWN_SEC", 240))        # Rate-limit chiamate Claude su monitoraggio
+CLAUDE_API_VERSION = "2026-10-21"
+
 MANUAL_COMMAND = _env("MANUAL_COMMAND", "").lower()
 MANUAL_COIN = _env("MANUAL_COIN", "").upper()
 try:
@@ -67,42 +76,45 @@ INVEST_EUR = float(_env("INVEST_EUR", 50.0))
 AUTO_TRADE_ENABLED = _env("AUTO_TRADE_ENABLED", "false").lower() == "true"
 
 # Modalita' Continua / Tick Guardian
-DAEMON_MODE = _env("DAEMON_MODE", "false").lower() == "true"  # True per server/PC 24/7 infinito
-GUARDIAN_MINUTES_OPEN = float(_env("GUARDIAN_MINUTES_OPEN", 18.0))  # Minuti di guardia continua con trade aperto
-GUARDIAN_MINUTES_HOT = float(_env("GUARDIAN_MINUTES_HOT", 6.0))     # Minuti di guardia se una coin e' quasi pronta (>=54/100)
-GUARDIAN_TICK_SEC = int(_env("GUARDIAN_TICK_SEC", 15))              # Controllo prezzi Pionex + Telegram ogni 15s
-GUARDIAN_RESCAN_SEC = int(_env("GUARDIAN_RESCAN_SEC", 300))         # Rianalisi candele 15m/AI ogni 5 min
+DAEMON_MODE = _env("DAEMON_MODE", "false").lower() == "true"
+ALWAYS_ON_24_7 = _env("ALWAYS_ON_24_7", "true").lower() == "true"
+TELEGRAM_ROUTINE_MIN = int(_env("TELEGRAM_ROUTINE_MIN", 30))
+GUARDIAN_MINUTES_OPEN = float(_env("GUARDIAN_MINUTES_OPEN", 18.0))
+GUARDIAN_MINUTES_HOT = float(_env("GUARDIAN_MINUTES_HOT", 6.0))
+GUARDIAN_TICK_SEC = int(_env("GUARDIAN_TICK_SEC", 15))
+GUARDIAN_RESCAN_SEC = int(_env("GUARDIAN_RESCAN_SEC", 300))
 SELF_CHAIN_WHEN_OPEN = _env("SELF_CHAIN_WHEN_OPEN", "true").lower() == "true"
 PARTIAL_TP_ENABLED = _env("PARTIAL_TP_ENABLED", "true").lower() == "true"
 
-# Ingressi / rischio
-Entry_Score_Min = int(_env("ENTRY_SCORE_MIN", 6))
-Entry_Raw_100_Min = int(_env("ENTRY_RAW_100_MIN", 58))
+# Ingressi / Rischio (Calibrati per alta qualita' e R:R positivo)
+Entry_Score_Min = int(_env("ENTRY_SCORE_MIN", 7))
+Entry_Raw_100_Min = int(_env("ENTRY_RAW_100_MIN", 68))
+Entry_AI_Prob_Min = float(_env("ENTRY_AI_PROB_MIN", 0.56))
 RISK_PER_TRADE_PCT = float(_env("RISK_PER_TRADE_PCT", 1.5))
 DAILY_MAX_LOSS_PCT = float(_env("DAILY_MAX_LOSS_PCT", 4.0))
-MAX_TRADES_PER_DAY = int(_env("MAX_TRADES_PER_DAY", 5))
+MAX_TRADES_PER_DAY = int(_env("MAX_TRADES_PER_DAY", 4))
 MAX_CONSEC_LOSSES = int(_env("MAX_CONSEC_LOSSES", 3))
-MIN_REWARD_RISK_R = 1.15
+MIN_REWARD_RISK_R = float(_env("MIN_REWARD_RISK_R", 1.55))
 CASH_BUFFER_PCT = 5.0
 MIN_ORDER_USDT = float(_env("MIN_ORDER_USDT", 10.5))
 FEE_PCT_PER_SIDE = float(_env("FEE_PCT_PER_SIDE", 0.05))
 PIONEX_FEE_ROUNDTRIP_PCT = 2.0 * FEE_PCT_PER_SIDE
-SCALP_MIN_NET_PROFIT_PCT = 0.65
-TIME_STOP_PROFIT_HOURS = 4.5
-TIME_STOP_STALE_HOURS = 6.0
+SCALP_MIN_NET_PROFIT_PCT = 1.35  # Non tagliare i vincitori a +0.65%!
+TIME_STOP_PROFIT_HOURS = 8.0
+TIME_STOP_STALE_HOURS = 10.0
 
 # Finestra operativa (UTC)
-ENTRY_START_UTC = int(_env("ENTRY_START_UTC", 7))
-ENTRY_END_UTC = int(_env("ENTRY_END_UTC", 21))
+ENTRY_START_UTC = int(_env("ENTRY_START_UTC", 6))
+ENTRY_END_UTC = int(_env("ENTRY_END_UTC", 22))
 MIN_MINUTES_BETWEEN_TRADES = int(_env("MIN_MINUTES_BETWEEN_TRADES", 60))
-COOLDOWN_AFTER_LOSS_MIN = int(_env("COOLDOWN_AFTER_LOSS_MIN", 150))
+COOLDOWN_AFTER_LOSS_MIN = int(_env("COOLDOWN_AFTER_LOSS_MIN", 180))
 SAME_COIN_COOLDOWN_H = float(_env("SAME_COIN_COOLDOWN_H", 6.0))
 
 STATE_FILE = "bot_state.json"
 WEBAPP_FILE = "index.html"
 HTTP_TIMEOUT = 12
 PIONEX_BASE = "https://api.pionex.com"
-HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; PionexFreqtradeQuantBot/10.0)"}
+HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; PionexClaudeQuantBot/11.0)"}
 
 COINS = [
     {"code": "SOL",  "name": "Solana",    "kraken": "SOLUSD",  "ws": "SOL/USD",  "futures": "PF_SOLUSD",  "pionex": "SOL_USDT",  "prec": 3},
@@ -118,7 +130,11 @@ COINS = [
 ]
 COIN_MAP = {c["code"]: c for c in COINS}
 LIVE_PX = {}
-BTC_REGIME = {"state": "NEUTRAL", "rsi_15m": 50.0, "ret_1h_pct": 0.0, "allow_alts": True, "label": "⚪ BTC Neutrale"}
+BTC_REGIME = {
+    "state": "NEUTRAL", "rsi_15m": 50.0, "ret_1h_pct": 0.0, "ret_4h_pct": 0.0,
+    "allow_alts": True, "label": "⚪ BTC Neutrale"
+}
+BTC_CONTEXT = {"ret_1h": 0.0, "ret_4h": 0.0, "candles_15m": [], "candles_1h": []}
 
 FREQTRADE_CONFIG = {
     "stake_currency": "USDT",
@@ -127,14 +143,14 @@ FREQTRADE_CONFIG = {
     "freqai": {
         "enabled": True,
         "conv_width": 1,
-        "train_period_candles": 320,
+        "train_period_candles": 360,
         "backtest_period_candles": 80,
-        "identifier": "pionex_triple_barrier_v10",
+        "identifier": "pionex_claude_11skills_v11",
         "feature_parameters": {
             "include_timeframes": ["15m", "1h", "4h"],
             "indicator_periods_candles": [14, 20, 50],
-            "label_period_candles": 5,
-            "DI_threshold": 2.2,
+            "label_period_candles": 8,
+            "DI_threshold": 2.4,
             "weight_factor": 0.9,
         },
     },
@@ -144,7 +160,7 @@ FREQTRADE_CONFIG = {
 # ==============================================================================
 # 1. UTILITA'
 # ==============================================================================
-_SECRETS = [s for s in (TELEGRAM_TOKEN, PIONEX_API_KEY, PIONEX_API_SECRET, GITHUB_TOKEN) if s]
+_SECRETS = [s for s in (TELEGRAM_TOKEN, PIONEX_API_KEY, PIONEX_API_SECRET, GITHUB_TOKEN, ANTHROPIC_API_KEY) if s]
 
 
 def redact(text):
@@ -245,17 +261,19 @@ def load_state():
             "is_open": False, "coin_code": "SOL", "symbol": "SOL_USDT",
             "entry_price": 0.0, "amount_coin": 0.0, "invested_usdt": 0.0,
             "sl_price": 0.0, "tp_price": 0.0, "initial_sl": 0.0, "one_r": 0.0,
-            "highest_price": 0.0, "breakeven_locked": False, "tp1_locked": False,
+            "highest_price": 0.0, "atr_15m": 0.0, "breakeven_locked": False, "tp1_locked": False,
             "tp2_locked": False, "partial_tp_done": False, "realized_partial_usdt": 0.0,
             "alerts_triggered": [], "opened_at": "", "opened_ts": 0,
             "last_check_ts": 0, "close_fail_count": 0, "mode": "SIMULATION", "order_id": "",
-            "enter_tag": "freqai_fastscalp"
+            "enter_tag": "freqai_claude_11skills"
         },
         "stats": {
             "total_trades": 0, "wins": 0, "losses": 0, "total_pnl_pct": 0.0, "total_pnl_usdt": 0.0,
             "daily_date": "", "daily_pnl_pct": 0.0, "daily_pnl_usdt": 0.0, "daily_trades": 0,
             "consec_losses": 0, "last_close_ts": 0, "last_loss_ts": 0, "coin_last_close": {},
-            "last_tg_update_id": 0, "last_action": "Nessuna operazione recente"
+            "last_tg_update_id": 0, "last_report_ts": 0,
+            "claude_last_call_ts": 0, "claude_last_verdict": {},
+            "last_action": "Nessuna operazione recente"
         },
         "history": []
     }
@@ -423,7 +441,6 @@ def live_buy(coin_cfg, usdt, price):
 
 
 def live_sell(pos, coin_cfg, price, fraction=1.0):
-    """Vendita totale (fraction=1.0) o parziale Scale-Out (es. fraction=0.5) con riconciliazione."""
     base, sym = coin_cfg["code"], coin_cfg["pionex"]
     fraction = clamp(fraction, 0.1, 1.0)
     target_coin = pos["amount_coin"] * fraction
@@ -469,7 +486,6 @@ def live_sell(pos, coin_cfg, price, fraction=1.0):
 # 4. ACQUISIZIONE DATI E COMANDI TELEGRAM DIRETTI
 # ==============================================================================
 def poll_telegram_commands(state):
-    """Legge sia i pulsanti premuti sotto i messaggi Telegram (callback_query) sia i comandi da menu."""
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
         return None
     offset = int(state["stats"].get("last_tg_update_id", 0)) + 1
@@ -490,7 +506,6 @@ def poll_telegram_commands(state):
         if uid > state["stats"].get("last_tg_update_id", 0):
             state["stats"]["last_tg_update_id"] = uid
 
-        # 1. Tocco su un pulsante sotto il messaggio Telegram (Inline Keyboard)
         cb = upd.get("callback_query")
         if cb:
             cb_msg = cb.get("message") or {}
@@ -513,7 +528,6 @@ def poll_telegram_commands(state):
                         pass
             continue
 
-        # 2. Messaggio o voce del Menu Telegram
         msg = upd.get("message") or upd.get("edited_message") or {}
         chat_id = str((msg.get("chat") or {}).get("id", ""))
         if chat_id != str(TELEGRAM_CHAT_ID):
@@ -617,7 +631,10 @@ def build_4h_from_1h(candles_1h):
 
 def fetch_kraken_orderbook(pair="SOLUSD", count=50):
     data = safe_get_json("https://api.kraken.com/0/public/Depth", params={"pair": pair, "count": count})
-    default = {"imbalance": 0.0, "spread_bps": 5.0, "bid_ask_ratio": 1.0}
+    default = {
+        "imbalance": 0.0, "spread_bps": 5.0, "bid_ask_ratio": 1.0,
+        "near_bid_usdt": 0.0, "near_ask_usdt": 0.0, "wall_pressure": 0.0
+    }
     if not data or data.get("error"):
         return default
     try:
@@ -629,17 +646,30 @@ def fetch_kraken_orderbook(pair="SOLUSD", count=50):
         best_bid, best_ask = float(bids[0][0]), float(asks[0][0])
         mid = (best_bid + best_ask) / 2.0
         spread_bps = ((best_ask - best_bid) / mid) * 10000.0 if mid > 0 else 5.0
-        bid_w = 0.0
+        bid_w, ask_w = 0.0, 0.0
+        near_bid_usdt, near_ask_usdt = 0.0, 0.0
         for b in bids:
             p, v = float(b[0]), float(b[1])
-            bid_w += p * v * math.exp(-max(0.0001, (mid - p) / mid) * 100.0)
-        ask_w = 0.0
+            dist = max(0.0001, (mid - p) / mid)
+            bid_w += p * v * math.exp(-dist * 100.0)
+            if dist <= 0.006:
+                near_bid_usdt += p * v
         for a in asks:
             p, v = float(a[0]), float(a[1])
-            ask_w += p * v * math.exp(-max(0.0001, (p - mid) / mid) * 100.0)
+            dist = max(0.0001, (p - mid) / mid)
+            ask_w += p * v * math.exp(-dist * 100.0)
+            if dist <= 0.006:
+                near_ask_usdt += p * v
         total = bid_w + ask_w
-        return {"imbalance": (bid_w - ask_w) / total if total > 0 else 0.0, "spread_bps": spread_bps,
-                "bid_ask_ratio": bid_w / ask_w if ask_w > 0 else 1.0}
+        near_tot = near_bid_usdt + near_ask_usdt
+        return {
+            "imbalance": (bid_w - ask_w) / total if total > 0 else 0.0,
+            "spread_bps": spread_bps,
+            "bid_ask_ratio": bid_w / ask_w if ask_w > 0 else 1.0,
+            "near_bid_usdt": near_bid_usdt,
+            "near_ask_usdt": near_ask_usdt,
+            "wall_pressure": (near_bid_usdt - near_ask_usdt) / near_tot if near_tot > 0 else 0.0,
+        }
     except Exception:
         return default
 
@@ -925,13 +955,18 @@ def calc_volume_profile_poc(candles, bins=24, lookback=120):
     return low_min + (best_idx + 0.5) * step
 
 
-def calc_rolling_vwap(candles_15m, bars=96):
+def calc_rolling_vwap_bands(candles_15m, bars=96):
     subset = candles_15m[-bars:] if len(candles_15m) >= bars else candles_15m
     if not subset:
-        return 0.0
-    pv = sum(((c["high"] + c["low"] + c["close"]) / 3.0) * c["volume"] for c in subset)
-    vv = sum(c["volume"] for c in subset)
-    return pv / vv if vv > 0 else subset[-1]["close"]
+        return 0.0, 0.0, 0.0
+    tps = [(c["high"] + c["low"] + c["close"]) / 3.0 for c in subset]
+    vols = [c["volume"] for c in subset]
+    vv = sum(vols)
+    vwap = sum(t * v for t, v in zip(tps, vols)) / vv if vv > 0 else subset[-1]["close"]
+    var = sum(v * ((t - vwap) ** 2) for t, v in zip(tps, vols)) / vv if vv > 0 else 0.0
+    std = math.sqrt(max(0.0, var))
+    z = (subset[-1]["close"] - vwap) / std if std > 1e-9 else 0.0
+    return vwap, std, z
 
 
 def calc_volume_zscore_series(candles, window=30):
@@ -1052,50 +1087,57 @@ qtpylib = _QtpylibEmulator()
 
 
 # ==============================================================================
-# 6. FREQAI v10 (Triple-Barrier Labeling + Dissimilarity Index + 4-Model Ensemble)
+# 6. FREQAI v11 (12 Feature Stazionarie + Triple-Barrier + Purged Ensemble)
 # ==============================================================================
 def build_feature_matrix(candles_1h):
+    """Matrice a 12 feature stazionarie normalizzate su ATR/volatilita'."""
+    n = len(candles_1h)
     closes = [c["close"] for c in candles_1h]
     rsis = calc_rsi_series(closes, 14)
     ema20s = calc_ema_series(closes, 20)
+    ema50s = calc_ema_series(closes, 50)
     macds = calc_macd_hist_series(closes, 12, 26, 9)
     atrs = calc_atr_series(candles_1h, 14)
+    adx_s, pdi_s, mdi_s = calc_adx_series(candles_1h, 14)
+    vol_zs = calc_volume_zscore_series(candles_1h, 30)
+
     features = []
-    for i in range(len(candles_1h)):
-        if i < 30:
-            features.append([0.0] * 6)
+    for i in range(n):
+        if i < 52:
+            features.append([0.0] * 12)
             continue
         c = closes[i]
-        atr = max(atrs[i], c * 0.001)
-        f1 = clamp((rsis[i] - 50.0) / 25.0, -2.5, 2.5)
-        f2 = clamp((c - ema20s[i]) / (2.0 * atr), -2.5, 2.5)
-        f3 = clamp(macds[i] / (0.5 * atr), -2.5, 2.5)
-        ret3 = (c - closes[i - 3]) / closes[i - 3] if closes[i - 3] > 0 else 0.0
-        f4 = clamp(ret3 / 0.03, -2.5, 2.5)
-        v_win = [candles_1h[j]["volume"] for j in range(i - 20, i)]
-        mv, sv = sum(v_win) / len(v_win), statistics.pstdev(v_win)
-        f5 = clamp((candles_1h[i]["volume"] - mv) / sv if sv > 0 else 0.0, -2.5, 2.5)
-        rng = max(candles_1h[i]["high"] - candles_1h[i]["low"], 1e-8)
-        f6 = ((c - closes[i - 1]) / atr) if i > 0 else (((c - candles_1h[i]["low"]) / rng) * 2.0 - 1.0)
-        features.append([f1, f2, f3, f4, f5, clamp(f6, -2.5, 2.5)])
+        atr = max(atrs[i], c * 0.002)
+        f1 = clamp((rsis[i] - 50.0) / 22.0, -2.5, 2.5)
+        f2 = clamp((c - ema20s[i]) / (1.8 * atr), -2.5, 2.5)
+        f3 = clamp((c - ema50s[i]) / (2.8 * atr), -2.5, 2.5)
+        f4 = clamp((ema20s[i] - ema50s[i]) / (2.0 * atr), -2.5, 2.5)
+        f5 = clamp(macds[i] / (0.45 * atr), -2.5, 2.5)
+        f6 = clamp((c - closes[i - 3]) / (2.0 * atr), -2.5, 2.5)
+        f7 = clamp((c - closes[i - 12]) / (3.8 * atr), -2.5, 2.5)
+        f8 = clamp(vol_zs[i], -2.5, 2.5)
+        rng = max(candles_1h[i]["high"] - candles_1h[i]["low"], 1e-9)
+        close_loc = ((c - candles_1h[i]["low"]) / rng) * 2.0 - 1.0  # +1 chiusura sui max, -1 sui min
+        f9 = clamp(close_loc, -1.5, 1.5)
+        atr_pct = (atr / c) * 100.0 if c > 0 else 1.5
+        f10 = clamp((atr_pct - 1.5) / 1.2, -2.0, 2.5)
+        f11 = clamp((pdi_s[i] - mdi_s[i]) / 30.0, -2.5, 2.5)
+        f12 = clamp((adx_s[i] - 22.0) / 15.0, -2.0, 2.5)
+        features.append([f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12])
     return features
 
 
-def build_triple_barrier_labels(candles_1h, horizon=5, tp_atr_mult=1.35, sl_atr_mult=1.0):
-    """
-    Triple-Barrier Labeling (Marcos López de Prado):
-    Etichetta 1.0 se nei successivi `horizon` periodi il prezzo tocca il Take-Profit
-    prima dello Stop-Loss; 0.0 se tocca prima lo Stop-Loss.
-    """
+def build_triple_barrier_labels(candles_1h, horizon=8, tp_atr_mult=1.70, sl_atr_mult=1.0):
+    """Triple-Barrier Labeling (1.0 se TP raggiunto prima dello SL entro `horizon` barre)."""
     n = len(candles_1h)
     closes = [c["close"] for c in candles_1h]
     highs = [c["high"] for c in candles_1h]
     lows = [c["low"] for c in candles_1h]
     atrs = calc_atr_series(candles_1h, 14)
     labels = [0.5] * n
-    for i in range(30, n - horizon - 1):
+    for i in range(52, n - horizon - 1):
         entry = closes[i]
-        risk = max(atrs[i] * 1.10, entry * 0.009)
+        risk = max(atrs[i] * 1.40, entry * 0.014)
         tp = entry + tp_atr_mult * risk
         sl = entry - sl_atr_mult * risk
         outcome = None
@@ -1107,47 +1149,64 @@ def build_triple_barrier_labels(candles_1h, horizon=5, tp_atr_mult=1.35, sl_atr_
                 outcome = 1.0
                 break
         if outcome is None:
-            outcome = 1.0 if closes[i + horizon] > entry + 0.15 * risk else 0.0
+            outcome = 1.0 if closes[i + horizon] > entry + 0.35 * risk else 0.0
         labels[i] = outcome
     return labels
 
 
-def lorentzian_knn_predict(candles_1h, features, tb_labels, horizon=5, k=18):
+def lorentzian_knn_predict(candles_1h, features, tb_labels, horizon=8, k=20):
+    """Lorentzian k-NN con Non-Maximum Suppression (no cluster di barre adiacenti)."""
     n = len(candles_1h)
-    if n < 120:
+    if n < 130:
         return 0.50
     curr_x = features[-1]
     candidates = []
-    for i in range(35, n - horizon - 1):
+    for i in range(54, n - horizon - 1):
         dist = sum(math.log(1.0 + abs(a - b)) for a, b in zip(curr_x, features[i]))
-        candidates.append((dist, tb_labels[i]))
+        candidates.append((dist, i, tb_labels[i]))
     candidates.sort(key=lambda x: x[0])
-    nearest = candidates[:k]
-    if not nearest:
+
+    selected = []
+    used_idx = []
+    for dist, idx, label in candidates:
+        if any(abs(idx - u) < 4 for u in used_idx):
+            continue
+        selected.append((dist, label))
+        used_idx.append(idx)
+        if len(selected) >= k:
+            break
+
+    if not selected:
         return 0.50
     ws = wt = 0.0
-    for dist, label in nearest:
-        w = 1.0 / (dist + 0.05)
+    for dist, label in selected:
+        w = 1.0 / (dist + 0.15)
         ws += w * label
         wt += w
-    return clamp(ws / wt if wt > 0 else 0.50, 0.05, 0.95)
+    return clamp(ws / wt if wt > 0 else 0.50, 0.08, 0.92)
 
 
-def online_mlp_neural_net(candles_1h, features, tb_labels, horizon=5, epochs=35, lr=0.045):
+def online_mlp_neural_net(candles_1h, features, tb_labels, horizon=8, epochs=40, lr=0.035):
+    """MLP regolarizzato con Purged Temporal Split (gap = horizon barre tra train e holdout)."""
     n = len(candles_1h)
-    if n < 120:
+    if n < 140:
         return 0.50, 0.50
-    dataset = [(features[i], tb_labels[i]) for i in range(max(35, n - 320), n - horizon - 1)]
-    if len(dataset) < 60:
+    dataset = [(features[i], tb_labels[i]) for i in range(max(54, n - 360), n - horizon - 1)]
+    if len(dataset) < 80:
         return 0.50, 0.50
 
-    split = int(len(dataset) * 0.75)
-    train, hold = dataset[:split], dataset[split:]
+    split = int(len(dataset) * 0.72)
+    purge = min(horizon, 6)
+    train = dataset[:max(30, split - purge)]
+    hold = dataset[split:]
+    if len(hold) < 15:
+        return 0.50, 0.50
+
     rng = random.Random(42)
-    in_dim, hid_dim = len(features[0]), 8
-    W1 = [[rng.uniform(-0.35, 0.35) for _ in range(in_dim)] for _ in range(hid_dim)]
+    in_dim, hid_dim = len(features[0]), 10
+    W1 = [[rng.uniform(-0.25, 0.25) for _ in range(in_dim)] for _ in range(hid_dim)]
     b1 = [0.0] * hid_dim
-    W2 = [rng.uniform(-0.35, 0.35) for _ in range(hid_dim)]
+    W2 = [rng.uniform(-0.25, 0.25) for _ in range(hid_dim)]
     b2 = 0.0
 
     def forward(x):
@@ -1155,52 +1214,64 @@ def online_mlp_neural_net(candles_1h, features, tb_labels, horizon=5, epochs=35,
         return sigmoid(sum(W2[j] * h[j] for j in range(hid_dim)) + b2), h
 
     for ep in range(epochs):
-        step_lr = lr * (0.97 ** ep)
-        for x, y in train:
+        step_lr = lr * (0.96 ** ep)
+        shuffled = list(train)
+        rng.shuffle(shuffled)
+        for x, y in shuffled:
             y_hat, h_act = forward(x)
             dz2 = y_hat - y
             for j in range(hid_dim):
-                grad_w2 = dz2 * h_act[j] + 0.001 * W2[j]
+                grad_w2 = dz2 * h_act[j] + 0.003 * W2[j]
                 dh = dz2 * W2[j] * (1.0 - h_act[j] ** 2)
                 W2[j] -= step_lr * grad_w2
                 b1[j] -= step_lr * dh
                 for i in range(in_dim):
-                    W1[j][i] -= step_lr * (dh * x[i] + 0.001 * W1[j][i])
+                    W1[j][i] -= step_lr * (dh * x[i] + 0.003 * W1[j][i])
             b2 -= step_lr * dz2
 
     hits = sum(1 for x, y in hold if (forward(x)[0] > 0.5) == (y >= 0.5))
     acc = hits / len(hold)
     up_rate = sum(1.0 for _, y in hold if y >= 0.5) / len(hold)
     edge = acc - max(up_rate, 1.0 - up_rate)
-    shrink = clamp(edge / 0.06, 0.15, 1.0)
+    shrink = clamp(0.35 + edge / 0.12, 0.20, 1.0)
     raw = forward(features[-1])[0]
-    return clamp(0.5 + (raw - 0.5) * shrink, 0.05, 0.95), acc
+    return clamp(0.5 + (raw - 0.5) * shrink, 0.08, 0.92), acc
 
 
-def monte_carlo_Barrier_sim(candles_1h, curr_price, tp_price, sl_price, paths=350, horizon_bars=10):
-    if len(candles_1h) < 50 or curr_price <= 0:
-        return 0.50
+def monte_carlo_ev_sim(candles_1h, curr_price, tp_price, sl_price, paths=400, horizon_bars=12):
+    """
+    Monte Carlo basato sull'Aspettativa Matematica (Expected R) pesata sui rendimenti recenti,
+    invece che sul semplice hit-rate (che penalizzava i TP > SL!).
+    """
+    if len(candles_1h) < 60 or curr_price <= 0 or sl_price >= curr_price or tp_price <= curr_price:
+        return 0.50, 0.0
     closes = [c["close"] for c in candles_1h[-120:]]
     rets = [math.log(closes[i] / closes[i - 1]) for i in range(1, len(closes)) if closes[i - 1] > 0]
-    if len(rets) < 20:
-        return 0.50
+    if len(rets) < 25:
+        return 0.50, 0.0
+    # Pesi maggiori sulle ultime 48 ore (volatility clustering)
+    recent_rets = rets[-48:] + rets[-24:] + rets
+    risk = curr_price - sl_price
+    tp_r = (tp_price - curr_price) / risk
     rng = random.Random(1337)
-    wins = 0.0
+    sum_r = 0.0
     for _ in range(paths):
         p = curr_price
-        outcome = None
+        outcome_r = None
         for _ in range(horizon_bars):
-            p *= math.exp(rng.choice(rets))
-            if p >= tp_price:
-                outcome = 1.0
-                break
+            p *= math.exp(rng.choice(recent_rets))
             if p <= sl_price:
-                outcome = 0.0
+                outcome_r = -1.0
                 break
-        if outcome is None:
-            outcome = 0.65 if p > curr_price else 0.35
-        wins += outcome
-    return clamp(wins / paths, 0.05, 0.95)
+            if p >= tp_price:
+                outcome_r = tp_r
+                break
+        if outcome_r is None:
+            outcome_r = clamp((p - curr_price) / risk, -1.0, tp_r)
+        sum_r += outcome_r
+    ev_r = sum_r / paths
+    prob_eq = clamp(sigmoid(ev_r * 1.45), 0.15, 0.85)
+    return prob_eq, ev_r
 
 
 class FreqAIEngine:
@@ -1208,8 +1279,8 @@ class FreqAIEngine:
         self.config = config
         self.freqai_cfg = config.get("freqai", {})
         self.fp = self.freqai_cfg.get("feature_parameters", {})
-        self.di_threshold = float(self.fp.get("DI_threshold", 2.2))
-        self.horizon = int(self.fp.get("label_period_candles", 5))
+        self.di_threshold = float(self.fp.get("DI_threshold", 2.4))
+        self.horizon = int(self.fp.get("label_period_candles", 8))
 
     def start(self, dataframe, metadata, strategy):
         candles_1h = metadata["candles_1h"]
@@ -1223,7 +1294,7 @@ class FreqAIEngine:
         tb_labels = build_triple_barrier_labels(candles_1h, horizon=self.horizon)
 
         curr_x = features[-1]
-        hist_x = features[max(35, len(features) - 160):-1]
+        hist_x = features[max(54, len(features) - 180):-1]
         if hist_x:
             dists = [math.sqrt(sum((a - b) ** 2 for a, b in zip(curr_x, hx)) / len(curr_x)) for hx in hist_x]
             di_val = min(dists) if dists else 0.5
@@ -1231,26 +1302,28 @@ class FreqAIEngine:
             di_val = 0.5
         do_predict = 1 if di_val <= self.di_threshold else 0
 
-        prob_knn = lorentzian_knn_predict(candles_1h, features, tb_labels, horizon=self.horizon, k=18)
-        prob_mlp, mlp_acc = online_mlp_neural_net(candles_1h, features, tb_labels, horizon=self.horizon, epochs=35, lr=0.045)
+        prob_knn = lorentzian_knn_predict(candles_1h, features, tb_labels, horizon=self.horizon, k=20)
+        prob_mlp, mlp_acc = online_mlp_neural_net(candles_1h, features, tb_labels, horizon=self.horizon)
 
-        if HAS_SKLEARN and len(candles_1h) >= 140:
+        if HAS_SKLEARN and len(candles_1h) >= 160:
             try:
-                X_all = np.array(features[35:-self.horizon - 1])
-                y_all = np.array([1 if tb_labels[i] >= 0.5 else 0 for i in range(35, len(candles_1h) - self.horizon - 1)])
+                X_all = np.array(features[54:-self.horizon - 1])
+                y_all = np.array([1 if tb_labels[i] >= 0.5 else 0 for i in range(54, len(candles_1h) - self.horizon - 1)])
                 if len(set(y_all)) > 1:
-                    clf = HistGradientBoostingClassifier(max_depth=3, max_iter=55, random_state=42)
+                    clf = HistGradientBoostingClassifier(
+                        max_depth=3, min_samples_leaf=12, l2_regularization=1.2, max_iter=60, random_state=42
+                    )
                     clf.fit(X_all, y_all)
                     prob_sk = float(clf.predict_proba(np.array([curr_x]))[0][1])
-                    prob_mlp = 0.60 * prob_mlp + 0.40 * prob_sk
+                    prob_mlp = 0.50 * prob_mlp + 0.50 * prob_sk
             except Exception:
                 pass
 
-        prob_mc = monte_carlo_Barrier_sim(
-            candles_1h, metadata["price"], metadata["tp_price"], metadata["sl_price"], paths=300, horizon_bars=10
+        prob_mc, mc_ev_r = monte_carlo_ev_sim(
+            candles_1h, metadata["price"], metadata["tp_price"], metadata["sl_price"], paths=400, horizon_bars=12
         )
-        ai_ensemble_prob = 0.40 * prob_mlp + 0.35 * prob_knn + 0.25 * prob_mc
-        tm_stats = skill_time_machine_backtest(candles_1h, features, horizon_bars=6)
+        ai_ensemble_prob = 0.42 * prob_mlp + 0.36 * prob_knn + 0.22 * prob_mc
+        tm_stats = skill_07_time_machine_backtest(candles_1h, features, horizon_bars=self.horizon)
 
         if HAS_PANDAS and isinstance(dataframe, pd.DataFrame):
             dataframe["DI_values"] = di_val
@@ -1267,17 +1340,624 @@ class FreqAIEngine:
 
         metadata["freqai_result"] = {
             "ai_prob": ai_ensemble_prob, "prob_mlp": prob_mlp, "prob_knn": prob_knn,
-            "prob_mc": prob_mc, "mlp_holdout_acc": mlp_acc, "di_values": di_val,
-            "do_predict": do_predict, "tm_stats": tm_stats,
+            "prob_mc": prob_mc, "mc_ev_r": mc_ev_r, "mlp_holdout_acc": mlp_acc,
+            "di_values": di_val, "do_predict": do_predict, "tm_stats": tm_stats,
         }
         return dataframe
 
 
 # ==============================================================================
-# 7. PARAMETRI HYPEROPT E INTERFACCIA FREQTRADE `IStrategy` v3
+# 7. LE 11 SKILL DI TRADING AUTOMATICO + CLAUDE 5.5 AI SUPERVISOR
+# ==============================================================================
+
+# --- SKILL 01: Multi-Timeframe Regime & Market Structure ---
+def skill_01_regime_and_structure(candles_4h, candles_1h, candles_15m, price):
+    closes_4h = [c["close"] for c in candles_4h]
+    closes_1h = [c["close"] for c in candles_1h]
+
+    ema20_4h, ema50_4h = calc_ema(closes_4h, 20), calc_ema(closes_4h, 50)
+    ema20_1h, ema50_1h = calc_ema(closes_1h, 20), calc_ema(closes_1h, 50)
+    st_dir_4h, _ = calc_supertrend(candles_4h, 10, 3.0)
+    st_dir_1h, _ = calc_supertrend(candles_1h, 10, 3.0)
+    adx_1h, pdi_1h, mdi_1h = calc_adx(candles_1h, 14)
+    rsi_4h = calc_rsi(closes_4h, 14)
+    rsi_1h_s = calc_rsi_series(closes_1h, 14)
+    rsi_1h, rsi_1h_prev = rsi_1h_s[-1], rsi_1h_s[-2]
+    hurst = calc_hurst_exponent(closes_1h, 20)
+    z_linreg, lin_slope = calc_linreg_zscore(closes_1h, 40)
+
+    # Struttura HH/HL vs LH/LL sulle ultime 24h vs 24h precedenti
+    h_recent = max(c["high"] for c in candles_1h[-12:])
+    l_recent = min(c["low"] for c in candles_1h[-12:])
+    h_prev = max(c["high"] for c in candles_1h[-28:-12])
+    l_prev = min(c["low"] for c in candles_1h[-28:-12])
+    higher_lows = l_recent > l_prev * 0.999
+    higher_highs = h_recent > h_prev * 0.999
+
+    bear_impulse = (st_dir_1h == -1 and st_dir_4h == -1 and mdi_1h > pdi_1h and adx_1h >= 23.0 and price < ema20_1h)
+    oversold_bounce = (rsi_1h <= 38.0 and rsi_1h > rsi_1h_prev + 1.0 and z_linreg <= -1.35)
+
+    if price > ema20_4h and ema20_4h >= ema50_4h * 0.998 and st_dir_1h == 1 and pdi_1h > mdi_1h:
+        regime = "STRONG_UPTREND"
+    elif price > ema50_4h and higher_lows and price >= ema20_1h * 0.994:
+        regime = "BULL_PULLBACK"
+    elif oversold_bounce:
+        regime = "MEAN_REVERT_OVERSOLD"
+    elif bear_impulse:
+        regime = "BEAR_TREND"
+    else:
+        regime = "ACCUMULATION_RANGE"
+
+    score = 0
+    if price > ema50_4h:
+        score += 5
+    elif price > ema20_4h * 0.995:
+        score += 3
+    if st_dir_4h == 1:
+        score += 3
+    if price > ema20_1h and ema20_1h >= ema50_1h * 0.997:
+        score += 5
+    elif oversold_bounce:
+        score += 4
+    if st_dir_1h == 1 and pdi_1h > mdi_1h:
+        score += 4
+    if higher_lows:
+        score += 3
+    if regime == "BEAR_TREND":
+        score = max(0, score - 6)
+
+    hard_block = (regime == "BEAR_TREND")
+    return {
+        "score": clamp(score, 0, 20), "regime": regime, "hard_block": hard_block,
+        "ema20_4h": ema20_4h, "ema50_4h": ema50_4h, "ema20_1h": ema20_1h, "ema50_1h": ema50_1h,
+        "st_dir_4h": st_dir_4h, "st_dir_1h": st_dir_1h, "adx_1h": adx_1h, "pdi_1h": pdi_1h, "mdi_1h": mdi_1h,
+        "rsi_4h": rsi_4h, "rsi_1h": rsi_1h, "rsi_1h_prev": rsi_1h_prev, "hurst": hurst,
+        "z_linreg": z_linreg, "lin_slope": lin_slope, "higher_lows": higher_lows, "higher_highs": higher_highs,
+    }
+
+
+# --- SKILL 02: BTC Correlation & Altcoin Relative Alpha Filter ---
+def skill_02_btc_correlation_alpha(code, candles_15m, candles_1h, ema20_1h, ob, price, vwap_15m):
+    closes_15m = [c["close"] for c in candles_15m]
+    closes_1h = [c["close"] for c in candles_1h]
+    ret_1h = ((closes_15m[-1] - closes_15m[-5]) / closes_15m[-5] * 100.0) if len(closes_15m) >= 5 else 0.0
+    ret_4h = ((closes_1h[-1] - closes_1h[-5]) / closes_1h[-5] * 100.0) if len(closes_1h) >= 5 else 0.0
+    rsi_15m = calc_rsi(closes_15m, 14)
+
+    if code == "BTC":
+        is_dump = (rsi_15m < 33.0 and ret_1h < -0.80) or (vwap_15m > 0 and price < vwap_15m * 0.988 and ob["imbalance"] < -0.08)
+        is_bull = price >= ema20_1h and rsi_15m >= 50.0 and ret_1h >= -0.15
+        BTC_REGIME.update({
+            "state": "BTC_DUMP_GUARD" if is_dump else ("BULL_IMPULSE" if is_bull else "NEUTRAL"),
+            "rsi_15m": round(rsi_15m, 1),
+            "ret_1h_pct": round(ret_1h, 2),
+            "ret_4h_pct": round(ret_4h, 2),
+            "allow_alts": not is_dump,
+            "label": "🚨 BTC Dump Guard (Altcoin Bloccate)" if is_dump else ("🟢 BTC Bull Impulse" if is_bull else "⚪ BTC Neutrale / Range"),
+        })
+        BTC_CONTEXT.update({"ret_1h": ret_1h, "ret_4h": ret_4h})
+        return {"score": 7 if not is_dump else 2, "alpha_1h": 0.0, "alpha_4h": 0.0, "btc_ok": True}
+
+    alpha_1h = ret_1h - BTC_CONTEXT.get("ret_1h", 0.0)
+    alpha_4h = ret_4h - BTC_CONTEXT.get("ret_4h", 0.0)
+    btc_ok = BTC_REGIME.get("allow_alts", True)
+
+    score = 0
+    if not btc_ok:
+        return {"score": 0, "alpha_1h": alpha_1h, "alpha_4h": alpha_4h, "btc_ok": False}
+    if alpha_1h > 0.25 and alpha_4h > 0.30:
+        score = 10
+    elif alpha_1h > 0.0 or alpha_4h > 0.0:
+        score = 7
+    elif alpha_1h > -0.60:
+        score = 4
+    else:
+        score = 1
+    return {"score": score, "alpha_1h": alpha_1h, "alpha_4h": alpha_4h, "btc_ok": btc_ok}
+
+
+# --- SKILL 03: Institutional Liquidity, VWAP Bands & Volume Profile POC ---
+def skill_03_liquidity_vwap_poc(candles_15m, candles_1h, price):
+    vwap_15m, vwap_std, vwap_z = calc_rolling_vwap_bands(candles_15m, 96)
+    poc_price = calc_volume_profile_poc(candles_1h, 24, 120)
+    vol_z_1h = calc_volume_zscore(candles_1h, 30)
+    vol_z_15m = calc_volume_zscore(candles_15m, 24)
+
+    vwap_diff_pct = ((price - vwap_15m) / vwap_15m * 100.0) if vwap_15m > 0 else 0.0
+    overextended = (vwap_diff_pct > 1.65) or (vwap_z > 1.90)
+
+    # Buy pressure sulle ultime 3 candele 15m
+    bp_vals = []
+    for c in candles_15m[-3:]:
+        rng = max(c["high"] - c["low"], 1e-9)
+        bp_vals.append((c["close"] - c["low"]) / rng)
+    buy_pressure = sum(bp_vals) / len(bp_vals) if bp_vals else 0.5
+
+    score = 0
+    if -0.75 <= vwap_diff_pct <= 1.25:
+        score += 5   # Zona ideale di pullback/reclaim VWAP (mai inseguire!)
+    elif -1.4 <= vwap_diff_pct < -0.75:
+        score += 3
+    if price >= poc_price * 0.995:
+        score += 4
+    if vol_z_1h > 0.15 or vol_z_15m > 0.30:
+        score += 3
+    if buy_pressure >= 0.56:
+        score += 3
+    if overextended:
+        score = max(0, score - 6)
+
+    return {
+        "score": clamp(score, 0, 15), "vwap_15m": vwap_15m, "vwap_z": vwap_z,
+        "vwap_diff_pct": vwap_diff_pct, "poc_price": poc_price, "vol_z": vol_z_1h,
+        "vol_z_15m": vol_z_15m, "buy_pressure": buy_pressure, "overextended": overextended,
+    }
+
+
+# --- SKILL 04: Orderbook L2 Microstructure & Anti-Slippage ---
+def skill_04_orderbook_microstructure(ob):
+    imb = ob.get("imbalance", 0.0)
+    wall = ob.get("wall_pressure", 0.0)
+    spread = ob.get("spread_bps", 5.0)
+
+    score = 0
+    if imb >= 0.12:
+        score += 6
+    elif imb >= 0.03:
+        score += 4
+    elif imb >= -0.02:
+        score += 2
+    if wall >= 0.05:
+        score += 3
+    elif wall >= -0.05:
+        score += 1
+    if spread <= 12.0:
+        score += 1
+
+    book_ok = (spread <= 18.0) and (imb >= -0.05)
+    return {"score": clamp(score, 0, 10), "book_ok": book_ok, "spread_bps": spread, "imbalance": imb, "wall_pressure": wall}
+
+
+# --- SKILL 05: Derivatives, Funding Rate & Squeeze Detector ---
+def skill_05_derivatives_sentiment(fut, fng_val, price, ema20_1h):
+    fr = fut.get("funding_8h_pct", 0.0)
+    score = 0
+    squeeze_fuel = (fr < -0.005 and price >= ema20_1h * 0.997)
+    crowded_long = (fr > 0.045 and fng_val > 76)
+
+    if squeeze_fuel:
+        score += 5
+    elif -0.005 <= fr <= 0.022:
+        score += 4
+    elif not crowded_long:
+        score += 2
+
+    if 24 <= fng_val <= 74:
+        score += 3
+    elif fng_val < 24:
+        score += 4  # Fear contrarian support
+    else:
+        score += 1
+
+    return {"score": clamp(score, 0, 8), "squeeze_fuel": squeeze_fuel, "crowded_long": crowded_long, "funding_8h_pct": fr}
+
+
+# --- SKILL 06: Macro Calendar USD Shield & NYSE / Session Liquidity ---
+def skill_06_macro_and_session(macro_events):
+    now_utc = datetime.now(timezone.utc)
+    ny = now_utc.astimezone(ZoneInfo("America/New_York"))
+    nyse_bell_risk = False
+    session_str = "🌏 Sessione Asiatica / Notturna"
+
+    if ny.weekday() < 5:
+        open_utc = ny.replace(hour=9, minute=30, second=0, microsecond=0).astimezone(timezone.utc)
+        close_utc = ny.replace(hour=16, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
+        if abs((now_utc - open_utc).total_seconds()) <= 1500:
+            nyse_bell_risk = True
+            session_str = "🔔 NYSE OPENING BELL (Whipsaw Risk USA)"
+        elif open_utc < now_utc <= close_utc:
+            session_str = "🇺🇸 Sessione Wall Street Attiva (Alta Liquidita')"
+    m = now_utc.hour * 60 + now_utc.minute
+    if not nyse_bell_risk and "Wall Street" not in session_str:
+        if 7 * 60 <= m < 13 * 60:
+            session_str = "🇪🇺 Sessione Europea Attiva"
+        elif now_utc.weekday() >= 5:
+            session_str = "📅 Weekend (Liquidita' Ridotta)"
+
+    high_soon = [e for e in macro_events if e["impact"] == "High" and -0.75 <= e["diff_hours"] <= 2.0]
+    score = 0 if high_soon else (4 if nyse_bell_risk else 7)
+    return {"score": score, "high_soon": bool(high_soon), "nyse_bell_risk": nyse_bell_risk, "session_str": session_str}
+
+
+# --- SKILL 07: Time Machine Historical Analog Backtest ---
+def skill_07_time_machine_backtest(candles_1h, features, horizon_bars=8):
+    if len(candles_1h) < 130:
+        return {"win_rate": 52.0, "expectancy_r": 0.15, "matches": 10}
+    closes = [c["close"] for c in candles_1h]
+    highs = [c["high"] for c in candles_1h]
+    lows = [c["low"] for c in candles_1h]
+    atrs = calc_atr_series(candles_1h, 14)
+    curr_x = features[-1]
+    candidates = []
+    for i in range(54, len(candles_1h) - horizon_bars - 1):
+        dist = sum(math.log(1.0 + abs(a - b)) for a, b in zip(curr_x, features[i]))
+        candidates.append((dist, i))
+    candidates.sort(key=lambda x: x[0])
+
+    # Non-Maximum Suppression: almeno 5 barre di distanza tra analoghi
+    top, used = [], []
+    for dist, idx in candidates:
+        if any(abs(idx - u) < 5 for u in used):
+            continue
+        top.append((dist, idx))
+        used.append(idx)
+        if len(top) >= 20:
+            break
+
+    wins, total_r = 0, 0.0
+    for _, idx in top:
+        entry = closes[idx]
+        risk = max(atrs[idx] * 1.40, entry * 0.014)
+        tp, sl = entry + 1.70 * risk, entry - 1.0 * risk
+        outcome_r = None
+        for h in range(1, horizon_bars + 1):
+            if lows[idx + h] <= sl:
+                outcome_r = -1.0
+                break
+            if highs[idx + h] >= tp:
+                outcome_r = 1.70
+                break
+        if outcome_r is None:
+            outcome_r = clamp((closes[idx + horizon_bars] - entry) / risk, -1.0, 1.70)
+        if outcome_r > 0:
+            wins += 1
+        total_r += outcome_r
+    n = len(top)
+    return {"win_rate": (wins / n) * 100.0 if n else 50.0, "expectancy_r": total_r / n if n else 0.0, "matches": n}
+
+
+# --- SKILL 08: Chart Scanner 15m Precision Pullback/Reclaim Sniper ---
+def skill_08_chart_scanner_entry_timer(candles_15m, candles_1h, s3_vwap, ob_imbalance, rsi_1h):
+    if len(candles_15m) < 25:
+        return {"triggered": False, "triggers": 0, "vwap_15m": 0.0, "ema20_15m": 0.0,
+                "rsi_15m": 50.0, "rsi_15m_prev": 50.0, "upper_wick_pct": 0.0, "summary": "Dati 15m insufficienti"}
+    closes_15m = [c["close"] for c in candles_15m]
+    last_c = candles_15m[-1]
+    c15, o15, h15, l15 = last_c["close"], last_c["open"], last_c["high"], last_c["low"]
+    p15 = closes_15m[-2]
+    ema20_15m = calc_ema(closes_15m, 20)
+    rsi_s = calc_rsi_series(closes_15m, 14)
+    rsi_15m = rsi_s[-1]
+    rsi_15m_prev = rsi_s[-2] if len(rsi_s) >= 2 else rsi_15m
+
+    rng = max(h15 - l15, 1e-9)
+    upper_wick_pct = (h15 - max(o15, c15)) / rng * 100.0
+    green_or_reclaim = (c15 >= o15) or (c15 > p15 and (c15 - l15) / rng >= 0.55)
+
+    triggers, notes = 0, []
+    if not s3_vwap["overextended"] and -0.9 <= s3_vwap["vwap_diff_pct"] <= 1.45 and green_or_reclaim:
+        triggers += 1
+        notes.append("VWAP Reclaim")
+    if c15 >= ema20_15m * 0.998 and rsi_15m >= rsi_15m_prev - 0.5:
+        triggers += 1
+        notes.append("EMA20 15m Hold")
+    if 33.0 <= rsi_15m <= 64.0 and rsi_15m > rsi_15m_prev:
+        triggers += 1
+        notes.append(f"RSI Turn ({rsi_15m:.0f})")
+    if upper_wick_pct < 42.0 and green_or_reclaim:
+        triggers += 1
+        notes.append("Clean Candle")
+    if s3_vwap["vol_z"] >= 0.0 or ob_imbalance >= 0.04:
+        triggers += 1
+        notes.append("Flow/L2 Bid")
+
+    anti_top_ok = (30.0 <= rsi_15m <= 66.0) and (rsi_1h <= 68.0) and (upper_wick_pct < 55.0) and (not s3_vwap["overextended"])
+    triggered = (triggers >= 3) and anti_top_ok
+    if not anti_top_ok:
+        notes.append(f"Filtro Anti-Top (RSI15={rsi_15m:.0f}, Wick={upper_wick_pct:.0f}%)")
+
+    return {
+        "triggered": triggered, "triggers": triggers, "vwap_15m": s3_vwap["vwap_15m"], "ema20_15m": ema20_15m,
+        "rsi_15m": rsi_15m, "rsi_15m_prev": rsi_15m_prev, "upper_wick_pct": upper_wick_pct,
+        "summary": " + ".join(notes) if notes else "In attesa trigger 15m",
+    }
+
+
+# --- SKILL 09: ATR-Adaptive Structural Risk & Position Sizing ---
+def skill_09_adaptive_risk_and_sizing(invest_eur, eur_usd, entry_price, sl_price, tp_price, state, macro_high_soon, code=None, ev=None):
+    total_usdt = invest_eur * eur_usd
+    cash_buffer_usdt = total_usdt * (CASH_BUFFER_PCT / 100.0)
+    usable_usdt = total_usdt - cash_buffer_usdt
+
+    sl_dist_pct = ((entry_price - sl_price) / entry_price) * 100.0 if entry_price > 0 else 2.2
+    tp_dist_pct = ((tp_price - entry_price) / entry_price) * 100.0 if entry_price > 0 else 3.6
+    fee_rt = PIONEX_FEE_ROUNDTRIP_PCT
+    rr_ratio = (tp_dist_pct - fee_rt) / (sl_dist_pct + fee_rt) if sl_dist_pct > 0 else 0.0
+
+    # Risk-Based Position Sizing: con SL piu' ampio per evitare rumore, la size si adatta automaticamente
+    risk_usdt = total_usdt * (RISK_PER_TRADE_PCT / 100.0)
+    proposed_usdt = risk_usdt / ((sl_dist_pct + fee_rt) / 100.0) if sl_dist_pct > 0 else usable_usdt
+    now = datetime.now(timezone.utc)
+    position_usdt = STRATEGY.custom_stake_amount(
+        pair=f"{code}_USDT" if code else "SOL_USDT", current_time=now, current_rate=entry_price,
+        proposed_stake=proposed_usdt, min_stake=MIN_ORDER_USDT, max_stake=usable_usdt,
+        leverage=1.0, entry_tag="", side="long", ev=ev or {}
+    )
+    max_loss_usdt = position_usdt * ((sl_dist_pct + fee_rt) / 100.0)
+    expected_gain_usdt = position_usdt * ((tp_dist_pct - fee_rt) / 100.0)
+
+    now_ts = int(now.timestamp())
+    stats = state["stats"]
+    today_str = now.strftime("%Y-%m-%d")
+    if stats.get("daily_date") != today_str:
+        stats.update({"daily_date": today_str, "daily_pnl_pct": 0.0, "daily_pnl_usdt": 0.0,
+                      "daily_trades": 0, "consec_losses": 0})
+
+    reasons = []
+    if usable_usdt < MIN_ORDER_USDT:
+        reasons.append(f"Capitale utilizzabile {usable_usdt:.2f} USDT < minimo ordine")
+    if rr_ratio < MIN_REWARD_RISK_R:
+        reasons.append(f"R:R netto basso ({rr_ratio:.2f}x < {MIN_REWARD_RISK_R}x)")
+    if code and code != "BTC" and not BTC_REGIME.get("allow_alts", True):
+        reasons.append("BTC Dump Guard attivo")
+    if stats.get("daily_pnl_pct", 0.0) <= -DAILY_MAX_LOSS_PCT:
+        reasons.append(f"Circuit Breaker Giornaliero ({stats['daily_pnl_pct']:+.2f}%)")
+    if stats.get("daily_trades", 0) >= MAX_TRADES_PER_DAY:
+        reasons.append(f"Max {MAX_TRADES_PER_DAY} trade/giorno raggiunti")
+    if stats.get("consec_losses", 0) >= MAX_CONSEC_LOSSES:
+        reasons.append(f"{MAX_CONSEC_LOSSES} stop consecutivi: pausa")
+    if macro_high_soon:
+        reasons.append("News Macro USD High Impact imminente")
+    if not (ENTRY_START_UTC <= now.hour < ENTRY_END_UTC):
+        reasons.append(f"Fuori finestra operativa {ENTRY_START_UTC:02d}-{ENTRY_END_UTC:02d} UTC")
+    last_close = stats.get("last_close_ts", 0)
+    if last_close and now_ts - last_close < MIN_MINUTES_BETWEEN_TRADES * 60:
+        reasons.append(f"Cooldown post-chiusura ({MIN_MINUTES_BETWEEN_TRADES}m)")
+    last_loss = stats.get("last_loss_ts", 0)
+    if last_loss and now_ts - last_loss < COOLDOWN_AFTER_LOSS_MIN * 60:
+        reasons.append(f"Cooldown post-perdita ({COOLDOWN_AFTER_LOSS_MIN}m)")
+    if code:
+        cl = stats.get("coin_last_close", {}).get(code, 0)
+        if cl and now_ts - cl < SAME_COIN_COOLDOWN_H * 3600:
+            reasons.append(f"{code} in cooldown ({SAME_COIN_COOLDOWN_H:.0f}h)")
+
+    passed = not reasons
+    return {
+        "passed": passed, "status_str": "PASS (Rischio OK)" if passed else "BLOCCATO: " + ", ".join(reasons),
+        "total_usdt": total_usdt, "position_usdt": position_usdt, "cash_buffer_usdt": cash_buffer_usdt,
+        "rr_ratio": rr_ratio, "sl_dist_pct": sl_dist_pct, "tp_dist_pct": tp_dist_pct,
+        "max_loss_usdt": max_loss_usdt, "expected_gain_usdt": expected_gain_usdt
+    }
+
+
+# --- SKILL 10: Smart Exit Planner & Chandelier ATR Trailing ---
+def skill_10_exit_planner(entry_price, sl_price, tp_price):
+    one_r = max(entry_price - sl_price, entry_price * 0.014)
+    be_fee_lock = entry_price * (1.0 + (PIONEX_FEE_ROUNDTRIP_PCT + 0.08) / 100.0)
+    return {
+        "one_r": one_r,
+        "be_trigger": entry_price + 1.00 * one_r,
+        "be_fee_lock": be_fee_lock,
+        "scaleout_trigger": entry_price + 1.35 * one_r,
+        "tp1_lock": entry_price + 0.45 * one_r,
+        "trail_trigger": entry_price + 1.65 * one_r,
+        "tp3_target": tp_price,
+    }
+
+
+# --- SKILL 11: Claude 5.5 AI Supervisor (Adaptive Thinking + Structured Outputs + Prompt Caching) ---
+_CLAUDE_SYSTEM_PROMPT = (
+    "Sei il Chief Investment Officer quantitativo di un bot crypto spot LONG su Pionex. "
+    "Il tuo obiettivo primario e' ELIMINARE i falsi segnali e le chiusure in perdita dovute a ingressi "
+    "affrettati, compravendite contro-trend o inseguimento di candele estese (chasing). "
+    "Ricevi il dossier completo delle 11 Skill di trading automatico e lo storico degli ultimi trade chiusi. "
+    "Regole ferree:\n"
+    "1. Approva ('APPROVE') un nuovo ingresso LONG SOLO se c'e' vera confluenza tra struttura 4H/1H, "
+    "reclaim/supporto 15m senza estensione eccessiva, orderbook sano e Risk/Reward netto >= 1.55x.\n"
+    "2. Se lo storico recente mostra stop consecutivi nello stesso regime o sulla stessa coin, sii piu' severo ('WAIT_PULLBACK' o 'REJECT').\n"
+    "3. Su una posizione GIA' APERTA: usa 'HOLD' finche' la tesi regge; suggerisci 'TIGHTEN_SL' se il momentum rallenta in profitto; "
+    "'TAKE_PROFIT_NOW' solo se il target e' vicino e il book si gira in vendita; 'CLOSE_DEFENSIVE' solo su chiara rottura strutturale.\n"
+    "4. Rispondi sempre rispettando esattamente lo schema JSON richiesto e motivando in italiano chiaro e sintetico."
+)
+
+_CLAUDE_RESPONSE_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": [
+        "decision", "best_coin", "confidence", "conviction_mult",
+        "sl_adjustment_pct", "tp_adjustment_pct", "market_regime_note", "reason_it"
+    ],
+    "properties": {
+        "decision": {
+            "type": "string",
+            "enum": ["APPROVE", "WAIT_PULLBACK", "REJECT", "HOLD", "TIGHTEN_SL", "TAKE_PROFIT_NOW", "CLOSE_DEFENSIVE"]
+        },
+        "best_coin": {"type": "string"},
+        "confidence": {"type": "integer", "description": "Confidence score from 0 to 100"},
+        "conviction_mult": {"type": "number", "description": "Position size multiplier between 0.70 and 1.15"},
+        "sl_adjustment_pct": {"type": "number", "description": "Optional SL tweak in percent, between -0.5 and 0.5; 0 for no change"},
+        "tp_adjustment_pct": {"type": "number", "description": "Optional TP tweak in percent, between -0.8 and 1.2; 0 for no change"},
+        "market_regime_note": {"type": "string"},
+        "reason_it": {"type": "string"}
+    }
+}
+
+
+def claude_call_api(user_payload, model=None, effort=None):
+    """Chiamata nativa API Anthropic `2026-10-21` con Adaptive Thinking, Effort, Caching e JSON Schema strict."""
+    if not CLAUDE_ENABLED:
+        return None
+    use_model = model or CLAUDE_MODEL
+    use_effort = effort or CLAUDE_EFFORT
+    max_tok = 4096 if use_effort == "high" else 2048
+
+    body = {
+        "model": use_model,
+        "max_tokens": max_tok,
+        "thinking": {"type": "adaptive"},
+        "system": [
+            {
+                "type": "text",
+                "text": _CLAUDE_SYSTEM_PROMPT,
+                "cache_control": {"type": "ephemeral"},
+            }
+        ],
+        "output_config": {
+            "effort": use_effort,
+            "format": {
+                "type": "json_schema",
+                "schema": _CLAUDE_RESPONSE_SCHEMA,
+            },
+        },
+        "messages": [
+            {
+                "role": "user",
+                "content": json.dumps(user_payload, ensure_ascii=False),
+            }
+        ],
+    }
+
+    headers = {
+        "x-api-key": ANTHROPIC_API_KEY,
+        "anthropic-version": CLAUDE_API_VERSION,
+        "content-type": "application/json",
+    }
+
+    try:
+        r = SESSION.post("https://api.anthropic.com/v1/messages", headers=headers, json=body, timeout=28)
+        if r.status_code != 200:
+            log("WARN", f"Claude API HTTP {r.status_code}: {r.text[:180]}")
+            return None
+        rj = r.json()
+        for block in rj.get("content", []):
+            if block.get("type") == "text":
+                parsed = json.loads(block["text"])
+                parsed["confidence"] = int(clamp(int(parsed.get("confidence", 50)), 0, 100))
+                parsed["conviction_mult"] = clamp(float(parsed.get("conviction_mult", 1.0)), 0.70, 1.15)
+                parsed["sl_adjustment_pct"] = clamp(float(parsed.get("sl_adjustment_pct", 0.0)), -0.5, 0.5)
+                parsed["tp_adjustment_pct"] = clamp(float(parsed.get("tp_adjustment_pct", 0.0)), -0.8, 1.2)
+                parsed["model_used"] = use_model
+                return parsed
+    except Exception as e:
+        log("WARN", f"Claude Supervisor errore: {e}")
+    return None
+
+
+def _summarize_eval_for_claude(ev):
+    s = ev.get("skills", {})
+    rm = ev.get("risk_manager", {})
+    return {
+        "code": ev["code"],
+        "price": round(ev["price"], 6),
+        "raw_100": ev["raw_100"],
+        "final_score": ev["final_score"],
+        "ai_ensemble_prob": round(ev["ai_prob"], 3),
+        "mc_ev_r": round(ev.get("mc_ev_r", 0.0), 2),
+        "di_do_predict": ev.get("do_predict", 1),
+        "sl_price": round(ev["sl_price"], 6),
+        "tp_price": round(ev["tp_price"], 6),
+        "sl_dist_pct": round(rm.get("sl_dist_pct", 0.0), 2),
+        "tp_dist_pct": round(rm.get("tp_dist_pct", 0.0), 2),
+        "net_rr_ratio": round(rm.get("rr_ratio", 0.0), 2),
+        "skill_01_regime": s.get("s1", {}).get("regime"),
+        "skill_01_adx_1h": round(ev.get("adx_1h", 20.0), 1),
+        "skill_01_rsi_1h": round(ev.get("rsi_1h", 50.0), 1),
+        "skill_01_higher_lows": s.get("s1", {}).get("higher_lows"),
+        "skill_02_alpha_vs_btc_1h": round(s.get("s2", {}).get("alpha_1h", 0.0), 2),
+        "skill_03_vwap_diff_pct": round(s.get("s3", {}).get("vwap_diff_pct", 0.0), 2),
+        "skill_03_vol_z": round(ev.get("vol_z", 0.0), 2),
+        "skill_03_buy_pressure": round(s.get("s3", {}).get("buy_pressure", 0.5), 2),
+        "skill_04_ob_imbalance": round(ev.get("ob", {}).get("imbalance", 0.0), 3),
+        "skill_04_wall_pressure": round(ev.get("ob", {}).get("wall_pressure", 0.0), 3),
+        "skill_04_spread_bps": round(ev.get("ob", {}).get("spread_bps", 5.0), 1),
+        "skill_05_funding_8h_pct": round(ev.get("fut", {}).get("funding_8h_pct", 0.0), 4),
+        "skill_07_timemachine_wr": round(ev.get("tm_stats", {}).get("win_rate", 50.0), 1),
+        "skill_07_timemachine_ev_r": round(ev.get("tm_stats", {}).get("expectancy_r", 0.0), 2),
+        "skill_08_triggers_15m": f"{ev['scanner_timer']['triggers']}/5 ({ev['scanner_timer']['summary']})",
+    }
+
+
+def skill_11_claude_ai_supervisor(state, mode, ranked_evals=None, open_eval=None, fng_val=50, session_str="", macro_events=None):
+    """
+    Skill 11: Invoca Claude 5.5 solo quando serve davvero (nuovo setup pronto, o supervisione posizione aperta
+    rispettando CLAUDE_COOLDOWN_SEC per efficienza e costi).
+    """
+    if not CLAUDE_ENABLED:
+        return None
+    now_ts = int(time.time())
+    last_call = int(state["stats"].get("claude_last_call_ts", 0))
+    cached = state["stats"].get("claude_last_verdict") or None
+
+    # Per monitoraggio posizione aperta rispetta il cooldown a meno che il PnL non sia critico
+    if mode == "SUPERVISE_OPEN" and (now_ts - last_call) < CLAUDE_COOLDOWN_SEC:
+        return cached
+
+    recent_history = [
+        {"coin": h.get("coin"), "pnl_pct": h.get("pnl_pct"), "reason": h.get("reason"), "closed_at": h.get("closed_at")}
+        for h in state.get("history", [])[:6]
+    ]
+    macro_brief = [
+        {"title": m["title"], "impact": m["impact"], "in_hours": round(m["diff_hours"], 1)}
+        for m in (macro_events or []) if -1.0 <= m.get("diff_hours", 99) <= 8.0
+    ]
+
+    if mode == "SUPERVISE_OPEN" and open_eval is not None:
+        pos = state["position"]
+        curr_p = open_eval["price"]
+        entry = pos["entry_price"]
+        one_r = pos.get("one_r") or max(entry - pos.get("initial_sl", pos["sl_price"]), entry * 0.014)
+        payload = {
+            "task": "SUPERVISE_OPEN_LONG_POSITION",
+            "btc_regime": BTC_REGIME,
+            "fear_greed": fng_val,
+            "session": session_str,
+            "upcoming_usd_macro": macro_brief,
+            "open_position": {
+                "coin": pos["coin_code"],
+                "entry_price": entry,
+                "current_price": curr_p,
+                "sl_price": pos["sl_price"],
+                "tp_price": pos["tp_price"],
+                "current_r": round((curr_p - entry) / one_r, 2) if one_r > 0 else 0.0,
+                "hours_open": round((now_ts - pos.get("opened_ts", now_ts)) / 3600.0, 2),
+                "breakeven_locked": pos.get("breakeven_locked", False),
+                "partial_tp_done": pos.get("partial_tp_done", False),
+            },
+            "coin_skills_snapshot": _summarize_eval_for_claude(open_eval),
+            "recent_trade_lessons": recent_history,
+        }
+        verdict = claude_call_api(payload, model=CLAUDE_FAST_MODEL, effort="medium")
+    else:
+        top_cands = [_summarize_eval_for_claude(e) for e in (ranked_evals or [])[:3]]
+        payload = {
+            "task": "EVALUATE_NEW_LONG_ENTRY",
+            "btc_regime": BTC_REGIME,
+            "fear_greed": fng_val,
+            "session": session_str,
+            "upcoming_usd_macro": macro_brief,
+            "daily_stats": {
+                "daily_trades": state["stats"].get("daily_trades", 0),
+                "consec_losses": state["stats"].get("consec_losses", 0),
+                "daily_pnl_pct": state["stats"].get("daily_pnl_pct", 0.0),
+            },
+            "candidates": top_cands,
+            "recent_trade_lessons": recent_history,
+        }
+        verdict = claude_call_api(payload, model=CLAUDE_MODEL, effort=CLAUDE_EFFORT)
+
+    if verdict:
+        verdict["ts"] = now_ts
+        state["stats"]["claude_last_call_ts"] = now_ts
+        state["stats"]["claude_last_verdict"] = verdict
+        save_state(state)
+        log("INFO", f"Claude AI ({verdict['model_used']}): {verdict['decision']} {verdict['best_coin']} (conf {verdict['confidence']}%) - {verdict['reason_it']}")
+    return verdict
+
+
+# ==============================================================================
+# 8. INTERFACCIA FREQTRADE `IStrategy` v3
 # ==============================================================================
 class IntParameter:
-    """Compatibile con `freqtrade.strategy.IntParameter` per Hyperopt."""
     def __init__(self, low: int, high: int, default: int, space: str = "buy", optimize: bool = True):
         self.low = low
         self.high = high
@@ -1287,7 +1967,6 @@ class IntParameter:
 
 
 class DecimalParameter:
-    """Compatibile con `freqtrade.strategy.DecimalParameter` per Hyperopt."""
     def __init__(self, low: float, high: float, default: float, decimals: int = 2, space: str = "buy", optimize: bool = True):
         self.low = low
         self.high = high
@@ -1309,7 +1988,7 @@ class Trade:
     take_profit: float
     one_r: float
     max_rate: float
-    enter_tag: str = "freqai_fastscalp"
+    enter_tag: str = "freqai_claude_11skills"
     is_short: bool = False
     breakeven_locked: bool = False
     tp1_locked: bool = False
@@ -1329,8 +2008,8 @@ class IStrategy:
     timeframe: str = "1h"
     informative_timeframe: str = "4h"
     detail_timeframe: str = "15m"
-    minimal_roi: dict = {"0": 0.025, "270": 0.0035}
-    stoploss: float = -0.020
+    minimal_roi: dict = {"0": 0.045, "480": 0.008}
+    stoploss: float = -0.032
     trailing_stop: bool = True
     use_custom_stoploss: bool = True
     use_exit_signal: bool = True
@@ -1396,15 +2075,14 @@ class IStrategy:
 class PionexFreqAIStrategy(IStrategy):
     INTERFACE_VERSION = 3
     timeframe = "1h"
-    minimal_roi = {"0": 0.025, "270": 0.0035}
-    stoploss = -0.020
+    minimal_roi = {"0": 0.048, "480": 0.008}
+    stoploss = -0.035
     trailing_stop = True
     use_custom_stoploss = True
     position_adjustment_enable = True
 
-    # Hyperopt Parameters (Freqtrade Standard)
-    buy_score_min = IntParameter(50, 72, default=Entry_Raw_100_Min, space="buy")
-    buy_ai_prob_min = DecimalParameter(0.48, 0.65, default=0.50, decimals=2, space="buy")
+    buy_score_min = IntParameter(60, 78, default=Entry_Raw_100_Min, space="buy")
+    buy_ai_prob_min = DecimalParameter(0.52, 0.65, default=Entry_AI_Prob_Min, decimals=2, space="buy")
     sell_score_defensive = IntParameter(2, 4, default=3, space="sell")
 
     @property
@@ -1454,171 +2132,109 @@ class PionexFreqAIStrategy(IStrategy):
         macro_events = metadata["macro_events"]
         price = metadata["price"]
 
-        closes_4h = [c["close"] for c in candles_4h]
-        closes_1h = [c["close"] for c in candles_1h]
-        closes_15m = [c["close"] for c in candles_15m]
+        # Esecuzione Skill 01, 03, 04, 05, 06, 02
+        s1 = skill_01_regime_and_structure(candles_4h, candles_1h, candles_15m, price)
+        s3 = skill_03_liquidity_vwap_poc(candles_15m, candles_1h, price)
+        s4 = skill_04_orderbook_microstructure(ob)
+        s5 = skill_05_derivatives_sentiment(fut, fng_val, price, s1["ema20_1h"])
+        s6 = skill_06_macro_and_session(macro_events)
+        s2 = skill_02_btc_correlation_alpha(
+            metadata["code"], candles_15m, candles_1h, s1["ema20_1h"], ob, price, s3["vwap_15m"]
+        )
 
-        ema20_4h, ema50_4h = calc_ema(closes_4h, 20), calc_ema(closes_4h, 50)
-        ema20_1h, ema50_1h = calc_ema(closes_1h, 20), calc_ema(closes_1h, 50)
-        rsi_4h = calc_rsi(closes_4h, 14)
-        rsi_1h_series = calc_rsi_series(closes_1h, 14)
-        rsi_1h, rsi_1h_prev = rsi_1h_series[-1], rsi_1h_series[-2]
-        rsi_15m_series = calc_rsi_series(closes_15m, 14)
-        rsi_15m = rsi_15m_series[-1]
-        rsi_15m_prev = rsi_15m_series[-2] if len(rsi_15m_series) >= 2 else rsi_15m
-        macd_hist_s = calc_macd_hist_series(closes_1h, 12, 26, 9)
-        macd_hist, macd_hist_prev = macd_hist_s[-1], macd_hist_s[-2]
-
+        # Calcolo SL / TP Strutturali Adattivi all'ATR (Skill 09 prep)
         atr_1h = calc_atr(candles_1h, 14)
+        atr_15m = calc_atr(candles_15m, 14)
         atr_pct = (atr_1h / price) * 100.0 if price > 0 else 1.5
-        adx_1h, _, _ = calc_adx(candles_1h, 14)
-        st_dir_1h, _ = calc_supertrend(candles_1h, 10, 3.0)
-        hurst = calc_hurst_exponent(closes_1h, 20)
-        z_linreg, _ = calc_linreg_zscore(closes_1h, 40)
-        poc_price = calc_volume_profile_poc(candles_1h, 24, 120)
-        vol_z = calc_volume_zscore(candles_1h, 30)
+        recent_lows = [c["low"] for c in candles_15m[-20:]]
+        swing_low = min(recent_lows) if recent_lows else price * 0.978
+        recent_highs = [c["high"] for c in candles_1h[-36:]]
+        swing_high = max(recent_highs) if recent_highs else price * 1.045
 
-        recent_lows = [c["low"] for c in candles_15m[-16:]]
-        swing_low = min(recent_lows) if recent_lows else price * 0.985
-        recent_highs = [c["high"] for c in candles_1h[-24:]]
-        swing_high = max(recent_highs) if recent_highs else price * 1.025
+        # Stop-Loss con respiro reale anti-rumore (-1.4% .. -3.5%)
+        sl_dist = max(price * 0.014, min(price * 0.032, 1.45 * atr_1h))
+        sl_price = min(price - sl_dist, swing_low - 0.35 * atr_15m)
+        sl_price = clamp(sl_price, price * 0.965, price * 0.986)
 
-        sl_dist = max(price * 0.009, min(price * 0.018, 1.15 * atr_1h))
-        sl_price = max(price - sl_dist, swing_low - 0.15 * atr_1h)
-        sl_price = clamp(sl_price, price * 0.980, price * 0.991)
-        actual_risk = price - sl_price
-        tp_candidate = max(price + actual_risk * 1.35, min(swing_high * 0.998, price + 2.2 * atr_1h))
-        tp_price = clamp(tp_candidate, price * 1.0135, price * 1.025)
+        actual_risk = max(price - sl_price, price * 0.014)
+        tp_candidate = max(price + actual_risk * 1.85, min(swing_high * 0.998, price + 2.8 * atr_1h))
+        tp_price = clamp(tp_candidate, price * 1.024, price * 1.060)
 
         metadata["sl_price"] = sl_price
         metadata["tp_price"] = tp_price
 
+        # FreqAI Engine + Skill 07 (Time Machine)
         dataframe = self.freqai.start(dataframe, metadata, self)
         fai = metadata["freqai_result"]
         ai_ensemble_prob = fai["ai_prob"]
         tm_stats = fai["tm_stats"]
 
-        scanner_timer = skill_chart_scanner_entry_timer(candles_15m, vol_z, ob["imbalance"])
+        # Skill 08 (15m Entry Timer)
+        s8 = skill_08_chart_scanner_entry_timer(candles_15m, candles_1h, s3, ob["imbalance"], s1["rsi_1h"])
 
-        # Aggiorna il Regime Globale di BTC quando viene analizzato BTC
-        if metadata["code"] == "BTC":
-            ret_1h = ((closes_15m[-1] - closes_15m[-4]) / closes_15m[-4] * 100.0) if len(closes_15m) >= 5 else 0.0
-            vwap_btc = scanner_timer["vwap_15m"]
-            is_dump = (rsi_15m < 32.0 and ret_1h < -1.1) or (vwap_btc > 0 and price < vwap_btc * 0.987 and ob["imbalance"] < -0.10)
-            is_bull = price >= ema20_1h and rsi_15m >= 52.0 and ret_1h >= 0.0
-            BTC_REGIME.update({
-                "state": "BTC_DUMP_GUARD" if is_dump else ("BULL_IMPULSE" if is_bull else "NEUTRAL"),
-                "rsi_15m": round(rsi_15m, 1),
-                "ret_1h_pct": round(ret_1h, 2),
-                "allow_alts": not is_dump,
-                "label": "🚨 BTC Dump Guard (Altcoin Bloccate)" if is_dump else ("🟢 BTC Bull Impulse" if is_bull else "⚪ BTC Neutrale / Range"),
-            })
+        # Punteggio Unificato 11 Skill (scala 0..100)
+        # S1(20) + S2(10) + S3(15) + S4(10) + S5(8) + S6(7) + FreqAI/S7(20) + S8(10) = 100
+        ai_pts = round(clamp((ai_ensemble_prob - 0.42) / 0.28, 0.0, 1.0) * 14.0)
+        tm_pts = 6 if (tm_stats["win_rate"] >= 54.0 and tm_stats["expectancy_r"] > 0.12) else (3 if tm_stats["win_rate"] >= 48.0 else 0)
+        score_ai_s7 = clamp(ai_pts + tm_pts, 0, 20)
+        score_s8 = clamp(s8["triggers"] * 2, 0, 10) if not s3["overextended"] else 0
 
-        # A. Trend (max 25)
-        score_trend = 0
-        if price > ema50_4h:
-            score_trend += 8
-        elif price > ema20_4h * 0.992:
-            score_trend += 5
-        if price > ema20_1h and ema20_1h >= ema50_1h * 0.998:
-            score_trend += 9
-        elif price > ema20_1h or scanner_timer["triggered"]:
-            score_trend += 6
-        if st_dir_1h == 1 or rsi_15m > rsi_15m_prev:
-            score_trend += 8
-        score_trend = clamp(score_trend, 0, 25)
-
-        # B. FreqAI Triple-Barrier + Time Machine (max 25)
-        ai_pts = round(clamp((ai_ensemble_prob - 0.35) / 0.35, 0.0, 1.0) * 18.0)
-        tm_pts = 7 if (tm_stats["win_rate"] >= 52.0 and tm_stats["expectancy_r"] > 0.05) else (4 if tm_stats["win_rate"] >= 46.0 else 2)
-        score_ai = clamp(ai_pts + tm_pts, 0, 25)
-
-        # C. Momentum (max 20)
-        score_mom = 0
-        if 38.0 <= rsi_1h <= 66.0:
-            score_mom += 7
-        elif 30.0 <= rsi_1h < 38.0 and rsi_1h > rsi_1h_prev:
-            score_mom += 8
-        elif 66.0 < rsi_1h <= 72.0:
-            score_mom += 4
-        if macd_hist > macd_hist_prev or macd_hist > 0:
-            score_mom += 6
-        if scanner_timer["triggered"]:
-            score_mom += 7
-        elif scanner_timer["triggers"] >= 1:
-            score_mom += 4
-        score_mom = clamp(score_mom, 0, 20)
-
-        # D. Microstruttura (max 15)
-        score_micro = 0
-        imb = ob["imbalance"]
-        if imb > 0.12:
-            score_micro += 8
-        elif imb > 0.01:
-            score_micro += 6
-        elif imb > -0.08:
-            score_micro += 4
-        if price >= poc_price * 0.992:
-            score_micro += 4
-        if vol_z > -0.15:
-            score_micro += 3
-        score_micro = clamp(score_micro, 0, 15)
-
-        # E. Derivati / Sentiment / Macro (max 15)
-        score_macro = 0
-        fr = fut["funding_8h_pct"]
-        if -0.02 <= fr <= 0.025:
-            score_macro += 5
-        elif fr < -0.02:
-            score_macro += 6
-        else:
-            score_macro += 2
-        score_macro += 5 if 20 <= fng_val <= 78 else 3
-        high_soon = [e for e in macro_events if e["impact"] == "High" and -0.5 <= e["diff_hours"] <= 2.0]
-        if not high_soon:
-            score_macro += 5
-        score_macro = clamp(score_macro, 0, 15)
-
-        raw_100 = score_trend + score_ai + score_mom + score_micro + score_macro
+        raw_100 = clamp(
+            s1["score"] + s2["score"] + s3["score"] + s4["score"] + s5["score"] + s6["score"] + score_ai_s7 + score_s8,
+            0, 100
+        )
         final_score = clamp(int(round(raw_100 / 10.0)), 1, 10)
 
+        closes_1h = [c["close"] for c in candles_1h]
+        macd_hist_s = calc_macd_hist_series(closes_1h, 12, 26, 9)
         if HAS_PANDAS and isinstance(dataframe, pd.DataFrame):
-            dataframe["rsi"] = rsi_1h_series
+            dataframe["rsi"] = calc_rsi_series(closes_1h, 14)
             dataframe["ema20"] = calc_ema_series(closes_1h, 20)
             dataframe["ema50"] = calc_ema_series(closes_1h, 50)
             dataframe["macdhist"] = macd_hist_s
             dataframe["raw_100"] = raw_100
             dataframe["final_score"] = final_score
-            dataframe["scanner_triggered"] = 1 if scanner_timer["triggered"] else 0
+            dataframe["scanner_triggered"] = 1 if s8["triggered"] else 0
 
         metadata["eval"] = {
             "coin": metadata["coin_cfg"], "code": metadata["code"], "price": price,
-            "ref_close_15m": closes_15m[-1], "sl_price": sl_price, "tp_price": tp_price,
-            "atr_1h": atr_1h, "atr_pct": atr_pct, "raw_100": raw_100, "final_score": final_score,
-            "score_trend": score_trend, "score_ai": score_ai, "score_mom": score_mom,
-            "score_micro": score_micro, "score_macro": score_macro, "ai_prob": ai_ensemble_prob,
-            "prob_mlp": fai["prob_mlp"], "prob_knn": fai["prob_knn"], "prob_mc": fai["prob_mc"],
+            "ref_close_15m": candles_15m[-1]["close"], "sl_price": sl_price, "tp_price": tp_price,
+            "atr_1h": atr_1h, "atr_15m": atr_15m, "atr_pct": atr_pct,
+            "raw_100": raw_100, "final_score": final_score,
+            "score_trend": s1["score"], "score_ai": score_ai_s7, "score_mom": score_s8,
+            "score_micro": s3["score"] + s4["score"], "score_macro": s5["score"] + s6["score"],
+            "ai_prob": ai_ensemble_prob, "prob_mlp": fai["prob_mlp"], "prob_knn": fai["prob_knn"],
+            "prob_mc": fai["prob_mc"], "mc_ev_r": fai["mc_ev_r"],
             "mlp_holdout_acc": fai["mlp_holdout_acc"], "di_values": fai["di_values"],
-            "do_predict": fai["do_predict"], "rsi_1h": rsi_1h, "rsi_4h": rsi_4h,
-            "rsi_15m": rsi_15m, "rsi_15m_prev": rsi_15m_prev, "adx_1h": adx_1h,
-            "hurst": hurst, "z_linreg": z_linreg, "poc_price": poc_price, "vol_z": vol_z,
-            "ob": ob, "fut": fut, "st_dir_1h": st_dir_1h, "tm_stats": tm_stats,
-            "scanner_timer": scanner_timer, "high_soon": bool(high_soon),
+            "do_predict": fai["do_predict"], "rsi_1h": s1["rsi_1h"], "rsi_4h": s1["rsi_4h"],
+            "rsi_15m": s8["rsi_15m"], "rsi_15m_prev": s8["rsi_15m_prev"], "adx_1h": s1["adx_1h"],
+            "hurst": s1["hurst"], "z_linreg": s1["z_linreg"], "poc_price": s3["poc_price"],
+            "vol_z": s3["vol_z"], "ob": ob, "fut": fut, "st_dir_1h": s1["st_dir_1h"],
+            "tm_stats": tm_stats, "scanner_timer": s8, "high_soon": s6["high_soon"],
+            "skills": {"s1": s1, "s2": s2, "s3": s3, "s4": s4, "s5": s5, "s6": s6, "s8": s8},
             "c15_recent": [{"time": c["time"], "high": c["high"], "low": c["low"]} for c in candles_15m[-24:]],
         }
         return dataframe
 
     def populate_entry_trend(self, dataframe, metadata: dict):
         ev = metadata["eval"]
-        btc_ok = True if ev["code"] == "BTC" else BTC_REGIME.get("allow_alts", True)
+        s1 = ev["skills"]["s1"]
+        s2 = ev["skills"]["s2"]
+        s4 = ev["skills"]["s4"]
+        s6 = ev["skills"]["s6"]
+
+        req_score = self.buy_score_min.value + (4 if s6["nyse_bell_risk"] else 0)
         cond = (
-            btc_ok
+            s2["btc_ok"]
+            and not s1["hard_block"]
+            and s4["book_ok"]
+            and ev["do_predict"] == 1
             and ev["final_score"] >= Entry_Score_Min
-            and ev["raw_100"] >= self.buy_score_min.value
+            and ev["raw_100"] >= req_score
             and ev["ai_prob"] >= self.buy_ai_prob_min.value
             and ev["scanner_timer"]["triggered"]
         )
-        tag = f"freqai_tb_{ev['raw_100']}_ai_{int(ev['ai_prob'] * 100)}"
+        tag = f"11sk_{ev['raw_100']}_ai_{int(ev['ai_prob'] * 100)}_{s1['regime']}"
         if HAS_PANDAS and isinstance(dataframe, pd.DataFrame):
             dataframe["enter_long"] = 0
             dataframe["enter_tag"] = ""
@@ -1631,8 +2247,12 @@ class PionexFreqAIStrategy(IStrategy):
 
     def populate_exit_trend(self, dataframe, metadata: dict):
         ev = metadata["eval"]
-        cond = ev["final_score"] <= self.sell_score_defensive.value and ev["ai_prob"] < 0.40
-        tag = f"⚠️ USCITA DIFENSIVA AI (Score {ev['code']} sceso a {ev['final_score']}/10)"
+        s1 = ev["skills"]["s1"]
+        cond = (
+            (ev["final_score"] <= self.sell_score_defensive.value and ev["ai_prob"] < 0.42)
+            or (s1["regime"] == "BEAR_TREND" and ev["ob"]["imbalance"] < -0.10)
+        )
+        tag = f"⚠️ USCITA DIFENSIVA ({s1['regime']}, Score {ev['code']}={ev['final_score']}/10)"
         if HAS_PANDAS and isinstance(dataframe, pd.DataFrame):
             dataframe["exit_long"] = 0
             dataframe["exit_tag"] = ""
@@ -1646,87 +2266,84 @@ class PionexFreqAIStrategy(IStrategy):
     def custom_stake_amount(self, pair: str, current_time: datetime, current_rate: float,
                             proposed_stake: float, min_stake: float, max_stake: float,
                             leverage: float, entry_tag: str, side: str, **kwargs) -> float:
-        """Dynamic Kelly / Confidence Scaling entro i limiti di sicurezza."""
         ev = kwargs.get("ev", {})
-        ai_prob = ev.get("ai_prob", 0.55)
-        do_predict = ev.get("do_predict", 1)
-        mult = clamp(0.85 + (ai_prob - 0.50) * 1.0, 0.80, 1.05)
-        if not do_predict:
-            mult *= 0.85
+        ai_prob = ev.get("ai_prob", 0.56)
+        claude_mult = kwargs.get("claude_mult", 1.0)
+        mult = clamp(0.85 + (ai_prob - 0.52) * 1.4, 0.75, 1.10) * claude_mult
         stake = min(proposed_stake * mult, max_stake)
         return max(stake, min_stake) if max_stake >= min_stake else max_stake
 
     def confirm_trade_entry(self, pair: str, order_type: str, amount: float, rate: float,
                             time_in_force: str, current_time: datetime, entry_tag: str,
                             side: str, **kwargs) -> bool:
-        """Filtro Anti-Slippage e Spread prima dell'invio dell'ordine Market."""
         ev = kwargs.get("ev", {})
         spread_bps = ev.get("ob", {}).get("spread_bps", 5.0)
         ref_close = ev.get("ref_close_15m", rate)
-        if spread_bps > 25.0:
+        if spread_bps > 18.0:
             log("WARN", f"confirm_trade_entry rifiutato su {pair}: spread troppo alto ({spread_bps:.1f} bps)")
             return False
-        if ref_close > 0 and (rate - ref_close) / ref_close > 0.015:
+        if ref_close > 0 and (rate - ref_close) / ref_close > 0.011:
             log("WARN", f"confirm_trade_entry rifiutato su {pair}: spike improvviso +{(rate/ref_close - 1)*100:.2f}% sopra close 15m")
             return False
         return True
 
     def adjust_trade_position(self, trade: Trade, current_time: datetime, current_rate: float,
                               current_profit: float, min_stake: float, max_stake: float, **kwargs):
-        """
-        Scale-Out Parziale Freqtrade: a +1.15R incassa il 50% della posizione se ambedue le meta'
-        superano il minimo ordine di Pionex (~10.5 USDT).
-        """
+        """Scale-Out Parziale Skill 10: a +1.35R incassa il 50% se entrambe le meta' > min_stake."""
         if not PARTIAL_TP_ENABLED or trade.partial_tp_done:
             return None
         current_r = (current_rate - trade.open_rate) / trade.one_r if trade.one_r > 0 else 0.0
         current_val_usdt = trade.amount * current_rate
-        if current_r >= 1.15 and current_val_usdt >= 2.25 * min_stake:
-            return -(trade.stake_amount * 0.50)  # Negativo in Freqtrade = riduzione parziale (Scale-Out 50%)
+        if current_r >= 1.35 and current_val_usdt >= 2.25 * min_stake:
+            return -(trade.stake_amount * 0.50)
         return None
 
     def custom_stoploss(self, pair: str, trade: Trade, current_time: datetime,
                         current_rate: float, current_profit: float, after_fill: bool = False, **kwargs) -> float:
+        """Skill 10: Pazienza + Break-Even solo a +1.0R + Chandelier ATR Trailing."""
         open_eval = kwargs.get("open_eval", {})
+        claude_verdict = kwargs.get("claude_verdict")
         entry = trade.open_rate
         sl = trade.stop_loss
         one_r = trade.one_r
+        atr_15m = open_eval.get("atr_15m", 0.0) or (entry * 0.005)
         current_r = (current_rate - entry) / one_r if one_r > 0 else 0.0
-        be_fee_price = round(entry * (1.0 + (PIONEX_FEE_ROUNDTRIP_PCT + 0.05) / 100.0), 6)
+        be_fee_price = round(entry * (1.0 + (PIONEX_FEE_ROUNDTRIP_PCT + 0.08) / 100.0), 6)
         trail_msg = ""
 
-        # Se BTC entra in Dump Guard e siamo in leggero profitto su un'altcoin, blinda subito il Break-Even
-        btc_dump_lock = (trade.coin_code != "BTC" and not BTC_REGIME.get("allow_alts", True) and current_r >= 0.35)
+        btc_dump_lock = (trade.coin_code != "BTC" and not BTC_REGIME.get("allow_alts", True) and current_r >= 0.55)
+        claude_tighten = bool(claude_verdict and claude_verdict.get("decision") == "TIGHTEN_SL" and current_r >= 0.50)
 
-        if not trade.breakeven_locked and (current_r >= 0.65 or btc_dump_lock or (current_rate >= entry * 1.0055 and open_eval.get("rsi_15m", 50.0) >= 66.0)):
+        if not trade.breakeven_locked and (current_r >= 1.00 or btc_dump_lock or claude_tighten):
             if sl < be_fee_price:
                 sl = be_fee_price
             trade.breakeven_locked = True
-            trade.alerts_triggered.append(f"🔔 Fast-Scalp Lock: Stop-Loss portato a Break-Even Netto ({fmt_price(sl)})")
+            trade.alerts_triggered.append(f"🛡️ Break-Even Netto Attivato a {fmt_price(sl)} (+{current_r:.2f}R)")
             trail_msg = "🛡️ Break-Even Netto Attivato"
 
-        if not trade.tp1_locked and current_r >= 1.0:
-            new_sl = round(be_fee_price + 0.30 * one_r, 6)
+        if not trade.tp1_locked and current_r >= 1.35:
+            new_sl = round(entry + 0.45 * one_r, 6)
             if new_sl > sl:
                 sl = new_sl
             trade.tp1_locked = True
-            trade.alerts_triggered.append(f"🔔 Alert +1.0R: Profitto blindato a {fmt_price(sl)}")
-            trail_msg = f"🔒 Profitto +1R Blindato ({fmt_price(sl)})"
+            trade.alerts_triggered.append(f"🔒 Profitto +0.45R Blindato ({fmt_price(sl)})")
+            trail_msg = f"🔒 Profitto Blindato ({fmt_price(sl)})"
 
-        if not trade.tp2_locked and current_r >= 1.45:
-            new_sl = round(entry + 0.85 * one_r, 6)
+        if current_r >= 1.65:
+            chandelier = round(max(entry + 0.90 * one_r, trade.max_rate - 1.35 * atr_15m), 6)
+            if chandelier > sl:
+                sl = chandelier
+                if not trade.tp2_locked:
+                    trade.tp2_locked = True
+                    trade.alerts_triggered.append(f"🚀 Chandelier Trailing Attivato ({fmt_price(sl)})")
+                trail_msg = f"🚀 Chandelier Trail ({fmt_price(sl)})"
+
+        if current_r >= 2.25 and "R225" not in trade.alerts_triggered:
+            new_sl = round(entry + 1.55 * one_r, 6)
             if new_sl > sl:
                 sl = new_sl
-            trade.tp2_locked = True
-            trade.alerts_triggered.append(f"🔔 Alert +1.45R: Trailing Stop alzato a {fmt_price(sl)}")
-            trail_msg = f"🚀 Trailing +1.45R ({fmt_price(sl)})"
-
-        if current_r >= 1.90 and "R190" not in trade.alerts_triggered:
-            new_sl = round(entry + 1.35 * one_r, 6)
-            if new_sl > sl:
-                sl = new_sl
-            trade.alerts_triggered.append("R190")
-            trade.alerts_triggered.append(f"🔔 Alert +1.9R: Super-Trailing a {fmt_price(sl)}")
+            trade.alerts_triggered.append("R225")
+            trade.alerts_triggered.append(f"💎 Super-Trailing +1.55R ({fmt_price(sl)})")
 
         trade.stop_loss = sl
         trade.trail_msg = trail_msg
@@ -1735,26 +2352,41 @@ class PionexFreqAIStrategy(IStrategy):
     def custom_exit(self, pair: str, trade: Trade, current_time: datetime,
                     current_rate: float, current_profit: float, **kwargs):
         open_eval = kwargs.get("open_eval", {})
+        claude_verdict = kwargs.get("claude_verdict")
         net_pnl_pct = current_profit * 100.0
         hours_open = max(0.0, (current_time - trade.open_date_utc).total_seconds() / 3600.0)
+        current_r = (current_rate - trade.open_rate) / trade.one_r if trade.one_r > 0 else 0.0
+
+        # Decisioni esplicite di Claude 5.5 Supervisor
+        if claude_verdict and claude_verdict.get("confidence", 0) >= 72:
+            dec = claude_verdict.get("decision")
+            if dec == "CLOSE_DEFENSIVE":
+                return f"🧠 CLAUDE AI USCITA DIFENSIVA ({claude_verdict['reason_it'][:75]})"
+            if dec == "TAKE_PROFIT_NOW" and net_pnl_pct >= SCALP_MIN_NET_PROFIT_PCT:
+                return f"🧠 CLAUDE AI TAKE PROFIT ({net_pnl_pct:+.2f}% | {claude_verdict['reason_it'][:65]})"
 
         rsi_15m = open_eval.get("rsi_15m", 50.0)
         rsi_15m_prev = open_eval.get("rsi_15m_prev", rsi_15m)
         ob_imb = open_eval.get("ob", {}).get("imbalance", 0.0)
-        momentum_fading_15m = (
-            (rsi_15m_prev >= 61.0 and rsi_15m < rsi_15m_prev - 4.0)
-            or (ob_imb <= -0.10 and open_eval.get("ai_prob", 0.5) < 0.50)
-            or (trade.max_rate >= trade.open_rate + 1.0 * trade.one_r and current_rate <= trade.max_rate - 0.40 * trade.one_r)
+
+        # Chiudi su rallentamento SOLO dopo aver raggiunto almeno +1.25R e RSI 15m in ipercomprato reale (>68)
+        momentum_fading_peak = (
+            current_r >= 1.25
+            and (
+                (rsi_15m_prev >= 68.0 and rsi_15m < rsi_15m_prev - 4.5)
+                or (ob_imb <= -0.14 and open_eval.get("ai_prob", 0.5) < 0.48)
+                or (trade.max_rate >= trade.open_rate + 1.4 * trade.one_r and current_rate <= trade.max_rate - 0.50 * trade.one_r)
+            )
         )
 
-        if net_pnl_pct >= SCALP_MIN_NET_PROFIT_PCT and momentum_fading_15m:
-            return f"💰 FAST-SCALP PROFIT TAKE (+{net_pnl_pct:.2f}% netto su rallentamento 15m)"
+        if net_pnl_pct >= SCALP_MIN_NET_PROFIT_PCT and momentum_fading_peak:
+            return f"💰 PROFIT TAKE SU INVERSIONE 15m (+{net_pnl_pct:.2f}% netto / {current_r:+.2f}R)"
         if self.should_exit_roi(trade, current_time, current_profit) and hours_open >= TIME_STOP_PROFIT_HOURS:
-            return f"⏱️ TIME-STOP SCALP IN PROFITTO (+{net_pnl_pct:.2f}% dopo {hours_open:.1f}h)"
-        if hours_open >= TIME_STOP_STALE_HOURS and open_eval.get("ai_prob", 0.5) < 0.46 and net_pnl_pct > -0.60:
+            return f"⏱️ TIME-STOP IN PROFITTO (+{net_pnl_pct:.2f}% dopo {hours_open:.1f}h)"
+        if hours_open >= TIME_STOP_STALE_HOURS and open_eval.get("ai_prob", 0.5) < 0.45 and -0.50 <= net_pnl_pct <= 0.40:
             return f"⏱️ ROTAZIONE CAPITALE ({hours_open:.1f}h in stallo, AI={open_eval['ai_prob'] * 100:.0f}%)"
-        if open_eval.get("exit_long") == 1 or (open_eval.get("final_score", 5) <= 3 and open_eval.get("ai_prob", 0.5) < 0.40):
-            return f"⚠️ USCITA DIFENSIVA AI (Score {trade.coin_code} sceso a {open_eval['final_score']}/10)"
+        if open_eval.get("exit_long") == 1 and not open_eval.get("fallback"):
+            return open_eval.get("exit_tag") or f"⚠️ USCITA DIFENSIVA (Score {trade.coin_code}={open_eval['final_score']}/10)"
         return None
 
 
@@ -1762,171 +2394,7 @@ STRATEGY = PionexFreqAIStrategy(FREQTRADE_CONFIG)
 
 
 # ==============================================================================
-# 8. SKILL OPERATIVE E PROTECTIONS
-# ==============================================================================
-def skill_time_machine_backtest(candles_1h, features, horizon_bars=6):
-    if len(candles_1h) < 120:
-        return {"win_rate": 55.0, "expectancy_r": 0.25, "matches": 12}
-    closes = [c["close"] for c in candles_1h]
-    highs = [c["high"] for c in candles_1h]
-    lows = [c["low"] for c in candles_1h]
-    atrs = calc_atr_series(candles_1h, 14)
-    curr_x = features[-1]
-    candidates = []
-    for i in range(40, len(candles_1h) - horizon_bars - 1):
-        dist = sum(math.log(1.0 + abs(a - b)) for a, b in zip(curr_x, features[i]))
-        candidates.append((dist, i))
-    candidates.sort(key=lambda x: x[0])
-    top = candidates[:20]
-    wins, total_r = 0, 0.0
-    for _, idx in top:
-        entry = closes[idx]
-        risk = max(atrs[idx] * 1.15, entry * 0.01)
-        tp, sl = entry + 1.45 * risk, entry - 1.0 * risk
-        outcome_r = None
-        for h in range(1, horizon_bars + 1):
-            if lows[idx + h] <= sl:
-                outcome_r = -1.0
-                break
-            if highs[idx + h] >= tp:
-                outcome_r = 1.45
-                break
-        if outcome_r is None:
-            outcome_r = clamp((closes[idx + horizon_bars] - entry) / risk, -1.0, 1.45)
-        if outcome_r > 0:
-            wins += 1
-        total_r += outcome_r
-    n = len(top)
-    return {"win_rate": (wins / n) * 100.0 if n else 50.0, "expectancy_r": total_r / n if n else 0.0, "matches": n}
-
-
-def skill_chart_scanner_entry_timer(candles_15m, vol_z_1h, ob_imbalance):
-    if len(candles_15m) < 25:
-        return {"triggered": False, "triggers": 0, "vwap_15m": 0.0, "summary": "Dati 15m insufficienti"}
-    closes_15m = [c["close"] for c in candles_15m]
-    c15, o15, p15 = closes_15m[-1], candles_15m[-1]["open"], closes_15m[-2]
-    ema20_15m = calc_ema(closes_15m, 20)
-    rsi_s = calc_rsi_series(closes_15m, 14)
-    rsi_15m = rsi_s[-1]
-    rsi_15m_prev = rsi_s[-2] if len(rsi_s) >= 2 else rsi_15m
-    vwap_15m = calc_rolling_vwap(candles_15m, 96)
-
-    triggers, notes = 0, []
-    vwap_diff_pct = (c15 - vwap_15m) / vwap_15m if vwap_15m > 0 else 0.0
-    if -0.015 <= vwap_diff_pct <= 0.028 and (c15 >= o15 or c15 >= p15):
-        triggers += 1
-        notes.append("VWAP Active")
-    if c15 >= ema20_15m * 0.997 and rsi_15m >= rsi_15m_prev - 1.5:
-        triggers += 1
-        notes.append("EMA20 15m Hold/Bounce")
-    if vol_z_1h >= -0.20:
-        triggers += 1
-        notes.append(f"Vol Active (Z={vol_z_1h:+.2f})")
-    if ob_imbalance >= 0.01:
-        triggers += 1
-        notes.append(f"L2 Bid ({ob_imbalance * 100:+.1f}%)")
-
-    rsi_ok = 28.0 <= rsi_15m <= 72.0
-    triggered = (triggers >= 2) and rsi_ok
-    if not rsi_ok:
-        notes.append(f"RSI 15m estremo ({rsi_15m:.0f})")
-    return {"triggered": triggered, "triggers": triggers, "vwap_15m": vwap_15m, "ema20_15m": ema20_15m,
-            "rsi_15m": rsi_15m, "rsi_15m_prev": rsi_15m_prev,
-            "summary": " + ".join(notes) if notes else "In attesa trigger 15m"}
-
-
-def skill_budget_and_risk_manager(invest_eur, eur_usd, entry_price, sl_price, tp_price, state, macro_high_soon, code=None, ev=None):
-    total_usdt = invest_eur * eur_usd
-    cash_buffer_usdt = total_usdt * (CASH_BUFFER_PCT / 100.0)
-    usable_usdt = total_usdt - cash_buffer_usdt
-
-    sl_dist_pct = ((entry_price - sl_price) / entry_price) * 100.0 if entry_price > 0 else 2.0
-    tp_dist_pct = ((tp_price - entry_price) / entry_price) * 100.0 if entry_price > 0 else 2.5
-    fee_rt = PIONEX_FEE_ROUNDTRIP_PCT
-    rr_ratio = (tp_dist_pct - fee_rt) / (sl_dist_pct + fee_rt) if sl_dist_pct > 0 else 0.0
-
-    risk_usdt = total_usdt * (RISK_PER_TRADE_PCT / 100.0)
-    proposed_usdt = risk_usdt / ((sl_dist_pct + fee_rt) / 100.0) if sl_dist_pct > 0 else usable_usdt
-    now = datetime.now(timezone.utc)
-    position_usdt = STRATEGY.custom_stake_amount(
-        pair=f"{code}_USDT" if code else "SOL_USDT", current_time=now, current_rate=entry_price,
-        proposed_stake=proposed_usdt, min_stake=MIN_ORDER_USDT, max_stake=usable_usdt,
-        leverage=1.0, entry_tag="", side="long", ev=ev or {}
-    )
-    max_loss_usdt = position_usdt * ((sl_dist_pct + fee_rt) / 100.0)
-    expected_gain_usdt = position_usdt * ((tp_dist_pct - fee_rt) / 100.0)
-
-    now_ts = int(now.timestamp())
-    stats = state["stats"]
-    today_str = now.strftime("%Y-%m-%d")
-    if stats.get("daily_date") != today_str:
-        stats.update({"daily_date": today_str, "daily_pnl_pct": 0.0, "daily_pnl_usdt": 0.0,
-                      "daily_trades": 0, "consec_losses": 0})
-
-    reasons = []
-    if usable_usdt < MIN_ORDER_USDT:
-        reasons.append(f"Capitale utilizzabile {usable_usdt:.2f} USDT < minimo ordine")
-    if rr_ratio < MIN_REWARD_RISK_R:
-        reasons.append(f"R:R netto basso ({rr_ratio:.2f}x < {MIN_REWARD_RISK_R}x)")
-    if code and code != "BTC" and not BTC_REGIME.get("allow_alts", True):
-        reasons.append("BTC Dump Guard attivo (protezione crollo BTC 15m)")
-    if stats.get("daily_pnl_pct", 0.0) <= -DAILY_MAX_LOSS_PCT:
-        reasons.append(f"Circuit Breaker Giornaliero ({stats['daily_pnl_pct']:+.2f}% del capitale)")
-    if stats.get("daily_trades", 0) >= MAX_TRADES_PER_DAY:
-        reasons.append(f"Max {MAX_TRADES_PER_DAY} trade giornalieri raggiunti")
-    if stats.get("consec_losses", 0) >= MAX_CONSEC_LOSSES:
-        reasons.append(f"{MAX_CONSEC_LOSSES} stop consecutivi: stop per oggi")
-    if macro_high_soon:
-        reasons.append("News Macro USD High Impact imminente (<2h)")
-    if not (ENTRY_START_UTC <= now.hour < ENTRY_END_UTC):
-        reasons.append(f"Fuori finestra operativa {ENTRY_START_UTC:02d}-{ENTRY_END_UTC:02d} UTC")
-    last_close = stats.get("last_close_ts", 0)
-    if last_close and now_ts - last_close < MIN_MINUTES_BETWEEN_TRADES * 60:
-        reasons.append(f"Cooldown dopo ultima chiusura ({MIN_MINUTES_BETWEEN_TRADES} min)")
-    last_loss = stats.get("last_loss_ts", 0)
-    if last_loss and now_ts - last_loss < COOLDOWN_AFTER_LOSS_MIN * 60:
-        reasons.append(f"Cooldown dopo perdita ({COOLDOWN_AFTER_LOSS_MIN} min)")
-    if code:
-        cl = stats.get("coin_last_close", {}).get(code, 0)
-        if cl and now_ts - cl < SAME_COIN_COOLDOWN_H * 3600:
-            reasons.append(f"{code} chiusa da meno di {SAME_COIN_COOLDOWN_H:.0f}h")
-
-    passed = not reasons
-    return {"passed": passed, "status_str": "PASS (Rischio OK)" if passed else "BLOCCATO: " + ", ".join(reasons),
-            "total_usdt": total_usdt, "position_usdt": position_usdt, "cash_buffer_usdt": cash_buffer_usdt,
-            "rr_ratio": rr_ratio, "sl_dist_pct": sl_dist_pct, "tp_dist_pct": tp_dist_pct,
-            "max_loss_usdt": max_loss_usdt, "expected_gain_usdt": expected_gain_usdt}
-
-
-def skill_exit_planner(entry_price, sl_price, tp_price):
-    one_r = max(entry_price - sl_price, entry_price * 0.008)
-    be_fee_lock = entry_price * (1.0 + (PIONEX_FEE_ROUNDTRIP_PCT + 0.05) / 100.0)
-    return {"one_r": one_r, "be_trigger": entry_price + 0.65 * one_r, "be_fee_lock": be_fee_lock,
-            "tp1_trigger": entry_price + 1.0 * one_r, "tp1_lock": be_fee_lock + 0.25 * one_r,
-            "tp2_trigger": entry_price + 1.45 * one_r, "tp2_lock": entry_price + 0.85 * one_r,
-            "tp3_target": tp_price}
-
-
-def skill_nyse_bell_and_session():
-    now_utc = datetime.now(timezone.utc)
-    ny = now_utc.astimezone(ZoneInfo("America/New_York"))
-    if ny.weekday() < 5:
-        open_utc = ny.replace(hour=9, minute=30, second=0, microsecond=0).astimezone(timezone.utc)
-        close_utc = ny.replace(hour=16, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
-        if abs((now_utc - open_utc).total_seconds()) <= 1800:
-            return "🔔 NYSE OPENING BELL (Alta Volatilita' USA)"
-        if open_utc < now_utc <= close_utc:
-            return "🇺🇸 Sessione Wall Street Attiva (Alta Liquidita')"
-    m = now_utc.hour * 60 + now_utc.minute
-    if 7 * 60 <= m < 13 * 60:
-        return "🇪🇺 Sessione Europea Attiva"
-    if now_utc.weekday() >= 5:
-        return "📅 Weekend (liquidita' ridotta)"
-    return "🌏 Sessione Asiatica / Notturna"
-
-
-# ==============================================================================
-# 9. VALUTAZIONE COIN (BTC Analizzato per Primo per il Regime Filter)
+# 9. VALUTAZIONE COIN (BTC Analizzato per Primo per Skill 02)
 # ==============================================================================
 def evaluate_coin(coin_cfg, futures_map, fng_val, macro_events):
     code, pair = coin_cfg["code"], coin_cfg["kraken"]
@@ -1963,12 +2431,22 @@ def make_fallback_eval(coin_cfg, pos):
     return {
         "coin": coin_cfg, "code": coin_cfg["code"], "price": price, "ref_close_15m": price,
         "sl_price": pos.get("sl_price", 0.0), "tp_price": pos.get("tp_price", 0.0),
-        "atr_1h": 0.0, "atr_pct": 0.0, "raw_100": 0, "final_score": 5, "ai_prob": 0.5,
-        "prob_mlp": 0.5, "prob_knn": 0.5, "prob_mc": 0.5, "mlp_holdout_acc": 0.5,
+        "atr_1h": 0.0, "atr_15m": pos.get("atr_15m", 0.0), "atr_pct": 0.0,
+        "raw_100": 0, "final_score": 5, "ai_prob": 0.5, "prob_mlp": 0.5, "prob_knn": 0.5,
+        "prob_mc": 0.5, "mc_ev_r": 0.0, "mlp_holdout_acc": 0.5, "di_values": 0.5, "do_predict": 1,
         "rsi_1h": 50.0, "rsi_4h": 50.0, "rsi_15m": 50.0, "rsi_15m_prev": 50.0,
-        "ob": {"imbalance": 0.0, "spread_bps": 0.0, "bid_ask_ratio": 1.0},
+        "adx_1h": 20.0, "hurst": 0.5, "z_linreg": 0.0, "poc_price": price, "vol_z": 0.0,
+        "ob": {"imbalance": 0.0, "spread_bps": 0.0, "bid_ask_ratio": 1.0, "wall_pressure": 0.0},
+        "fut": {"funding_8h_pct": 0.0, "open_interest": 0.0, "available": False},
         "tm_stats": {"win_rate": 50.0, "expectancy_r": 0.0, "matches": 0},
         "scanner_timer": {"triggered": False, "triggers": 0, "vwap_15m": 0.0, "summary": "Dati non disponibili"},
+        "skills": {
+            "s1": {"regime": "UNKNOWN", "hard_block": False, "higher_lows": False},
+            "s2": {"btc_ok": True, "alpha_1h": 0.0},
+            "s3": {"vwap_diff_pct": 0.0, "buy_pressure": 0.5, "overextended": False},
+            "s4": {"book_ok": True},
+            "s6": {"nyse_bell_risk": False, "high_soon": False},
+        },
         "high_soon": False, "c15_recent": [], "stale": not bool(px), "fallback": True,
         "enter_long": 0, "enter_tag": "", "exit_long": 0, "exit_tag": "",
     }
@@ -1976,7 +2454,6 @@ def make_fallback_eval(coin_cfg, pos):
 
 def scan_all_coins(coins, futures_map, fng_val, macro_events):
     results = {}
-    # Analizza sempre BTC per primo per popolare BTC_REGIME prima di valutare le altcoin
     btc_cfg = COIN_MAP.get("BTC")
     if btc_cfg and any(c["code"] == "BTC" for c in coins):
         try:
@@ -2010,7 +2487,7 @@ def entry_conditions(ev):
         not ev.get("fallback") and rm and rm["passed"]
         and ev.get("enter_long", 0) == 1
         and ev["final_score"] >= Entry_Score_Min and ev["raw_100"] >= Entry_Raw_100_Min
-        and ev["ai_prob"] >= 0.50 and ev["scanner_timer"]["triggered"]
+        and ev["ai_prob"] >= Entry_AI_Prob_Min and ev["scanner_timer"]["triggered"]
     )
 
 
@@ -2053,7 +2530,7 @@ def _finalize_close(state, open_code, coin_cfg, curr_price, close_reason, close,
             "pnl_pct": net_pnl_pct, "pnl_usdt": total_pnl_usdt, "current_r": 0.0, "alerts_fired": alerts_fired}
 
 
-def _manage_open_position(state, all_evals, capital_usdt, now_str, now_ts):
+def _manage_open_position(state, all_evals, capital_usdt, now_str, now_ts, fng_val=50, session_str="", macro_events=None, allow_claude=False):
     pos = state["position"]
     open_code = pos.get("coin_code", "SOL")
     coin_cfg = COIN_MAP.get(open_code, COINS[0])
@@ -2061,7 +2538,7 @@ def _manage_open_position(state, all_evals, capital_usdt, now_str, now_ts):
     curr_price = LIVE_PX.get(coin_cfg["pionex"]) or open_eval["price"]
     open_eval["price"] = curr_price
     entry, sl, tp = pos["entry_price"], pos["sl_price"], pos["tp_price"]
-    one_r = pos.get("one_r") or max(entry - pos.get("initial_sl", sl), entry * 0.009)
+    one_r = pos.get("one_r") or max(entry - pos.get("initial_sl", sl), entry * 0.014)
     opened_ts = pos.get("opened_ts") or now_ts
     alerts_fired = []
 
@@ -2081,10 +2558,11 @@ def _manage_open_position(state, all_evals, capital_usdt, now_str, now_ts):
                 "detail": "Analisi e ticker non raggiungibili: gestione SL/TP sospesa fino al prossimo giro.",
                 "pnl_pct": 0.0, "pnl_usdt": 0.0, "current_r": 0.0, "alerts_fired": []}
 
+    # FIX CRITICO: Controlla SOLO le candele chiuse o iniziate DOPO l'apertura / ultimo check (no falsi SL dallo stoppino pre-ingresso!)
     last_chk = pos.get("last_check_ts") or opened_ts
     c15 = open_eval.get("c15_recent", [])
-    fresh = [c for c in c15 if c["time"] + 900 > last_chk]
-    since_open = [c for c in c15 if c["time"] + 900 > opened_ts]
+    fresh = [c for c in c15 if c["time"] >= last_chk]
+    since_open = [c for c in c15 if c["time"] >= opened_ts]
     wick_low = min((c["low"] for c in fresh), default=curr_price)
     wick_high = max((c["high"] for c in fresh), default=curr_price)
     highest = max(pos.get("highest_price", entry), curr_price, max((c["high"] for c in since_open), default=0.0))
@@ -2097,6 +2575,14 @@ def _manage_open_position(state, all_evals, capital_usdt, now_str, now_ts):
     net_pnl_pct = (pnl_usdt_live / orig_inv) * 100.0 if orig_inv > 0 else 0.0
     current_r = (curr_price - entry) / one_r if one_r > 0 else 0.0
 
+    # Skill 11: Supervisione Claude AI su posizione aperta (solo nei rescan completi per non sprecare chiamate ogni 15s)
+    claude_verdict = None
+    if allow_claude and not open_eval.get("fallback"):
+        claude_verdict = skill_11_claude_ai_supervisor(
+            state, mode="SUPERVISE_OPEN", open_eval=open_eval,
+            fng_val=fng_val, session_str=session_str, macro_events=macro_events
+        )
+
     now_dt = datetime.fromtimestamp(now_ts, tz=timezone.utc)
     trade = Trade(
         pair=coin_cfg["pionex"], coin_code=open_code, open_rate=entry,
@@ -2104,7 +2590,7 @@ def _manage_open_position(state, all_evals, capital_usdt, now_str, now_ts):
         open_date_utc=datetime.fromtimestamp(opened_ts, tz=timezone.utc),
         stop_loss=sl, initial_stop_loss=pos.get("initial_sl", sl),
         take_profit=tp, one_r=one_r, max_rate=highest,
-        enter_tag=pos.get("enter_tag", "freqai_fastscalp"),
+        enter_tag=pos.get("enter_tag", "freqai_claude_11skills"),
         breakeven_locked=pos.get("breakeven_locked", False),
         tp1_locked=pos.get("tp1_locked", False),
         tp2_locked=pos.get("tp2_locked", False),
@@ -2112,7 +2598,6 @@ def _manage_open_position(state, all_evals, capital_usdt, now_str, now_ts):
         alerts_triggered=list(pos.get("alerts_triggered", [])),
     )
 
-    # Check Scale-Out Parziale (`adjust_trade_position`)
     adj = STRATEGY.adjust_trade_position(
         trade=trade, current_time=now_dt, current_rate=curr_price,
         current_profit=net_pnl_pct / 100.0, min_stake=MIN_ORDER_USDT, max_stake=capital_usdt
@@ -2129,14 +2614,15 @@ def _manage_open_position(state, all_evals, capital_usdt, now_str, now_ts):
     prev_alerts_len = len(trade.alerts_triggered)
     sl = STRATEGY.custom_stoploss(
         pair=trade.pair, trade=trade, current_time=now_dt,
-        current_rate=curr_price, current_profit=net_pnl_pct / 100.0, open_eval=open_eval
+        current_rate=curr_price, current_profit=net_pnl_pct / 100.0,
+        open_eval=open_eval, claude_verdict=claude_verdict
     )
     pos["sl_price"] = sl
     pos["breakeven_locked"] = trade.breakeven_locked
     pos["tp1_locked"] = trade.tp1_locked
     pos["tp2_locked"] = trade.tp2_locked
-    pos["alerts_triggered"] = [a for a in trade.alerts_triggered if a == "R190"]
-    alerts_fired.extend([a for a in trade.alerts_triggered[prev_alerts_len:] if a != "R190"])
+    pos["alerts_triggered"] = [a for a in trade.alerts_triggered if a == "R225"]
+    alerts_fired.extend([a for a in trade.alerts_triggered[prev_alerts_len:] if a != "R225"])
     trail_msg = getattr(trade, "trail_msg", "")
 
     close_reason = None
@@ -2149,7 +2635,8 @@ def _manage_open_position(state, all_evals, capital_usdt, now_str, now_ts):
     else:
         close_reason = STRATEGY.custom_exit(
             pair=trade.pair, trade=trade, current_time=now_dt,
-            current_rate=curr_price, current_profit=net_pnl_pct / 100.0, open_eval=open_eval
+            current_rate=curr_price, current_profit=net_pnl_pct / 100.0,
+            open_eval=open_eval, claude_verdict=claude_verdict
         )
 
     if close_reason:
@@ -2168,47 +2655,90 @@ def _manage_open_position(state, all_evals, capital_usdt, now_str, now_ts):
     pos["last_check_ts"] = now_ts
     save_state(state)
     extra = f" | {trail_msg}" if trail_msg else ""
+    if claude_verdict and claude_verdict.get("reason_it"):
+        extra += f" | 🧠 Claude: {claude_verdict['decision']}"
     return {"action_state": "HOLDING", "headline": f"⏳ MANTENIMENTO POSIZIONE LONG SU {open_code} ({pos['mode']})",
             "detail": f"Entry {fmt_price(entry)} -> Attuale {fmt_price(curr_price)} ({net_pnl_pct:+.2f}% netto / {current_r:+.2f}R){extra}",
             "pnl_pct": net_pnl_pct, "pnl_usdt": pnl_usdt_live, "current_r": current_r, "alerts_fired": alerts_fired}
 
 
-def _try_open_position(state, ranked_evals, now_str, now_ts):
+def _try_open_position(state, ranked_evals, eur_usd, now_str, now_ts, fng_val=50, session_str="", macro_events=None):
     candidates = [ev for ev in ranked_evals if entry_conditions(ev)]
 
     if not candidates:
         save_state(state)
         best = ranked_evals[0]
         rm = best["risk_manager"]
+        s1, s2, s4 = best["skills"]["s1"], best["skills"]["s2"], best["skills"]["s4"]
         why = []
         if best["raw_100"] < Entry_Raw_100_Min:
-            why.append(f"Score {best['code']} {best['raw_100']}/100 < {Entry_Raw_100_Min}/100")
-        if best["ai_prob"] < 0.50:
-            why.append(f"AI {best['ai_prob'] * 100:.0f}% < 50%")
+            why.append(f"Score {best['code']} {best['raw_100']}/100 < {Entry_Raw_100_Min}")
+        if best["ai_prob"] < Entry_AI_Prob_Min:
+            why.append(f"AI {best['ai_prob'] * 100:.0f}% < {Entry_AI_Prob_Min * 100:.0f}%")
+        if s1["hard_block"]:
+            why.append(f"Regime {s1['regime']}")
+        if not s2["btc_ok"]:
+            why.append("BTC Dump Guard")
+        if not s4["book_ok"]:
+            why.append("Book L2/Spread sfavorevole")
         if not best["scanner_timer"]["triggered"]:
-            why.append(f"Timer 15m ({best['scanner_timer']['triggers']}/4 trigger)")
+            why.append(f"Timer 15m ({best['scanner_timer']['triggers']}/5)")
         if not rm["passed"]:
             why.append(rm["status_str"])
         return {"action_state": "WAITING", "headline": "🛡️ CAPITALE PROTETTO IN USDT (Nessun acquisto ora)",
-                "detail": f"Migliore: {best['code']} ({best['final_score']}/10 - {best['raw_100']}/100) -> Non apro perche': {' | '.join(why) or 'In attesa di conferma'}.",
+                "detail": f"Migliore: {best['code']} ({best['final_score']}/10 - {best['raw_100']}/100) -> {' | '.join(why) or 'In attesa di conferma'}.",
                 "pnl_pct": 0.0, "pnl_usdt": 0.0, "current_r": 0.0, "alerts_fired": []}
 
     best = candidates[0]
+    claude_mult = 1.0
+
+    # Skill 11: Claude 5.5 AI Supervisor Gatekeeper prima dell'acquisto reale!
+    if CLAUDE_ENABLED:
+        verdict = skill_11_claude_ai_supervisor(
+            state, mode="EVALUATE_ENTRY", ranked_evals=candidates,
+            fng_val=fng_val, session_str=session_str, macro_events=macro_events
+        )
+        if verdict:
+            if verdict["decision"] in ("REJECT", "WAIT_PULLBACK"):
+                return {
+                    "action_state": "WAITING",
+                    "headline": f"🧠 CLAUDE AI VETO SU {best['code']} ({verdict['decision']})",
+                    "detail": f"Score quant {best['raw_100']}/100 ma Claude ({verdict['confidence']}%) ferma l'ingresso: {verdict['reason_it']}",
+                    "pnl_pct": 0.0, "pnl_usdt": 0.0, "current_r": 0.0, "alerts_fired": [],
+                }
+            if verdict["best_coin"] in [c["code"] for c in candidates]:
+                best = next(c for c in candidates if c["code"] == verdict["best_coin"])
+            claude_mult = verdict.get("conviction_mult", 1.0)
+            # Eventuali micro-calibrazioni SL/TP di Claude rispettando comunque i limiti di sicurezza
+            if verdict.get("sl_adjustment_pct", 0.0) != 0.0:
+                best["sl_price"] = clamp(
+                    best["sl_price"] * (1.0 + verdict["sl_adjustment_pct"] / 100.0),
+                    best["price"] * 0.962, best["price"] * 0.986
+                )
+            if verdict.get("tp_adjustment_pct", 0.0) != 0.0:
+                best["tp_price"] = clamp(
+                    best["tp_price"] * (1.0 + verdict["tp_adjustment_pct"] / 100.0),
+                    best["price"] * 1.022, best["price"] * 1.065
+                )
+
     now_dt = datetime.fromtimestamp(now_ts, tz=timezone.utc)
-    usdt = round(best["risk_manager"]["position_usdt"], 2)
+    base_usdt = best["risk_manager"]["position_usdt"]
+    max_usable = INVEST_EUR * eur_usd * (1.0 - CASH_BUFFER_PCT / 100.0)
+    usdt = round(clamp(base_usdt * claude_mult, MIN_ORDER_USDT, max_usable), 2)
+
     if not STRATEGY.confirm_trade_entry(
         pair=best["coin"]["pionex"], order_type="market", amount=usdt / max(best["price"], 1e-8),
         rate=best["price"], time_in_force="GTC", current_time=now_dt,
         entry_tag=best.get("enter_tag", ""), side="long", ev=best
     ):
         return {"action_state": "WAITING", "headline": f"🛡️ INGRESSO {best['code']} SOSPESO (Filtro Anti-Slippage)",
-                "detail": f"Segnale su {best['code']} presente ma spread/spike eccessivo negli ultimi secondi. Riprovo al prossimo tick.",
+                "detail": f"Segnale su {best['code']} presente ma spread/spike eccessivo negli ultimi secondi.",
                 "pnl_pct": 0.0, "pnl_usdt": 0.0, "current_r": 0.0, "alerts_fired": []}
 
-    return _execute_open(state, best, usdt, now_str, now_ts)
+    return _execute_open(state, best, usdt, now_str, now_ts, label="CLAUDE-11SKILLS" if CLAUDE_ENABLED else "11-SKILLS")
 
 
-def _execute_open(state, ev, usdt, now_str, now_ts, label="FAST-SCALP"):
+def _execute_open(state, ev, usdt, now_str, now_ts, label="11-SKILLS"):
     pos, stats = state["position"], state["stats"]
     coin_cfg, code, price = ev["coin"], ev["code"], ev["price"]
     buy = live_buy(coin_cfg, usdt, price)
@@ -2222,11 +2752,12 @@ def _execute_open(state, ev, usdt, now_str, now_ts, label="FAST-SCALP"):
     entry = buy["entry_price"]
     k = entry / price if price > 0 else 1.0
     sl_price, tp_price = ev["sl_price"] * k, ev["tp_price"] * k
-    one_r = max(entry - sl_price, entry * 0.009)
+    one_r = max(entry - sl_price, entry * 0.014)
     pos.update({
         "is_open": True, "coin_code": code, "symbol": coin_cfg["pionex"], "entry_price": entry,
         "amount_coin": buy["amount_coin"], "invested_usdt": buy["invested_usdt"], "sl_price": sl_price,
         "tp_price": tp_price, "initial_sl": sl_price, "one_r": one_r, "highest_price": entry,
+        "atr_15m": ev.get("atr_15m", 0.0),
         "breakeven_locked": False, "tp1_locked": False, "tp2_locked": False,
         "partial_tp_done": False, "realized_partial_usdt": 0.0, "alerts_triggered": [],
         "opened_at": now_str, "opened_ts": now_ts, "last_check_ts": now_ts, "close_fail_count": 0,
@@ -2297,7 +2828,7 @@ def run_manual_command(state, all_evals, eur_usd, command, coin, usdt_req):
             ev = evaluate_coin(COIN_MAP[coin], {}, 50, []) if coin in COIN_MAP else None
         if not ev:
             return noop(f"Analisi di '{coin}' non disponibile: impossibile calcolare SL/TP. Riprova.")
-        rm = ev.get("risk_manager") or skill_budget_and_risk_manager(INVEST_EUR, eur_usd, ev["price"], ev["sl_price"], ev["tp_price"], state, False, coin, ev)
+        rm = ev.get("risk_manager") or skill_09_adaptive_risk_and_sizing(INVEST_EUR, eur_usd, ev["price"], ev["sl_price"], ev["tp_price"], state, False, coin, ev)
         usdt = usdt_req if usdt_req > 0 else rm["position_usdt"]
         usdt = min(usdt, capital_usdt * (1 - CASH_BUFFER_PCT / 100.0))
         if usdt < MIN_ORDER_USDT:
@@ -2307,17 +2838,22 @@ def run_manual_command(state, all_evals, eur_usd, command, coin, usdt_req):
     return noop(f"Comando sconosciuto: '{command}'")
 
 
-def manage_autonomous_trading(state, ranked_evals, all_evals, eur_usd):
+def manage_autonomous_trading(state, ranked_evals, all_evals, eur_usd, fng_val=50, session_str="", macro_events=None):
     now_dt = datetime.now(timezone.utc)
     now_str, now_ts = now_dt.strftime("%d/%m %H:%M UTC"), int(now_dt.timestamp())
     capital_usdt = INVEST_EUR * eur_usd
     if state["position"]["is_open"]:
-        return _manage_open_position(state, all_evals, capital_usdt, now_str, now_ts)
-    return _try_open_position(state, ranked_evals, now_str, now_ts)
+        return _manage_open_position(
+            state, all_evals, capital_usdt, now_str, now_ts,
+            fng_val=fng_val, session_str=session_str, macro_events=macro_events, allow_claude=True
+        )
+    return _try_open_position(
+        state, ranked_evals, eur_usd, now_str, now_ts,
+        fng_val=fng_val, session_str=session_str, macro_events=macro_events
+    )
 
 
 def trigger_self_chain_dispatch():
-    """Se una posizione resta aperta a fine job, riavvia automaticamente il workflow GitHub per guardia continua."""
     if not SELF_CHAIN_WHEN_OPEN or not GITHUB_TOKEN or not GITHUB_REPO:
         return
     try:
@@ -2327,16 +2863,15 @@ def trigger_self_chain_dispatch():
             json={"event_type": "tick"}, timeout=8
         )
         if r.status_code == 204:
-            log("INFO", "Self-Chain Dispatch inviato: il prossimo ciclo partira' automaticamente per presidiare la posizione aperta.")
+            log("INFO", "Self-Chain Dispatch inviato: il prossimo ciclo partira' automaticamente.")
     except Exception as e:
         log("WARN", f"Self-Chain Dispatch non inviato: {e}")
 
 
 # ==============================================================================
-# 11. WEB CONSOLE MOBILE-FIRST PER TELEGRAM (index.html)
+# 11. WEB CONSOLE MOBILE-FIRST (index.html)
 # ==============================================================================
 def get_public_webapp_url():
-    """Ricava automaticamente l'URL GitHub Pages della Web Console."""
     if "/" in GITHUB_REPO:
         owner, repo = GITHUB_REPO.split("/", 1)
         return f"https://{owner.lower()}.github.io/{repo}/"
@@ -2345,18 +2880,20 @@ def get_public_webapp_url():
 
 def build_manual_action_advisor(state, best_eval, all_evals, trade_status):
     pos = state["position"]
+    cv = state["stats"].get("claude_last_verdict") or {}
+    claude_note = f" | 🧠 Claude: {cv['reason_it']}" if cv.get("reason_it") else ""
     if pos["is_open"]:
         code = pos["coin_code"]
         ev = all_evals.get(code, best_eval)
         pnl, curr_r = trade_status["pnl_pct"], trade_status["current_r"]
         if ev["final_score"] <= 4 or ev["ai_prob"] < 0.44:
             return {"badge": "⚠️ CONSIGLIO: VALUTA DI CHIUDERE ORA", "color": "#f59e0b", "bg": "rgba(245,158,11,0.15)",
-                    "instruction": f"La spinta su {code} si sta indebolendo ({ev['final_score']}/10, AI {ev['ai_prob'] * 100:.0f}%). Tocca '🛑 Chiudi Posizione' se vuoi incassare/proteggere."}
+                    "instruction": f"La spinta su {code} si sta indebolendo ({ev['final_score']}/10, AI {ev['ai_prob'] * 100:.0f}%).{claude_note}"}
         if pnl >= SCALP_MIN_NET_PROFIT_PCT:
             return {"badge": f"💰 {code} IN PROFITTO ({pnl:+.2f}%) · GUARDIA ATTIVA", "color": "#10b981", "bg": "rgba(16,185,129,0.15)",
-                    "instruction": f"Posizione in guadagno ({curr_r:+.2f}R). Il bot controlla il prezzo ogni {GUARDIAN_TICK_SEC}s per incassare al Take-Profit ({fmt_price(pos['tp_price'])}) o al primo rallentamento."}
+                    "instruction": f"Posizione in guadagno ({curr_r:+.2f}R). Target {fmt_price(pos['tp_price'])}.{claude_note}"}
         return {"badge": f"⏳ MANTIENI {code} (MONITORAGGIO OGNI {GUARDIAN_TICK_SEC}s)", "color": "#38bdf8", "bg": "rgba(56,189,248,0.15)",
-                "instruction": f"Posizione aperta su {code} ({pnl:+.2f}%). Stop-Loss attivo a {fmt_price(pos['sl_price'])} e Take-Profit a {fmt_price(pos['tp_price'])}."}
+                "instruction": f"Posizione aperta su {code} ({pnl:+.2f}%). SL {fmt_price(pos['sl_price'])} | TP {fmt_price(pos['tp_price'])}.{claude_note}"}
 
     if trade_status.get("action_state") in ("ENTRY_FAILED", "CLOSE_FAILED"):
         return {"badge": "🚨 ATTENZIONE: ORDINE PIONEX NON RIUSCITO", "color": "#ef4444", "bg": "rgba(239,68,68,0.15)",
@@ -2366,12 +2903,12 @@ def build_manual_action_advisor(state, best_eval, all_evals, trade_status):
     rm, tm = best_eval["risk_manager"], best_eval["scanner_timer"]
     if entry_conditions(best_eval):
         return {"badge": f"🟢 SEGNALE FORTE: COMPRA {code} ORA", "color": "#10b981", "bg": "rgba(16,185,129,0.16)",
-                "instruction": f"Tutti i parametri sono positivi su {code} ({score}/10 · {raw_100}/100). Importo consigliato {rm['position_usdt']:.2f} USDT, SL {fmt_price(best_eval['sl_price'])}, TP {fmt_price(best_eval['tp_price'])}."}
-    if raw_100 >= 54:
+                "instruction": f"Confluenza 11-Skill su {code} ({score}/10 · {raw_100}/100, R:R {rm['rr_ratio']:.2f}x). Size {rm['position_usdt']:.2f} USDT.{claude_note}"}
+    if raw_100 >= 58:
         return {"badge": f"🟡 {code} QUASI PRONTA ({raw_100}/100) · ATTENDI", "color": "#f59e0b", "bg": "rgba(245,158,11,0.14)",
-                "instruction": f"{code} si sta preparando ({raw_100}/100), ma manca ancora un segnale ({tm['summary']})."}
-    return {"badge": "🛡️ RESTA FERMO IN USDT (MERCATO DEBOLE)", "color": "#94a3b8", "bg": "rgba(148,163,184,0.12)",
-            "instruction": f"Nessuna coin ha un'occasione sicura in questo momento. Migliore: {code} ({raw_100}/100) · {BTC_REGIME['label']}."}
+                "instruction": f"{code} in preparazione ({raw_100}/100): {tm['summary']}."}
+    return {"badge": "🛡️ RESTA FERMO IN USDT (MERCATO SELETTIVO)", "color": "#94a3b8", "bg": "rgba(148,163,184,0.12)",
+            "instruction": f"Nessun setup ad alta probabilita' ora. Migliore: {code} ({raw_100}/100) · {BTC_REGIME['label']}."}
 
 
 def generate_webapp_html(ranked_evals, state, trade_status, fng_val, fng_class, session_str, eur_usd=1.08, macro_events=None):
@@ -2381,12 +2918,13 @@ def generate_webapp_html(ranked_evals, state, trade_status, fng_val, fng_class, 
 
     coins_payload = []
     for e in ranked_evals:
-        rm = e.get("risk_manager") or skill_budget_and_risk_manager(INVEST_EUR, eur_usd, e["price"], e["sl_price"], e["tp_price"], state, e["high_soon"], e["code"], e)
+        rm = e.get("risk_manager") or skill_09_adaptive_risk_and_sizing(INVEST_EUR, eur_usd, e["price"], e["sl_price"], e["tp_price"], state, e["high_soon"], e["code"], e)
         coins_payload.append({
             "code": e["code"], "name": e["coin"]["name"], "ws": e["coin"]["ws"], "kraken": e["coin"]["kraken"],
             "price": e["price"], "sl_price": e["sl_price"], "tp_price": e["tp_price"],
             "final_score": e["final_score"], "raw_100": e["raw_100"], "ai_prob": round(e["ai_prob"] * 100),
             "timer_summary": e["scanner_timer"]["summary"], "triggers": e["scanner_timer"]["triggers"],
+            "regime": e["skills"]["s1"]["regime"], "alpha_btc": round(e["skills"]["s2"]["alpha_1h"], 2),
             "risk_ok": rm["passed"], "risk_status": rm["status_str"],
             "rr_ratio": round(rm["rr_ratio"], 2), "pos_usdt": round(rm["position_usdt"], 2), "entry_ok": entry_conditions(e)})
 
@@ -2394,6 +2932,7 @@ def generate_webapp_html(ranked_evals, state, trade_status, fng_val, fng_class, 
     payload = {
         "updated_ts": int(now.timestamp()), "session": session_str, "btc_regime": BTC_REGIME["label"],
         "fng_val": fng_val, "fng_class": fng_class, "mode": "LIVE" if pionex_live_enabled() else "SIMULAZIONE",
+        "claude_enabled": CLAUDE_ENABLED, "claude_verdict": state["stats"].get("claude_last_verdict") or {},
         "advisor": advisor, "waiting": trade_status["detail"] if trade_status.get("action_state") == "WAITING" else "",
         "position": state["position"], "stats": state["stats"], "history": state.get("history", []),
         "coins": coins_payload, "macro": macro, "macro_ok": bool(MACRO_STATUS.get("ok")),
@@ -2429,7 +2968,6 @@ def generate_webapp_html(ranked_evals, state, trade_status, fng_val, fng_class, 
   .b-red { background:linear-gradient(135deg,#dc2626,#ef4444); }
   .b-blue { background:linear-gradient(135deg,#0284c7,#38bdf8); }
   .b-amber { background:linear-gradient(135deg,#d97706,#f59e0b); }
-  .b-dark { background:var(--card2); border:1px solid var(--line); color:var(--text); }
   .kv-grid { display:grid; grid-template-columns:repeat(2,1fr); gap:8px; }
   .kv { background:#0c1426; padding:10px 12px; border-radius:12px; border:1px solid #1e2d4a; }
   .kv-l { font-size:11px; color:var(--muted); }
@@ -2453,10 +2991,9 @@ def generate_webapp_html(ranked_evals, state, trade_status, fng_val, fng_class, 
 </style>
 </head>
 <body>
-
 <div class="header">
   <div>
-    <div class="h-title">⚡ Pionex AI Console</div>
+    <div class="h-title">⚡ Pionex Claude 5.5 Console</div>
     <div class="h-sub" id="subline">Caricamento...</div>
   </div>
   <div style="display:flex;gap:6px;align-items:center;">
@@ -2464,44 +3001,29 @@ def generate_webapp_html(ranked_evals, state, trade_status, fng_val, fng_class, 
     <span class="badge-pill" id="mode-pill">MODO</span>
   </div>
 </div>
-
-<!-- SEMAFORO PRINCIPALE -->
 <div class="hero" id="advisor">
   <div class="hero-t" id="adv-title"></div>
   <div class="hero-s" id="adv-sub"></div>
 </div>
-
-<!-- POSIZIONE ATTIVA (SE PRESENTE) -->
 <div class="card" id="pos-card"></div>
-
-<!-- TELECOMANDO RAPIDO A 1 TOCCO -->
 <div class="card">
   <div class="sec-title">
     <span>🎛️ Telecomando Rapido (1-Tap)</span>
     <button class="badge-pill" onclick="toggleSetup()" id="key-btn" style="cursor:pointer;">🔑 Chiave GitHub</button>
   </div>
-
   <div id="setup-box" style="display:none; background:#0c1426; padding:12px; border-radius:12px; margin-bottom:12px; border:1px solid var(--amber);">
     <div style="font-size:13px; font-weight:800; margin-bottom:6px; color:var(--amber);">Configurazione Rapida (solo la prima volta):</div>
     <div class="muted" style="margin-bottom:8px;">
       Per far eseguire i pulsanti istantaneamente, incolla un Token GitHub.
-      <a id="gh-create-link" href="https://github.com/settings/tokens/new?description=PionexTelegramConsole&scopes=repo,workflow" target="_blank" style="color:var(--blue);font-weight:800;display:block;margin-top:4px;">👉 1. Tocca qui per generare il Token su GitHub (spunta 'workflow' e premi Generate)</a>
+      <a href="https://github.com/settings/tokens/new?description=PionexTelegramConsole&scopes=repo,workflow" target="_blank" style="color:var(--blue);font-weight:800;display:block;margin-top:4px;">👉 1. Tocca qui per generare il Token su GitHub</a>
     </div>
     <input id="gh-token" type="password" placeholder="2. Incolla qui il Token ghp_... e premi Salva" style="margin-bottom:8px;">
     <button class="act-btn b-green" style="width:100%;padding:10px;" onclick="saveToken()">💾 Salva Chiave nel Telefono</button>
   </div>
-
   <div class="big-actions" style="margin-bottom:10px;">
-    <button class="act-btn b-blue" onclick="sendCmd('status','',0)">
-      🔄 Aggiorna Ora
-      <small>Ricalcola AI + Report</small>
-    </button>
-    <button class="act-btn b-red" onclick="confirmClose()">
-      🛑 Chiudi Posizione
-      <small>Vendi trade attivo</small>
-    </button>
+    <button class="act-btn b-blue" onclick="sendCmd('status','',0)">🔄 Aggiorna Ora<small>Ricalcola 11 Skill + AI</small></button>
+    <button class="act-btn b-red" onclick="confirmClose()">🛑 Chiudi Posizione<small>Vendi trade attivo</small></button>
   </div>
-
   <div style="background:#0c1426; padding:10px; border-radius:12px; border:1px solid #1e2d4a;">
     <div class="muted" style="margin-bottom:6px; font-weight:700;">Operazione manuale su singola Coin:</div>
     <div style="display:grid; grid-template-columns:1.2fr 1fr; gap:8px; margin-bottom:8px;">
@@ -2514,87 +3036,44 @@ def generate_webapp_html(ranked_evals, state, trade_status, fng_val, fng_class, 
     </div>
   </div>
 </div>
-
-<!-- CLASSIFICA DELLE 10 COIN CON PULSANTE DIRETTO -->
 <div class="card">
-  <div class="sec-title">
-    <span>🏆 Classifica 10 Coin in Tempo Reale</span>
-    <span id="btc-pill" class="muted"></span>
-  </div>
+  <div class="sec-title"><span>🏆 Classifica 10 Coin (11 Skill)</span><span id="btc-pill" class="muted"></span></div>
   <div class="coin-list" id="coin-list"></div>
 </div>
-
-<!-- STATISTICHE E STORICO -->
 <div class="card">
   <div class="sec-title"><span>📊 Rendimento & Sicurezza</span><span id="daily-tag" class="muted"></span></div>
   <div class="kv-grid" id="stats-grid"></div>
   <div id="hist-box" style="margin-top:12px;"></div>
 </div>
-
 <div class="toast" id="toast"></div>
-
 <script>
 const D = __PAYLOAD_JSON__;
 const livePx = {};
-
-try {
-  if (window.Telegram && window.Telegram.WebApp) {
-    window.Telegram.WebApp.ready();
-    window.Telegram.WebApp.expand();
-  }
-} catch(e){}
-
+try { if (window.Telegram && window.Telegram.WebApp) { window.Telegram.WebApp.ready(); window.Telegram.WebApp.expand(); } } catch(e){}
 function showToast(msg, border='#38bdf8'){
-  const t = document.getElementById('toast');
-  t.style.borderColor = border;
-  t.innerHTML = msg;
-  t.style.display = 'block';
-  clearTimeout(window._toastTimer);
-  window._toastTimer = setTimeout(()=>{ t.style.display='none'; }, 6000);
+  const t = document.getElementById('toast'); t.style.borderColor = border; t.innerHTML = msg; t.style.display = 'block';
+  clearTimeout(window._toastTimer); window._toastTimer = setTimeout(()=>{ t.style.display='none'; }, 6000);
 }
-
-function fmtPx(p){
-  p = Number(p||0);
-  if(p<=0) return '$0.00';
-  if(p>=1000) return '$'+p.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
-  if(p>=10) return '$'+p.toFixed(2);
-  if(p>=1) return '$'+p.toFixed(3);
-  return '$'+p.toFixed(4);
-}
-function ageStr(ts){
-  const s = Math.max(0, Math.floor(Date.now()/1000 - ts));
-  if(s<60) return s+'s fa';
-  if(s<3600) return Math.floor(s/60)+' min fa';
-  return (s/3600).toFixed(1)+' ore fa';
-}
-
+function fmtPx(p){ p=Number(p||0); if(p<=0)return '$0.00'; if(p>=1000)return '$'+p.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); if(p>=10)return '$'+p.toFixed(2); if(p>=1)return '$'+p.toFixed(3); return '$'+p.toFixed(4); }
+function ageStr(ts){ const s=Math.max(0,Math.floor(Date.now()/1000-ts)); if(s<60)return s+'s fa'; if(s<3600)return Math.floor(s/60)+' min fa'; return (s/3600).toFixed(1)+' ore fa'; }
 function renderHeader(){
   document.getElementById('subline').textContent = `Aggiornato ${ageStr(D.updated_ts)} · ${D.session}`;
   const mp = document.getElementById('mode-pill');
   mp.textContent = D.mode === 'LIVE' ? '🟢 LIVE REALE' : '🧪 SIMULAZIONE';
   mp.style.borderColor = D.mode === 'LIVE' ? '#10b981' : '#f59e0b';
   document.getElementById('btc-pill').textContent = D.btc_regime || '';
-
-  const adv = document.getElementById('advisor');
-  adv.style.background = D.advisor.bg;
-  adv.style.borderColor = D.advisor.color;
-  const t = document.getElementById('adv-title');
-  t.style.color = D.advisor.color;
-  t.textContent = D.advisor.badge;
+  const adv = document.getElementById('advisor'); adv.style.background = D.advisor.bg; adv.style.borderColor = D.advisor.color;
+  const t = document.getElementById('adv-title'); t.style.color = D.advisor.color; t.textContent = D.advisor.badge;
   document.getElementById('adv-sub').textContent = D.advisor.instruction;
-
   const hasKey = Boolean(localStorage.getItem('gh_pat'));
   const kb = document.getElementById('key-btn');
   kb.textContent = hasKey ? '🟢 Telecomando Attivo' : '🔑 Attiva Telecomando';
   kb.style.borderColor = hasKey ? '#10b981' : '#f59e0b';
 }
-
 function renderPosition(){
-  const box = document.getElementById('pos-card');
-  const p = D.position;
+  const box = document.getElementById('pos-card'); const p = D.position;
   if(!p || !p.is_open){
-    box.innerHTML = `<div class="sec-title"><span>💼 Posizione Attiva</span><span>NESSUNA (100% USDT)</span></div>
-      <div class="muted">${D.waiting || 'Il capitale è al sicuro in USDT. Puoi aprire un trade toccando "🚀 Compra" su una delle coin qui sotto.'}</div>`;
+    box.innerHTML = `<div class="sec-title"><span>💼 Posizione Attiva</span><span>NESSUNA (100% USDT)</span></div><div class="muted">${D.waiting || 'Capitale protetto in USDT.'}</div>`;
     return;
   }
   const coin = D.coins.find(c=>c.code===p.coin_code) || {};
@@ -2606,9 +3085,7 @@ function renderPosition(){
   const span = Math.max(p.tp_price - p.sl_price, 1e-9);
   const prog = Math.max(0, Math.min(100, ((cur - p.sl_price) / span) * 100));
   const col = netUsdt >= 0 ? 'pos-green' : 'pos-red';
-
-  box.innerHTML = `
-    <div class="sec-title"><span>🔥 POSIZIONE APERTA SU ${p.coin_code}</span><span>${p.opened_at}</span></div>
+  box.innerHTML = `<div class="sec-title"><span>🔥 POSIZIONE APERTA SU ${p.coin_code}</span><span>${p.opened_at}</span></div>
     <div class="kv-grid">
       <div class="kv"><div class="kv-l">Prezzo Acquisto</div><div class="kv-v">${fmtPx(p.entry_price)}</div></div>
       <div class="kv"><div class="kv-l">Prezzo Attuale</div><div class="kv-v">${fmtPx(cur)}</div></div>
@@ -2620,143 +3097,82 @@ function renderPosition(){
     <div class="prog-bar"><div style="width:${prog}%; background:${netUsdt>=0?'#10b981':'#ef4444'}"></div></div>
     <button class="act-btn b-red" style="width:100%; margin-top:8px; padding:12px;" onclick="confirmClose()">🛑 CHIUDI SUBITO ${p.coin_code} A MERCATO</button>`;
 }
-
 function renderCoins(){
   const box = document.getElementById('coin-list');
   box.innerHTML = D.coins.map((c, idx) => {
     const px = livePx[c.code] || c.price;
-    const icon = c.entry_ok ? '🟢' : (c.raw_100 >= 54 ? '🟡' : '⚪');
-    const barCol = c.entry_ok ? '#10b981' : (c.raw_100 >= 54 ? '#f59e0b' : '#38bdf8');
-    return `
-      <div class="coin-item ${c.entry_ok?'ready':''}">
-        <div class="coin-top">
-          <div class="coin-name">${icon} #${idx+1} ${c.name} (${c.code})</div>
-          <div class="coin-px" id="px-${c.code}">${fmtPx(px)}</div>
-        </div>
-        <div class="prog-bar" style="margin:6px 0 10px;height:7px;"><div style="width:${c.raw_100}%;background:${barCol}"></div></div>
-        <div class="coin-meta">
-          <div><span>Punteggio</span><b>${c.final_score}/10 (${c.raw_100}%)</b></div>
-          <div><span>Probabilità AI</span><b>${c.ai_prob}%</b></div>
-          <div><span>Trigger 15m</span><b>${c.triggers || 0}/4 attivi</b></div>
-          <div><span>Stop-Loss</span><b class="pos-red">${fmtPx(c.sl_price)}</b></div>
-          <div><span>Take-Profit</span><b class="pos-green">${fmtPx(c.tp_price)}</b></div>
-          <div><span>Size Auto</span><b>${c.pos_usdt.toFixed(1)} USDT</b></div>
-        </div>
-        <div class="coin-foot">
-          <span class="muted" style="font-size:11px;">${c.risk_ok ? '✅ Rischio OK' : c.risk_status}</span>
-          <button class="mini-btn b-green" onclick="quickBuy('${c.code}', ${c.pos_usdt.toFixed(2)})">🚀 Compra ${c.code}</button>
-        </div>
-      </div>`;
+    const icon = c.entry_ok ? '🟢' : (c.raw_100 >= 58 ? '🟡' : '⚪');
+    const barCol = c.entry_ok ? '#10b981' : (c.raw_100 >= 58 ? '#f59e0b' : '#38bdf8');
+    return `<div class="coin-item ${c.entry_ok?'ready':''}">
+      <div class="coin-top"><div class="coin-name">${icon} #${idx+1} ${c.name} (${c.code})</div><div class="coin-px" id="px-${c.code}">${fmtPx(px)}</div></div>
+      <div class="prog-bar" style="margin:6px 0 10px;height:7px;"><div style="width:${c.raw_100}%;background:${barCol}"></div></div>
+      <div class="coin-meta">
+        <div><span>11-Skill Score</span><b>${c.final_score}/10 (${c.raw_100}%)</b></div>
+        <div><span>FreqAI Prob</span><b>${c.ai_prob}%</b></div>
+        <div><span>Trigger 15m</span><b>${c.triggers || 0}/5 (${c.rr_ratio}R)</b></div>
+        <div><span>Stop-Loss</span><b class="pos-red">${fmtPx(c.sl_price)}</b></div>
+        <div><span>Take-Profit</span><b class="pos-green">${fmtPx(c.tp_price)}</b></div>
+        <div><span>Size Auto</span><b>${c.pos_usdt.toFixed(1)} USDT</b></div>
+      </div>
+      <div class="coin-foot"><span class="muted" style="font-size:11px;">${c.risk_ok ? '✅ Rischio OK' : c.risk_status}</span>
+      <button class="mini-btn b-green" onclick="quickBuy('${c.code}', ${c.pos_usdt.toFixed(2)})">🚀 Compra ${c.code}</button></div></div>`;
   }).join('');
 }
-
 function renderStats(){
-  const s = D.stats || {};
-  const wr = s.total_trades ? ((s.wins/s.total_trades)*100).toFixed(0)+'%' : '—';
+  const s = D.stats || {}; const wr = s.total_trades ? ((s.wins/s.total_trades)*100).toFixed(0)+'%' : '—';
   document.getElementById('daily-tag').textContent = `Oggi: ${s.daily_trades||0}/${D.limits.max_trades} trade`;
   document.getElementById('stats-grid').innerHTML = `
     <div class="kv"><div class="kv-l">Operazioni Totali</div><div class="kv-v">${s.total_trades||0} (${s.wins||0} V / ${s.losses||0} P)</div></div>
     <div class="kv"><div class="kv-l">Precisione (Win Rate)</div><div class="kv-v">${wr}</div></div>
     <div class="kv"><div class="kv-l">Profitto Totale</div><div class="kv-v ${(s.total_pnl_usdt||0)>=0?'pos-green':'pos-red'}">${(s.total_pnl_usdt||0)>=0?'+':''}${(s.total_pnl_usdt||0).toFixed(2)} $</div></div>
     <div class="kv"><div class="kv-l">Profitto Oggi</div><div class="kv-v ${(s.daily_pnl_pct||0)>=0?'pos-green':'pos-red'}">${(s.daily_pnl_pct||0)>=0?'+':''}${(s.daily_pnl_pct||0).toFixed(2)}%</div></div>`;
-
   const h = D.history || [];
   document.getElementById('hist-box').innerHTML = h.length
-    ? `<div class="muted" style="margin-bottom:6px;font-weight:700;">Ultime chiusure:</div>` +
-      h.slice(0,6).map(r=>`<div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid #1e2d4a;font-size:12px;">
-        <span><b>${r.coin}</b> · ${r.closed_at}</span>
-        <span class="${r.pnl_usdt>=0?'pos-green':'pos-red'}"><b>${r.pnl_pct>=0?'+':''}${r.pnl_pct}% (${r.pnl_usdt>=0?'+':''}${r.pnl_usdt}$)</b></span>
-      </div>`).join('')
+    ? `<div class="muted" style="margin-bottom:6px;font-weight:700;">Ultime chiusure:</div>` + h.slice(0,6).map(r=>`<div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid #1e2d4a;font-size:12px;"><span><b>${r.coin}</b> · ${r.closed_at}</span><span class="${r.pnl_usdt>=0?'pos-green':'pos-red'}"><b>${r.pnl_pct>=0?'+':''}${r.pnl_pct}% (${r.pnl_usdt>=0?'+':''}${r.pnl_usdt}$)</b></span></div>`).join('')
     : `<div class="muted">Nessuna operazione chiusa finora.</div>`;
 }
-
-function toggleSetup(){
-  const b = document.getElementById('setup-box');
-  b.style.display = b.style.display === 'none' ? 'block' : 'none';
-}
+function toggleSetup(){ const b=document.getElementById('setup-box'); b.style.display=b.style.display==='none'?'block':'none'; }
 function saveToken(){
-  const v = document.getElementById('gh-token').value.trim();
-  if(!v){ showToast('⚠️ Incolla prima il Token GitHub (inizia con ghp_ o github_pat_)', '#f59e0b'); return; }
-  localStorage.setItem('gh_pat', v);
-  document.getElementById('setup-box').style.display = 'none';
-  renderHeader();
-  showToast('✅ Telecomando attivato! Ora puoi usare tutti i pulsanti con 1 tocco.', '#10b981');
+  const v=document.getElementById('gh-token').value.trim();
+  if(!v){ showToast('⚠️ Incolla prima il Token GitHub', '#f59e0b'); return; }
+  localStorage.setItem('gh_pat', v); document.getElementById('setup-box').style.display='none'; renderHeader();
+  showToast('✅ Telecomando attivato!', '#10b981');
 }
-
 async function sendCmd(command, coin, amount_usdt){
   const tok = localStorage.getItem('gh_pat') || document.getElementById('gh-token').value.trim();
-  if(!tok){
-    document.getElementById('setup-box').style.display = 'block';
-    window.scrollTo({top: 180, behavior: 'smooth'});
-    showToast('🔑 Attiva prima il Telecomando incollando il Token GitHub nel riquadro giallo.', '#f59e0b');
-    return;
-  }
-  showToast(`⏳ Invio comando <b>${command.toUpperCase()} ${coin}</b> al bot...`, '#38bdf8');
+  if(!tok){ document.getElementById('setup-box').style.display='block'; showToast('🔑 Inserisci prima il Token GitHub.', '#f59e0b'); return; }
+  showToast(`⏳ Invio comando <b>${command.toUpperCase()} ${coin}</b>...`, '#38bdf8');
   try{
     const r = await fetch(`https://api.github.com/repos/${D.repo}/actions/workflows/${D.workflow}/dispatches`, {
-      method:'POST',
-      headers:{'Authorization':`Bearer ${tok}`,'Accept':'application/vnd.github+json','Content-Type':'application/json'},
+      method:'POST', headers:{'Authorization':`Bearer ${tok}`,'Accept':'application/vnd.github+json','Content-Type':'application/json'},
       body: JSON.stringify({ref: D.ref || 'main', inputs:{command, coin: String(coin||''), amount_usdt: String(amount_usdt||0)}})
     });
-    if(r.status === 204){
-      showToast(`✅ Comando <b>${command.toUpperCase()} ${coin}</b> avviato! Riceverai conferma su Telegram tra ~35 secondi.`, '#10b981');
-    } else {
-      showToast(`❌ GitHub ha rifiutato il comando (HTTP ${r.status}). Verifica che il Token abbia il permesso 'workflow'.`, '#ef4444');
-    }
-  }catch(e){
-    showToast('❌ Errore di connessione: '+e, '#ef4444');
-  }
+    if(r.status === 204) showToast(`✅ Comando avviato!`, '#10b981');
+    else showToast(`❌ Errore HTTP ${r.status}`, '#ef4444');
+  }catch(e){ showToast('❌ Errore: '+e, '#ef4444'); }
 }
-
-function confirmClose(){
-  if(confirm('Vuoi chiudere subito la posizione aperta a prezzo di mercato?')) sendCmd('close','',0);
-}
-function quickBuy(code, usdt){
-  if(confirm(`Vuoi aprire subito un LONG su ${code} (circa ${usdt} USDT)?`)) sendCmd('open', code, usdt);
-}
-function manualOpen(){
-  const c = document.getElementById('man-coin').value;
-  const u = document.getElementById('man-usdt').value || 0;
-  if(confirm(`Confermi apertura LONG su ${c}?`)) sendCmd('open', c, u);
-}
-function manualSellAll(){
-  const c = document.getElementById('man-coin').value;
-  if(confirm(`Confermi la vendita immediata di TUTTO il saldo ${c} su Pionex?`)) sendCmd('sell_all', c, 0);
-}
-
+function confirmClose(){ if(confirm('Chiudere subito la posizione aperta?')) sendCmd('close','',0); }
+function quickBuy(code, usdt){ if(confirm(`Aprire LONG su ${code} (~${usdt} USDT)?`)) sendCmd('open', code, usdt); }
+function manualOpen(){ const c=document.getElementById('man-coin').value, u=document.getElementById('man-usdt').value||0; if(confirm(`LONG su ${c}?`)) sendCmd('open', c, u); }
+function manualSellAll(){ const c=document.getElementById('man-coin').value; if(confirm(`Vendere TUTTO ${c}?`)) sendCmd('sell_all', c, 0); }
 function connectWS(){
   try{
-    const ws = new WebSocket('wss://ws.kraken.com');
-    const pairToCode = {};
-    D.coins.forEach(c => { pairToCode[c.ws] = c.code; });
-    ws.onopen = () => {
-      document.getElementById('ws-pill').textContent = '🟢 Prezzi Live';
-      ws.send(JSON.stringify({event:'subscribe', pair: D.coins.map(c=>c.ws), subscription:{name:'ticker'}}));
-    };
+    const ws = new WebSocket('wss://ws.kraken.com'); const pairToCode = {}; D.coins.forEach(c => { pairToCode[c.ws] = c.code; });
+    ws.onopen = () => { document.getElementById('ws-pill').textContent = '🟢 Prezzi Live'; ws.send(JSON.stringify({event:'subscribe', pair: D.coins.map(c=>c.ws), subscription:{name:'ticker'}})); };
     ws.onmessage = (ev) => {
       const m = JSON.parse(ev.data);
       if(Array.isArray(m) && m[1] && m[1].c){
-        const code = pairToCode[m[3]];
-        const px = parseFloat(m[1].c[0]);
-        if(code && px>0){
-          livePx[code] = px;
-          const el = document.getElementById('px-'+code);
-          if(el) el.textContent = fmtPx(px);
-          if(D.position && D.position.is_open && D.position.coin_code===code) renderPosition();
-        }
+        const code = pairToCode[m[3]], px = parseFloat(m[1].c[0]);
+        if(code && px>0){ livePx[code]=px; const el=document.getElementById('px-'+code); if(el) el.textContent=fmtPx(px); if(D.position&&D.position.is_open&&D.position.coin_code===code) renderPosition(); }
       }
     };
     ws.onclose = () => { document.getElementById('ws-pill').textContent = '🟡 Riconnessione...'; setTimeout(connectWS, 4000); };
   }catch(e){}
 }
-
 (function init(){
   document.getElementById('gh-token').value = localStorage.getItem('gh_pat') || '';
-  const sel = document.getElementById('man-coin');
-  sel.innerHTML = D.coins.map(c=>`<option value="${c.code}">${c.name} (${c.code})</option>`).join('');
-  renderHeader(); renderPosition(); renderCoins(); renderStats();
-  setInterval(renderHeader, 10000);
-  connectWS();
+  document.getElementById('man-coin').innerHTML = D.coins.map(c=>`<option value="${c.code}">${c.name} (${c.code})</option>`).join('');
+  renderHeader(); renderPosition(); renderCoins(); renderStats(); setInterval(renderHeader, 10000); connectWS();
 })();
 </script>
 </body>
@@ -2778,12 +3194,11 @@ _TG_MENU_SET = [False]
 
 
 def ensure_telegram_commands_menu():
-    """Configura il pulsante 'Menu' nativo di Telegram con comandi cliccabili."""
     if _TG_MENU_SET[0] or not TELEGRAM_TOKEN:
         return
     _TG_MENU_SET[0] = True
     commands = [
-        {"command": "status", "description": "🔄 Aggiorna stato e classifica"},
+        {"command": "status", "description": "🔄 Aggiorna stato, 11 Skill e Claude AI"},
         {"command": "close", "description": "🛑 Chiudi subito la posizione aperta"},
         {"command": "open_sol", "description": "🚀 Apri Long su SOL"},
         {"command": "open_btc", "description": "🚀 Apri Long su BTC"},
@@ -2798,7 +3213,6 @@ def ensure_telegram_commands_menu():
 
 
 def build_telegram_inline_keyboard(ranked_evals, state):
-    """Costruisce i pulsanti cliccabili da mostrare sotto ogni messaggio Telegram."""
     pos = state["position"]
     rows = []
 
@@ -2847,7 +3261,6 @@ def send_telegram_message(text, reply_markup=None):
     try:
         r = SESSION.post(url, json=payload, timeout=HTTP_TIMEOUT)
         if r.status_code != 200:
-            log("WARN", f"Telegram HTML HTTP {r.status_code} ({r.text[:120]}), riprovo in testo semplice...")
             plain = re.sub(r"<[^>]+>", "", text)
             fallback = {"chat_id": TELEGRAM_CHAT_ID, "text": plain, "disable_web_page_preview": True}
             if reply_markup:
@@ -2862,13 +3275,18 @@ def send_telegram_message(text, reply_markup=None):
 def build_telegram_report(ranked_evals, state, trade_status, fng_val, fng_class, session_str, eur_usd):
     pos, stats = state["position"], state["stats"]
     mode_str = "🟢 LIVE PIONEX" if pionex_live_enabled() else "🧪 SIMULAZIONE"
+    claude_badge = f"🧠 {CLAUDE_MODEL}" if CLAUDE_ENABLED else "⚙️ Quant-Only"
     lines = [
-        f"🤖 <b>PIONEX FREQAI v10</b> ({mode_str})",
+        f"🤖 <b>PIONEX CLAUDE 11-SKILLS v11</b> ({mode_str} | {html_lib.escape(claude_badge)})",
         f"🌍 {html_lib.escape(session_str)} | {html_lib.escape(BTC_REGIME['label'])} | F&G: <b>{fng_val}</b>",
         "",
         f"<b>{html_lib.escape(trade_status['headline'])}</b>",
         f"{html_lib.escape(trade_status['detail'])}",
     ]
+
+    cv = stats.get("claude_last_verdict") or {}
+    if CLAUDE_ENABLED and cv.get("reason_it"):
+        lines.append(f"🧠 <i>Claude Supervisor ({cv.get('decision', '')}, {cv.get('confidence', 0)}%): {html_lib.escape(cv['reason_it'])}</i>")
 
     for al in trade_status.get("alerts_fired", []):
         lines.append(f"• {html_lib.escape(al)}")
@@ -2884,14 +3302,15 @@ def build_telegram_report(ranked_evals, state, trade_status, fng_val, fng_class,
 
     lines.extend([
         "",
-        "🏆 <b>TOP 5 COIN DEL MOMENTO:</b>",
+        "🏆 <b>TOP 5 COIN (11-SKILL SCORE):</b>",
     ])
     for i, ev in enumerate(ranked_evals[:5], 1):
-        flag = "🟢" if entry_conditions(ev) else ("🟡" if ev["raw_100"] >= 54 else "⚪")
+        flag = "🟢" if entry_conditions(ev) else ("🟡" if ev["raw_100"] >= 58 else "⚪")
+        rr = ev["risk_manager"]["rr_ratio"]
         lines.append(
             f"{i}. {flag} <b>{ev['code']}</b> ({fmt_price(ev['price'])}) — "
-            f"Forza: <b>{ev['raw_100']}%</b> ({ev['final_score']}/10) | "
-            f"AI: <b>{ev['ai_prob']*100:.0f}%</b> | 15m: {ev['scanner_timer']['triggers']}/4"
+            f"<b>{ev['raw_100']}%</b> ({ev['final_score']}/10) | "
+            f"AI: <b>{ev['ai_prob']*100:.0f}%</b> | R:R <b>{rr:.2f}x</b> | 15m: {ev['scanner_timer']['triggers']}/5"
         )
 
     wr = (stats["wins"] / stats["total_trades"] * 100.0) if stats["total_trades"] > 0 else 0.0
@@ -2907,12 +3326,7 @@ def build_telegram_report(ranked_evals, state, trade_status, fng_val, fng_class,
 # ==============================================================================
 # 13. ESECUZIONE CICLO COMPLETO + MODALITA' CONTINUA 24/7 (TICK GUARDIAN)
 # ==============================================================================
-ALWAYS_ON_24_7 = _env("ALWAYS_ON_24_7", "true").lower() == "true"
-TELEGRAM_ROUTINE_MIN = int(_env("TELEGRAM_ROUTINE_MIN", 30))
-
-
 def sync_live_files_to_github():
-    """Pubblica subito bot_state.json e index.html su GitHub Pages durante il loop 24/7."""
     if not os.getenv("GITHUB_ACTIONS"):
         return
     try:
@@ -2929,7 +3343,6 @@ def sync_live_files_to_github():
 
 
 def should_send_telegram_now(state, trade_status, ranked_evals, force=False):
-    """Invia sempre subito per eventi/comandi/segnali; limita i report di routine a ogni TELEGRAM_ROUTINE_MIN minuti."""
     if force:
         return True
     act = trade_status.get("action_state", "")
@@ -2944,14 +3357,14 @@ def should_send_telegram_now(state, trade_status, ranked_evals, force=False):
 
 
 def run_full_cycle(state, manual_override=None, force_telegram=False):
-    """Esegue una scansione completa multi-timeframe + FreqAI su tutte le 10 coin."""
     LIVE_PX.clear()
     LIVE_PX.update(fetch_pionex_prices())
     eur_usd = fetch_eur_usd_rate()
     futures_map = fetch_all_kraken_futures()
     fng_val, fng_class = fetch_fear_and_greed()
     macro_events = fetch_macro_calendar()
-    session_str = skill_nyse_bell_and_session()
+    s6_global = skill_06_macro_and_session(macro_events)
+    session_str = s6_global["session_str"]
 
     all_evals = scan_all_coins(COINS, futures_map, fng_val, macro_events)
     pos = state["position"]
@@ -2964,10 +3377,10 @@ def run_full_cycle(state, manual_override=None, force_telegram=False):
         return None
 
     for code, ev in all_evals.items():
-        ev["risk_manager"] = skill_budget_and_risk_manager(
+        ev["risk_manager"] = skill_09_adaptive_risk_and_sizing(
             INVEST_EUR, eur_usd, ev["price"], ev["sl_price"], ev["tp_price"], state, ev["high_soon"], code, ev
         )
-        ev["exit_plan"] = skill_exit_planner(ev["price"], ev["sl_price"], ev["tp_price"])
+        ev["exit_plan"] = skill_10_exit_planner(ev["price"], ev["sl_price"], ev["tp_price"])
 
     ranked_evals = sorted(all_evals.values(), key=lambda x: (x["raw_100"], x["ai_prob"]), reverse=True)
 
@@ -2982,7 +3395,10 @@ def run_full_cycle(state, manual_override=None, force_telegram=False):
     else:
         if cmd_obj and cmd_obj.get("command") == "status":
             force_telegram = True
-        trade_status = manage_autonomous_trading(state, ranked_evals, all_evals, eur_usd)
+        trade_status = manage_autonomous_trading(
+            state, ranked_evals, all_evals, eur_usd,
+            fng_val=fng_val, session_str=session_str, macro_events=macro_events
+        )
 
     generate_webapp_html(ranked_evals, state, trade_status, fng_val, fng_class, session_str, eur_usd, macro_events)
 
@@ -3010,14 +3426,14 @@ def run_full_cycle(state, manual_override=None, force_telegram=False):
 def run_continuous_guardian(state, ctx):
     pos = state["position"]
     best = ctx["ranked_evals"][0] if ctx["ranked_evals"] else None
-    is_hot = bool(best and best["raw_100"] >= 54 and best["risk_manager"]["passed"])
+    is_hot = bool(best and best["raw_100"] >= 60 and best["risk_manager"]["passed"])
 
     if DAEMON_MODE:
         max_seconds = 10 ** 9
         log("INFO", f"DAEMON_MODE=true: loop infinito 24/7 (tick {GUARDIAN_TICK_SEC}s, rescan AI {GUARDIAN_RESCAN_SEC}s).")
     elif ALWAYS_ON_24_7 or pos["is_open"]:
         max_seconds = int(GUARDIAN_MINUTES_OPEN * 60)
-        log("INFO", f"Modalita' Continua 24/7 attiva per {GUARDIAN_MINUTES_OPEN:.1f} min (tick prezzi/Telegram ogni {GUARDIAN_TICK_SEC}s, rescan AI ogni {GUARDIAN_RESCAN_SEC}s).")
+        log("INFO", f"Modalita' Continua 24/7 attiva per {GUARDIAN_MINUTES_OPEN:.1f} min (tick {GUARDIAN_TICK_SEC}s, rescan AI {GUARDIAN_RESCAN_SEC}s).")
     elif is_hot:
         max_seconds = int(GUARDIAN_MINUTES_HOT * 60)
         log("INFO", f"Setup quasi pronto su {best['code']} ({best['raw_100']}/100): Tick Guardian per {GUARDIAN_MINUTES_HOT:.1f} min.")
@@ -3036,7 +3452,6 @@ def run_continuous_guardian(state, ctx):
         if px_now:
             LIVE_PX.update(px_now)
 
-        # Ascolto istantaneo dei pulsanti Telegram ogni 15s
         tg_cmd = poll_telegram_commands(state)
         if tg_cmd:
             c_type = tg_cmd["command"]
@@ -3053,10 +3468,9 @@ def run_continuous_guardian(state, ctx):
                 generate_webapp_html(ctx["ranked_evals"], state, st, ctx["fng_val"], ctx["fng_class"], ctx["session_str"], ctx["eur_usd"], ctx["macro_events"])
                 sync_live_files_to_github()
 
-        # Controllo posizione aperta ogni 15s (SL, TP, Break-Even, Scale-Out 50%)
         if state["position"]["is_open"]:
             capital_usdt = INVEST_EUR * ctx["eur_usd"]
-            st = _manage_open_position(state, ctx["all_evals"], capital_usdt, now_str, now_ts)
+            st = _manage_open_position(state, ctx["all_evals"], capital_usdt, now_str, now_ts, allow_claude=False)
             ctx["trade_status"] = st
 
             if st.get("alerts_fired"):
@@ -3072,17 +3486,16 @@ def run_continuous_guardian(state, ctx):
                 generate_webapp_html(ctx["ranked_evals"], state, st, ctx["fng_val"], ctx["fng_class"], ctx["session_str"], ctx["eur_usd"], ctx["macro_events"])
                 sync_live_files_to_github()
 
-        # Rianalisi completa 15m/1h + FreqAI ogni 5 minuti
         if time.monotonic() - last_rescan >= GUARDIAN_RESCAN_SEC:
             last_rescan = time.monotonic()
-            log("INFO", "Tick Guardian 24/7: rianalisi completa 15m/1h + FreqAI...")
+            log("INFO", "Tick Guardian 24/7: rianalisi completa 11 Skill + FreqAI + Claude...")
             new_ctx = run_full_cycle(state, force_telegram=False)
             if new_ctx:
                 ctx = new_ctx
 
 
 def main():
-    log("INFO", f"Avvio Pionex Freqtrade + FreqAI Engine v10.0 (Evento: {GITHUB_EVENT_NAME}, 24/7={ALWAYS_ON_24_7}, AutoTrade={AUTO_TRADE_ENABLED}, Live={pionex_live_enabled()})")
+    log("INFO", f"Avvio Pionex Claude 11-Skills Engine v11.0 (Claude={CLAUDE_ENABLED}/{CLAUDE_MODEL}, 24/7={ALWAYS_ON_24_7}, Live={pionex_live_enabled()})")
     state = load_state()
 
     manual_override = None
@@ -3097,7 +3510,6 @@ def main():
 
     run_continuous_guardian(state, ctx)
 
-    # Passa il testimone al ciclo successivo per coprire 24/7 senza interruzioni
     if (ALWAYS_ON_24_7 or state["position"]["is_open"]) and not DAEMON_MODE:
         trigger_self_chain_dispatch()
 
