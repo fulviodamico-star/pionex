@@ -247,7 +247,7 @@
     "opened_ts": 1794989226,
     "mode": "SIMULATION",
     "order_id": "SIM",
-    "last_check_ts": 1794997127,
+    "last_check_ts": 1794997435,
     "close_fail_count": 0,
     "enter_tag": "freqai_tb_82_ai_52",
     "partial_tp_done": false,
@@ -279,6 +279,6 @@
       "XRP": 1794917999
     },
     "last_tg_update_id": 990621660,
-    "last_report_ts": 1794995494
+    "last_report_ts": 1794997435
   }
 }
