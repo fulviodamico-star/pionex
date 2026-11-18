@@ -1,5 +1,6 @@
 import os
 import re
+import sys
 import json
 import time
 import math
@@ -10,9 +11,7 @@ import statistics
 import threading
 import html as html_lib
 import xml.etree.ElementTree as ET
-from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from email.utils import parsedate_to_datetime
 from zoneinfo import ZoneInfo
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import urlencode
@@ -21,147 +20,138 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-try:
-    import pandas as pd
-    HAS_PANDAS = True
-except ImportError:
-    pd = None
-    HAS_PANDAS = False
-
-try:
-    from sklearn.ensemble import HistGradientBoostingClassifier
-    import numpy as np
-    HAS_SKLEARN = True
-except ImportError:
-    HAS_SKLEARN = False
+STRAT_VER = "v11"
 
 
 # ==============================================================================
-# CONFIGURAZIONE
+# 0. CONFIGURAZIONE
 # ==============================================================================
 def _env(name, default):
     v = os.getenv(name)
     return v.strip() if v is not None and v.strip() != "" else str(default)
 
 
-TELEGRAM_TOKEN = (
-    os.getenv("TELEGRAM_TOKEN") or os.getenv("TELEGRAM_BOT_TOKEN")
-    or os.getenv("BOT_TOKEN") or os.getenv("TOKEN") or ""
-).strip()
-TELEGRAM_CHAT_ID = (
-    os.getenv("TELEGRAM_CHAT_ID") or os.getenv("CHAT_ID") or os.getenv("TELEGRAM_CHAT") or ""
-).strip()
+def _envf(name, default):
+    try:
+        return float(_env(name, default))
+    except ValueError:
+        return float(default)
+
+
+def _envi(name, default):
+    return int(_envf(name, default))
+
+
+def _envb(name, default):
+    return _env(name, default).lower() in ("1", "true", "yes", "on", "y")
+
+
+TELEGRAM_TOKEN = (os.getenv("TELEGRAM_TOKEN") or os.getenv("TELEGRAM_BOT_TOKEN")
+                  or os.getenv("BOT_TOKEN") or os.getenv("TOKEN") or "").strip()
+TELEGRAM_CHAT_ID = (os.getenv("TELEGRAM_CHAT_ID") or os.getenv("CHAT_ID") or os.getenv("TELEGRAM_CHAT") or "").strip()
 PIONEX_API_KEY = (os.getenv("PIONEX_API_KEY") or os.getenv("API_KEY") or "").strip()
 PIONEX_API_SECRET = (os.getenv("PIONEX_API_SECRET") or os.getenv("API_SECRET") or "").strip()
 GITHUB_TOKEN = (os.getenv("GH_PAT") or os.getenv("GITHUB_TOKEN") or "").strip()
 GITHUB_REPO = _env("GITHUB_REPOSITORY", "")
 GITHUB_EVENT_NAME = _env("GITHUB_EVENT_NAME", "manual")
-
-# Configurazione Claude 5.5 AI (API version 2026-10-21)
-ANTHROPIC_API_KEY = (os.getenv("ANTHROPIC_API_KEY") or os.getenv("CLAUDE_API_KEY") or "").strip()
-CLAUDE_ENABLED = _env("CLAUDE_ENABLED", "true").lower() == "true" and bool(ANTHROPIC_API_KEY)
-CLAUDE_MODEL = _env("CLAUDE_MODEL", "claude-sonnet-5-5")          # claude-sonnet-5-5 | claude-opus-5-5 | claude-fable-5-2
-CLAUDE_FAST_MODEL = _env("CLAUDE_FAST_MODEL", "claude-haiku-5-5")  # Modello veloce per triage aperto
-CLAUDE_EFFORT = _env("CLAUDE_EFFORT", "high")                      # low | medium | high
-CLAUDE_COOLDOWN_SEC = int(_env("CLAUDE_COOLDOWN_SEC", 240))        # Rate-limit chiamate Claude su monitoraggio
-CLAUDE_API_VERSION = "2026-10-21"
+ANTHROPIC_KEY = (os.getenv("ANTHROPIC_API_KEY") or "").strip()
 
 MANUAL_COMMAND = _env("MANUAL_COMMAND", "").lower()
 MANUAL_COIN = _env("MANUAL_COIN", "").upper()
-try:
-    MANUAL_USDT = float(_env("MANUAL_USDT", 0))
-except ValueError:
-    MANUAL_USDT = 0.0
+MANUAL_USDT = _envf("MANUAL_USDT", 0)
 
-INVEST_EUR = float(_env("INVEST_EUR", 50.0))
-AUTO_TRADE_ENABLED = _env("AUTO_TRADE_ENABLED", "false").lower() == "true"
+INVEST_EUR = _envf("INVEST_EUR", 50.0)
+AUTO_TRADE_ENABLED = _envb("AUTO_TRADE_ENABLED", "false")
+DAEMON_MODE = _envb("DAEMON_MODE", "false")
+ALWAYS_ON_24_7 = _envb("ALWAYS_ON_24_7", "true")
+GUARDIAN_MINUTES = _envf("GUARDIAN_MINUTES_OPEN", 18.0)
+GUARDIAN_TICK_SEC = _envi("GUARDIAN_TICK_SEC", 15)
+GUARDIAN_RESCAN_SEC = _envi("GUARDIAN_RESCAN_SEC", 300)
+SELF_CHAIN_WHEN_OPEN = _envb("SELF_CHAIN_WHEN_OPEN", "true")
+TELEGRAM_ROUTINE_MIN = _envi("TELEGRAM_ROUTINE_MIN", 30)
 
-# Modalita' Continua / Tick Guardian
-DAEMON_MODE = _env("DAEMON_MODE", "false").lower() == "true"
-ALWAYS_ON_24_7 = _env("ALWAYS_ON_24_7", "true").lower() == "true"
-TELEGRAM_ROUTINE_MIN = int(_env("TELEGRAM_ROUTINE_MIN", 30))
-GUARDIAN_MINUTES_OPEN = float(_env("GUARDIAN_MINUTES_OPEN", 18.0))
-GUARDIAN_MINUTES_HOT = float(_env("GUARDIAN_MINUTES_HOT", 6.0))
-GUARDIAN_TICK_SEC = int(_env("GUARDIAN_TICK_SEC", 15))
-GUARDIAN_RESCAN_SEC = int(_env("GUARDIAN_RESCAN_SEC", 300))
-SELF_CHAIN_WHEN_OPEN = _env("SELF_CHAIN_WHEN_OPEN", "true").lower() == "true"
-PARTIAL_TP_ENABLED = _env("PARTIAL_TP_ENABLED", "true").lower() == "true"
+# --- costi (percentuali per lato) ---
+FEE_SIDE = _envf("FEE_PCT_PER_SIDE", 0.05)
+SLIP_SIDE = _envf("SLIPPAGE_PCT_PER_SIDE", 0.05)      # slippage simulato: la SIM non e' piu' ottimistica
+COST_RT = 2.0 * (FEE_SIDE + SLIP_SIDE)                # costo andata/ritorno in %
 
-# Ingressi / Rischio (Calibrati per alta qualita' e R:R positivo)
-Entry_Score_Min = int(_env("ENTRY_SCORE_MIN", 7))
-Entry_Raw_100_Min = int(_env("ENTRY_RAW_100_MIN", 68))
-Entry_AI_Prob_Min = float(_env("ENTRY_AI_PROB_MIN", 0.56))
-RISK_PER_TRADE_PCT = float(_env("RISK_PER_TRADE_PCT", 1.5))
-DAILY_MAX_LOSS_PCT = float(_env("DAILY_MAX_LOSS_PCT", 4.0))
-MAX_TRADES_PER_DAY = int(_env("MAX_TRADES_PER_DAY", 4))
-MAX_CONSEC_LOSSES = int(_env("MAX_CONSEC_LOSSES", 3))
-MIN_REWARD_RISK_R = float(_env("MIN_REWARD_RISK_R", 1.55))
-CASH_BUFFER_PCT = 5.0
-MIN_ORDER_USDT = float(_env("MIN_ORDER_USDT", 10.5))
-FEE_PCT_PER_SIDE = float(_env("FEE_PCT_PER_SIDE", 0.05))
-PIONEX_FEE_ROUNDTRIP_PCT = 2.0 * FEE_PCT_PER_SIDE
-SCALP_MIN_NET_PROFIT_PCT = 1.35
-TIME_STOP_PROFIT_HOURS = 8.0
-TIME_STOP_STALE_HOURS = 10.0
+# --- piano di uscita (skill exit) ---
+ATR_STOP_K = _envf("ATR_STOP_K", 1.6)                 # stop = entry - K*ATR(1h) (o sotto minimo ultime 3 barre)
+MIN_STOP_PCT = _envf("MIN_STOP_PCT", 0.7)             # stop minimo (sotto = rumore + costi)
+MAX_STOP_PCT = _envf("MAX_STOP_PCT", 3.0)             # stop troppo lontano = rifiuto
+TARGET_R = _envf("TARGET_R", 2.0)
+MIN_RR_NET = _envf("MIN_RR_NET", 1.5)                 # R:R netto minimo dopo i costi
+BE_AT_R = _envf("BE_AT_R", 1.0)                       # a +1R stop a break-even netto
+TRAIL_START_R = _envf("TRAIL_START_R", 1.5)
+TRAIL_R = _envf("TRAIL_R", 0.9)
+MAX_HOLD_H = _envi("MAX_HOLD_HOURS", 10)              # time-stop (equivale al "flat by")
 
-# Finestra operativa (UTC)
-ENTRY_START_UTC = int(_env("ENTRY_START_UTC", 6))
-ENTRY_END_UTC = int(_env("ENTRY_END_UTC", 22))
-MIN_MINUTES_BETWEEN_TRADES = int(_env("MIN_MINUTES_BETWEEN_TRADES", 60))
-COOLDOWN_AFTER_LOSS_MIN = int(_env("COOLDOWN_AFTER_LOSS_MIN", 180))
-SAME_COIN_COOLDOWN_H = float(_env("SAME_COIN_COOLDOWN_H", 6.0))
+# --- setup / filtri ---
+MAX_EXT_ATR = _envf("MAX_EXTENSION_ATR", 0.6)         # non inseguire: prezzo <= livello + 0.6 ATR
+MAX_PUMP_24H_PCT = _envf("MAX_PUMP_24H_PCT", 12.0)
+MAX_SPREAD_BPS = _envf("MAX_SPREAD_BPS", 20.0)
+FUNDING_MAX_PCT = _envf("FUNDING_MAX_8H_PCT", 0.04)
+
+# --- edge (Time Machine) ---
+MIN_POOL_N = _envi("MIN_POOL_N", 25)
+MIN_EXP_R = _envf("MIN_EXP_R", 0.10)
+MC_PATHS = _envi("MC_PATHS", 1500)
+MC_MIN_P_TARGET = _envf("MC_MIN_P_TARGET", 0.28)
+
+# --- rischio (skill budget + risk) ---
+RISK_PER_TRADE_PCT = _envf("RISK_PER_TRADE_PCT", 1.0)
+DAILY_MAX_LOSS_PCT = _envf("DAILY_MAX_LOSS_PCT", 3.0)
+MAX_TRADES_PER_DAY = _envi("MAX_TRADES_PER_DAY", 4)
+MAX_CONSEC_LOSSES = _envi("MAX_CONSEC_LOSSES", 3)
+CASH_BUFFER_PCT = _envf("CASH_BUFFER_PCT", 5.0)
+MIN_ORDER_USDT = _envf("MIN_ORDER_USDT", 10.5)
+ENTRY_START_UTC = _envi("ENTRY_START_UTC", 7)
+ENTRY_END_UTC = _envi("ENTRY_END_UTC", 21)
+MIN_MINUTES_BETWEEN_TRADES = _envi("MIN_MINUTES_BETWEEN_TRADES", 60)
+COOLDOWN_AFTER_LOSS_MIN = _envi("COOLDOWN_AFTER_LOSS_MIN", 180)
+SAME_COIN_COOLDOWN_H = _envf("SAME_COIN_COOLDOWN_H", 6.0)
+ENTRY_SCORE_MIN = _envi("ENTRY_SCORE_MIN", 45)
+MIN_ORDER_FLOOR = MIN_ORDER_USDT
+
+# --- passaggio al live (skill broker) ---
+LIVE_PROOF_REQUIRED = _envb("LIVE_PROOF_REQUIRED", "true")
+PROOF_MIN_TRADES = _envi("PROOF_MIN_TRADES", 20)
+PROOF_MIN_EXP_R = _envf("PROOF_MIN_EXP_R", 0.10)
+REQUIRE_APPROVAL = _envb("REQUIRE_APPROVAL", "false")  # true = ogni acquisto LIVE chiede OK su Telegram
+PENDING_TTL_MIN = _envi("PENDING_TTL_MIN", 10)
+
+# --- revisore Claude (opzionale, solo VETO) ---
+CLAUDE_REVIEW = _envb("CLAUDE_REVIEW_ENABLED", "false")
+CLAUDE_MODEL = _env("CLAUDE_MODEL", "claude-haiku-5-5")
 
 STATE_FILE = "bot_state.json"
-WEBAPP_FILE = "index.html"
+SNAPSHOT_FILE = "bot_snapshot.json"
 HTTP_TIMEOUT = 12
 PIONEX_BASE = "https://api.pionex.com"
-HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; PionexClaudeQuantBot/11.1)"}
+HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; PionexEdgeBot/11.0)"}
 
 COINS = [
-    {"code": "SOL",  "name": "Solana",    "kraken": "SOLUSD",  "ws": "SOL/USD",  "futures": "PF_SOLUSD",  "pionex": "SOL_USDT",  "prec": 3},
-    {"code": "BTC",  "name": "Bitcoin",   "kraken": "XBTUSD",  "ws": "XBT/USD",  "futures": "PF_XBTUSD",  "pionex": "BTC_USDT",  "prec": 5},
-    {"code": "ETH",  "name": "Ethereum",  "kraken": "ETHUSD",  "ws": "ETH/USD",  "futures": "PF_ETHUSD",  "pionex": "ETH_USDT",  "prec": 4},
-    {"code": "XRP",  "name": "Ripple",    "kraken": "XRPUSD",  "ws": "XRP/USD",  "futures": "PF_XRPUSD",  "pionex": "XRP_USDT",  "prec": 1},
-    {"code": "SUI",  "name": "Sui",       "kraken": "SUIUSD",  "ws": "SUI/USD",  "futures": "PF_SUIUSD",  "pionex": "SUI_USDT",  "prec": 2},
-    {"code": "DOGE", "name": "Dogecoin",  "kraken": "XDGUSD",  "ws": "XDG/USD",  "futures": "PF_DOGEUSD", "pionex": "DOGE_USDT", "prec": 0},
-    {"code": "ADA",  "name": "Cardano",   "kraken": "ADAUSD",  "ws": "ADA/USD",  "futures": "PF_ADAUSD",  "pionex": "ADA_USDT",  "prec": 1},
-    {"code": "AVAX", "name": "Avalanche", "kraken": "AVAXUSD", "ws": "AVAX/USD", "futures": "PF_AVAXUSD", "pionex": "AVAX_USDT", "prec": 2},
-    {"code": "LINK", "name": "Chainlink", "kraken": "LINKUSD", "ws": "LINK/USD", "futures": "PF_LINKUSD", "pionex": "LINK_USDT", "prec": 2},
-    {"code": "DOT",  "name": "Polkadot",  "kraken": "DOTUSD",  "ws": "DOT/USD",  "futures": "PF_DOTUSD",  "pionex": "DOT_USDT",  "prec": 2},
+    {"code": "SOL",  "name": "Solana",    "kraken": "SOLUSD",  "futures": "PF_SOLUSD",  "pionex": "SOL_USDT",  "prec": 3},
+    {"code": "BTC",  "name": "Bitcoin",   "kraken": "XBTUSD",  "futures": "PF_XBTUSD",  "pionex": "BTC_USDT",  "prec": 5},
+    {"code": "ETH",  "name": "Ethereum",  "kraken": "ETHUSD",  "futures": "PF_ETHUSD",  "pionex": "ETH_USDT",  "prec": 4},
+    {"code": "XRP",  "name": "Ripple",    "kraken": "XRPUSD",  "futures": "PF_XRPUSD",  "pionex": "XRP_USDT",  "prec": 1},
+    {"code": "SUI",  "name": "Sui",       "kraken": "SUIUSD",  "futures": "PF_SUIUSD",  "pionex": "SUI_USDT",  "prec": 2},
+    {"code": "DOGE", "name": "Dogecoin",  "kraken": "XDGUSD",  "futures": "PF_DOGEUSD", "pionex": "DOGE_USDT", "prec": 0},
+    {"code": "ADA",  "name": "Cardano",   "kraken": "ADAUSD",  "futures": "PF_ADAUSD",  "pionex": "ADA_USDT",  "prec": 1},
+    {"code": "AVAX", "name": "Avalanche", "kraken": "AVAXUSD", "futures": "PF_AVAXUSD", "pionex": "AVAX_USDT", "prec": 2},
+    {"code": "LINK", "name": "Chainlink", "kraken": "LINKUSD", "futures": "PF_LINKUSD", "pionex": "LINK_USDT", "prec": 2},
+    {"code": "DOT",  "name": "Polkadot",  "kraken": "DOTUSD",  "futures": "PF_DOTUSD",  "pionex": "DOT_USDT",  "prec": 2},
 ]
 COIN_MAP = {c["code"]: c for c in COINS}
 LIVE_PX = {}
-BTC_REGIME = {
-    "state": "NEUTRAL", "rsi_15m": 50.0, "ret_1h_pct": 0.0, "ret_4h_pct": 0.0,
-    "allow_alts": True, "label": "⚪ BTC Neutrale"
-}
-BTC_CONTEXT = {"ret_1h": 0.0, "ret_4h": 0.0, "candles_15m": [], "candles_1h": []}
-
-FREQTRADE_CONFIG = {
-    "stake_currency": "USDT",
-    "dry_run": not bool(PIONEX_API_KEY and PIONEX_API_SECRET and AUTO_TRADE_ENABLED),
-    "timeframe": "1h",
-    "freqai": {
-        "enabled": True,
-        "conv_width": 1,
-        "train_period_candles": 360,
-        "backtest_period_candles": 80,
-        "identifier": "pionex_claude_11skills_v11",
-        "feature_parameters": {
-            "include_timeframes": ["15m", "1h", "4h"],
-            "indicator_periods_candles": [14, 20, 50],
-            "label_period_candles": 8,
-            "DI_threshold": 2.4,
-            "weight_factor": 0.9,
-        },
-    },
-}
+BTC_REGIME = {"state": "NEUTRAL", "allow_alts": True, "label": "⚪ BTC neutrale"}
+MACRO_STATUS = {"ok": False}
 
 
 # ==============================================================================
 # 1. UTILITA'
 # ==============================================================================
-_SECRETS = [s for s in (TELEGRAM_TOKEN, PIONEX_API_KEY, PIONEX_API_SECRET, GITHUB_TOKEN, ANTHROPIC_API_KEY) if s]
+_SECRETS = [s for s in (TELEGRAM_TOKEN, PIONEX_API_KEY, PIONEX_API_SECRET, GITHUB_TOKEN, ANTHROPIC_KEY) if s]
 
 
 def redact(text):
@@ -172,18 +162,14 @@ def redact(text):
 
 
 def log(level, msg):
-    ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
-    print(f"[{ts}][{level}] {redact(msg)}", flush=True)
+    print(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}][{level}] {redact(msg)}", flush=True)
 
 
 def _build_session():
     s = requests.Session()
-    retry = Retry(
-        total=2, backoff_factor=0.7, status_forcelist=(429, 500, 502, 503, 504),
-        allowed_methods=frozenset(["GET"]), respect_retry_after_header=True,
-    )
-    adapter = HTTPAdapter(max_retries=retry, pool_connections=8, pool_maxsize=8)
-    s.mount("https://", adapter)
+    retry = Retry(total=2, backoff_factor=0.7, status_forcelist=(429, 500, 502, 503, 504),
+                  allowed_methods=frozenset(["GET"]), respect_retry_after_header=True)
+    s.mount("https://", HTTPAdapter(max_retries=retry, pool_connections=8, pool_maxsize=8))
     s.headers.update(HEADERS)
     return s
 
@@ -222,13 +208,12 @@ def safe_get_json(url, params=None, retries=2):
     return None
 
 
-def clamp(val, low, high):
-    return max(low, min(high, val))
+def clamp(v, lo, hi):
+    return max(lo, min(hi, v))
 
 
 def sigmoid(x):
-    x = clamp(x, -20.0, 20.0)
-    return 1.0 / (1.0 + math.exp(-x))
+    return 1.0 / (1.0 + math.exp(-clamp(x, -20.0, 20.0)))
 
 
 def fmt_price(p):
@@ -253,44 +238,83 @@ def fmt_qty(x, scale):
     return s.rstrip("0").rstrip(".") if "." in s else s
 
 
+def _isnum(s):
+    try:
+        float(s)
+        return True
+    except (TypeError, ValueError):
+        return False
+
+
+def summarize(rs):
+    """Statistiche di una lista di R-multipli netti (1R = perdita massima pianificata)."""
+    n = len(rs)
+    if n == 0:
+        return {"n": 0, "exp_r": 0.0, "se": 0.0, "wr": 0.0, "pf": 0.0}
+    mean = sum(rs) / n
+    sd = statistics.pstdev(rs) if n > 1 else 0.0
+    gp = sum(r for r in rs if r > 0)
+    gl = -sum(r for r in rs if r < 0)
+    return {"n": n, "exp_r": mean, "se": sd / math.sqrt(n), "wr": 100.0 * sum(1 for r in rs if r > 0) / n,
+            "pf": (gp / gl) if gl > 0 else (9.99 if gp > 0 else 0.0)}
+
+
+def session_label():
+    now = datetime.now(timezone.utc)
+    ny = now.astimezone(ZoneInfo("America/New_York"))
+    if ny.weekday() < 5:
+        o = ny.replace(hour=9, minute=30, second=0, microsecond=0).astimezone(timezone.utc)
+        c = ny.replace(hour=16, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
+        if abs((now - o).total_seconds()) <= 1800:
+            return "🔔 Apertura NYSE (alta volatilita')"
+        if o < now <= c:
+            return "🇺🇸 Wall Street aperta"
+    m = now.hour * 60 + now.minute
+    if 7 * 60 <= m < 13 * 60:
+        return "🇪🇺 Sessione europea"
+    return "📅 Weekend (liquidita' ridotta)" if now.weekday() >= 5 else "🌏 Sessione asiatica/notturna"
+
+
 # ==============================================================================
-# 2. MEMORIA PERSISTENTE
+# 2. STATO PERSISTENTE
 # ==============================================================================
-def load_state():
-    default_state = {
+def default_state():
+    return {
         "position": {
-            "is_open": False, "coin_code": "SOL", "symbol": "SOL_USDT",
-            "entry_price": 0.0, "amount_coin": 0.0, "invested_usdt": 0.0,
+            "is_open": False, "coin_code": "SOL", "symbol": "SOL_USDT", "setup": "", "level": 0.0,
+            "entry_price": 0.0, "amount_coin": 0.0, "invested_usdt": 0.0, "max_loss_usdt": 0.0,
             "sl_price": 0.0, "tp_price": 0.0, "initial_sl": 0.0, "one_r": 0.0,
-            "highest_price": 0.0, "atr_15m": 0.0, "breakeven_locked": False, "tp1_locked": False,
-            "tp2_locked": False, "partial_tp_done": False, "realized_partial_usdt": 0.0,
-            "alerts_triggered": [], "opened_at": "", "opened_ts": 0,
-            "last_check_ts": 0, "close_fail_count": 0, "mode": "SIMULATION", "order_id": "",
-            "enter_tag": "freqai_claude_11skills"
+            "highest_price": 0.0, "lowest_price": 0.0, "be_locked": False, "trail_on": False,
+            "time_warned": False, "opened_at": "", "opened_ts": 0, "last_check_ts": 0,
+            "close_fail_count": 0, "mode": "SIMULATION", "order_id": "", "enter_tag": "",
         },
         "stats": {
             "total_trades": 0, "wins": 0, "losses": 0, "total_pnl_pct": 0.0, "total_pnl_usdt": 0.0,
             "daily_date": "", "daily_pnl_pct": 0.0, "daily_pnl_usdt": 0.0, "daily_trades": 0,
-            "consec_losses": 0, "last_close_ts": 0, "last_loss_ts": 0, "coin_last_close": {},
-            "last_tg_update_id": 0, "last_report_ts": 0,
-            "claude_last_call_ts": 0, "claude_last_verdict": {},
-            "last_action": "Nessuna operazione recente"
+            "daily_risk_usdt": 0.0, "consec_losses": 0, "last_close_ts": 0, "last_loss_ts": 0,
+            "coin_last_close": {}, "last_tg_update_id": 0, "last_action": "Nessuna operazione recente",
+            "paused_until_ts": 0, "last_report_ts": 0,
         },
-        "history": []
+        "history": [], "pending": None, "reviews": [],
     }
+
+
+def load_state():
+    st = default_state()
     if os.path.exists(STATE_FILE):
         try:
             with open(STATE_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            for k, v in default_state["position"].items():
-                data.setdefault("position", {}).setdefault(k, v)
-            for k, v in default_state["stats"].items():
-                data.setdefault("stats", {}).setdefault(k, v)
-            data.setdefault("history", [])
+            for sec in ("position", "stats"):
+                data.setdefault(sec, {})
+                for k, v in st[sec].items():
+                    data[sec].setdefault(k, v)
+            for k in ("history", "pending", "reviews"):
+                data.setdefault(k, st[k])
             return data
         except Exception as e:
             log("WARN", f"Impossibile leggere {STATE_FILE}: {e}")
-    return default_state
+    return st
 
 
 def save_state(state):
@@ -303,8 +327,15 @@ def save_state(state):
         log("ERROR", f"Salvataggio {STATE_FILE} fallito: {e}")
 
 
+def roll_daily(stats):
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    if stats.get("daily_date") != today:
+        stats.update({"daily_date": today, "daily_pnl_pct": 0.0, "daily_pnl_usdt": 0.0,
+                      "daily_trades": 0, "daily_risk_usdt": 0.0, "consec_losses": 0})
+
+
 # ==============================================================================
-# 3. CLIENT PIONEX (con supporto vendita parziale Scale-Out)
+# 3. CLIENT PIONEX
 # ==============================================================================
 def pionex_live_enabled():
     return bool(PIONEX_API_KEY and PIONEX_API_SECRET and AUTO_TRADE_ENABLED)
@@ -315,19 +346,17 @@ def pionex_request(method, path, params=None, body=None, timeout=HTTP_TIMEOUT):
     params["timestamp"] = int(time.time() * 1000)
     query = urlencode(sorted(params.items()))
     body_str = json.dumps(body, separators=(",", ":")) if body else ""
-    message = f"{method}{path}?{query}{body_str}"
-    signature = hmac.new(PIONEX_API_SECRET.encode("utf-8"), message.encode("utf-8"), hashlib.sha256).hexdigest()
-    headers = {"PIONEX-KEY": PIONEX_API_KEY, "PIONEX-SIGNATURE": signature, "Content-Type": "application/json"}
-    url = f"{PIONEX_BASE}{path}?{query}"
+    sig = hmac.new(PIONEX_API_SECRET.encode(), f"{method}{path}?{query}{body_str}".encode(), hashlib.sha256).hexdigest()
+    headers = {"PIONEX-KEY": PIONEX_API_KEY, "PIONEX-SIGNATURE": sig, "Content-Type": "application/json"}
     try:
-        r = SESSION.request(method, url, data=body_str if body else None, headers=headers, timeout=timeout)
+        r = SESSION.request(method, f"{PIONEX_BASE}{path}?{query}", data=body_str if body else None,
+                            headers=headers, timeout=timeout)
         try:
             rj = r.json()
         except ValueError:
             return {"ok": False, "msg": f"HTTP {r.status_code} risposta non JSON", "data": None}
     except Exception as e:
-        return {"ok": False, "msg": f"Errore connessione Pionex: {redact(e)}", "data": None, "network_error": True}
-
+        return {"ok": False, "msg": f"Errore connessione Pionex: {redact(e)}", "data": None}
     failed = (rj.get("result") is False) or ("result" not in rj and "code" in rj)
     if r.status_code != 200 or failed:
         txt = f"{rj.get('code', '')} {rj.get('message', rj.get('reason', ''))}".strip()
@@ -357,12 +386,9 @@ def pionex_symbol_rules(symbol):
         scale = s.get("baseScale")
         if scale is None:
             scale = s.get("basePrecision", 4)
-        return {
-            "min_amount": float(s.get("minAmount") or 10.0),
-            "min_qty": float(s.get("minQuantity") or s.get("minTradeSize") or 0.0),
-            "base_scale": int(scale),
-            "ok": True,
-        }
+        return {"min_amount": float(s.get("minAmount") or 10.0),
+                "min_qty": float(s.get("minQuantity") or s.get("minTradeSize") or 0.0),
+                "base_scale": int(scale), "ok": True}
     except Exception:
         return default
 
@@ -382,7 +408,7 @@ def fetch_pionex_prices():
 
 def pionex_place_market_order(symbol, side, size=None, amount=None):
     body = {"symbol": symbol, "side": side.upper(), "type": "MARKET",
-            "clientOrderId": f"ft{int(time.time())}{random.randint(100, 999)}"}
+            "clientOrderId": f"ed{int(time.time())}{random.randint(100, 999)}"}
     if side.upper() == "BUY":
         body["amount"] = f"{amount:.2f}"
     else:
@@ -394,11 +420,12 @@ def pionex_place_market_order(symbol, side, size=None, amount=None):
     return {"ok": False, "order_id": "", "msg": f"Rifiuto/errore Pionex: {r['msg']}"}
 
 
-def live_buy(coin_cfg, usdt, price):
+def live_buy(coin_cfg, usdt, price, live):
     sym, base = coin_cfg["pionex"], coin_cfg["code"]
-    if not pionex_live_enabled():
-        amount = floor_to_scale(usdt / price * (1 - FEE_PCT_PER_SIDE / 100.0), max(coin_cfg["prec"], 2))
-        return {"ok": True, "mode": "SIMULATION", "entry_price": price, "amount_coin": amount,
+    if not (live and pionex_live_enabled()):
+        entry = price * (1.0 + SLIP_SIDE / 100.0)  # la simulazione paga lo slippage come la realta'
+        amount = floor_to_scale(usdt / entry * (1 - FEE_SIDE / 100.0), max(coin_cfg["prec"], 2))
+        return {"ok": True, "mode": "SIMULATION", "entry_price": entry, "amount_coin": amount,
                 "invested_usdt": usdt, "order_id": "SIM", "msg": "Simulazione (nessun ordine reale)"}
 
     rules = pionex_symbol_rules(sym)
@@ -413,7 +440,6 @@ def live_buy(coin_cfg, usdt, price):
 
     res = pionex_place_market_order(sym, "BUY", amount=usdt)
     base0 = bal0.get(base, {}).get("free", 0.0)
-
     base_delta, spent, bal1 = 0.0, 0.0, None
     for _ in range(2):
         time.sleep(2.0)
@@ -423,49 +449,42 @@ def live_buy(coin_cfg, usdt, price):
             spent = bal0.get("USDT", {}).get("free", 0.0) - bal1.get("USDT", {}).get("free", 0.0)
             if base_delta * price >= 0.5 * usdt:
                 break
-
     filled = base_delta * price >= 0.5 * usdt
     if not filled and res["ok"] and bal1 is None:
-        base_delta = usdt / price * (1 - FEE_PCT_PER_SIDE / 100.0)
-        spent, filled = usdt, True
+        base_delta, spent, filled = usdt / price * (1 - FEE_SIDE / 100.0), usdt, True
     if not filled:
         return {"ok": False, "mode": "LIVE_ERROR", "msg": res["msg"] if not res["ok"] else "Ordine non risulta eseguito"}
-
     if spent <= 0:
         spent = usdt
-    gross = base_delta / (1 - FEE_PCT_PER_SIDE / 100.0)
+    gross = base_delta / (1 - FEE_SIDE / 100.0)
     entry = spent / gross if gross > 0 else price
     amount = floor_to_scale(base_delta, rules["base_scale"])
-    return {"ok": True, "mode": "LIVE_PIONEX", "entry_price": entry, "amount_coin": amount,
-            "invested_usdt": spent, "order_id": res["order_id"] or "RECONCILED",
+    return {"ok": True, "mode": "LIVE_PIONEX", "entry_price": entry, "amount_coin": amount, "invested_usdt": spent,
+            "order_id": res["order_id"] or "RECONCILED",
             "msg": f"{res['msg']} | fill reale {amount} {base} per {spent:.2f} USDT"}
 
 
-def live_sell(pos, coin_cfg, price, fraction=1.0):
+def live_sell(pos, coin_cfg, price):
+    """Vendita totale. In SIM il prezzo passato e' il 'fill hint' (stop/target/mercato) meno slippage."""
     base, sym = coin_cfg["code"], coin_cfg["pionex"]
-    fraction = clamp(fraction, 0.1, 1.0)
-    target_coin = pos["amount_coin"] * fraction
-    invested_slice = pos["invested_usdt"] * fraction
-
     if pos.get("mode") != "LIVE_PIONEX" or not pionex_live_enabled():
-        scale = max(coin_cfg["prec"], 2)
-        sold_qty = floor_to_scale(target_coin, scale) if fraction < 1.0 else pos["amount_coin"]
-        proceeds = sold_qty * price * (1 - FEE_PCT_PER_SIDE / 100.0)
-        return {"ok": True, "exit_price": price, "sold_qty": sold_qty, "proceeds_usdt": proceeds,
-                "pnl_usdt": proceeds - invested_slice, "msg": "Vendita simulata"}
+        px = price * (1.0 - SLIP_SIDE / 100.0)
+        qty = pos["amount_coin"]
+        proceeds = qty * px * (1 - FEE_SIDE / 100.0)
+        return {"ok": True, "exit_price": px, "sold_qty": qty, "proceeds_usdt": proceeds,
+                "pnl_usdt": proceeds - pos["invested_usdt"], "msg": "Vendita simulata"}
 
     rules = pionex_symbol_rules(sym)
     bal0 = pionex_get_balances()
     if bal0 is None:
         return {"ok": False, "msg": "Impossibile leggere i saldi: vendita non inviata (riprovo al prossimo giro)"}
     free = bal0.get(base, {}).get("free", 0.0)
-    size = floor_to_scale(min(target_coin, free), rules["base_scale"])
+    size = floor_to_scale(min(pos["amount_coin"], free), rules["base_scale"])
     if size <= 0 or size * price < rules["min_amount"] * 0.98:
         return {"ok": False, "msg": f"Quantita' vendibile {size} {base} sotto il minimo ordine Pionex"}
-
     res = pionex_place_market_order(sym, "SELL", size=fmt_qty(size, rules["base_scale"]))
     usdt0 = bal0.get("USDT", {}).get("free", 0.0)
-    sold, proceeds = False, 0.0
+    sold, proceeds, bal1 = False, 0.0, None
     for _ in range(2):
         time.sleep(2.0)
         bal1 = pionex_get_balances()
@@ -475,100 +494,17 @@ def live_sell(pos, coin_cfg, price, fraction=1.0):
                 sold = True
                 break
     if not sold and res["ok"] and bal1 is None:
-        sold, proceeds = True, size * price * (1 - FEE_PCT_PER_SIDE / 100.0)
+        sold, proceeds = True, size * price * (1 - FEE_SIDE / 100.0)
     if not sold:
         return {"ok": False, "msg": res["msg"] if not res["ok"] else "Vendita non risulta eseguita"}
-    exit_price = proceeds / (size * (1 - FEE_PCT_PER_SIDE / 100.0)) if size > 0 and proceeds > 0 else price
+    exit_price = proceeds / (size * (1 - FEE_SIDE / 100.0)) if size > 0 and proceeds > 0 else price
     return {"ok": True, "exit_price": exit_price, "sold_qty": size, "proceeds_usdt": proceeds,
-            "pnl_usdt": proceeds - invested_slice, "msg": res["msg"]}
+            "pnl_usdt": proceeds - pos["invested_usdt"], "msg": res["msg"]}
 
 
 # ==============================================================================
-# 4. ACQUISIZIONE DATI E COMANDI TELEGRAM DIRETTI
+# 4. DATI DI MERCATO
 # ==============================================================================
-def poll_telegram_commands(state):
-    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-        return None
-    offset = int(state["stats"].get("last_tg_update_id", 0)) + 1
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
-    try:
-        r = SESSION.get(url, params={"offset": offset, "limit": 15, "timeout": 1}, timeout=5)
-        if r.status_code != 200:
-            return None
-        j = r.json()
-        if not j.get("ok"):
-            return None
-    except Exception:
-        return None
-
-    cmd_found = None
-    for upd in j.get("result", []):
-        uid = int(upd.get("update_id", 0))
-        if uid > state["stats"].get("last_tg_update_id", 0):
-            state["stats"]["last_tg_update_id"] = uid
-
-        cb = upd.get("callback_query")
-        if cb:
-            cb_msg = cb.get("message") or {}
-            chat_id = str((cb_msg.get("chat") or {}).get("id", ""))
-            if chat_id == str(TELEGRAM_CHAT_ID):
-                data = (cb.get("data") or "").strip()
-                parts = data.split(":")
-                if parts[0] == "cmd" and len(parts) >= 2:
-                    action = parts[1].lower()
-                    coin_arg = parts[2].upper() if len(parts) >= 3 else ""
-                    amt_arg = float(parts[3]) if len(parts) >= 4 and parts[3].replace(".", "", 1).isdigit() else 0.0
-                    cmd_found = {"command": action, "coin": coin_arg, "usdt": amt_arg}
-                    try:
-                        SESSION.post(
-                            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/answerCallbackQuery",
-                            json={"callback_query_id": cb["id"], "text": f"✅ Comando '{action.upper()} {coin_arg}' preso in carico!", "show_alert": False},
-                            timeout=4,
-                        )
-                    except Exception:
-                        pass
-            continue
-
-        msg = upd.get("message") or upd.get("edited_message") or {}
-        chat_id = str((msg.get("chat") or {}).get("id", ""))
-        if chat_id != str(TELEGRAM_CHAT_ID):
-            continue
-        if time.time() - int(msg.get("date", 0)) > 900:
-            continue
-        text = (msg.get("text") or "").strip()
-        if not text.startswith("/"):
-            continue
-        parts = text.split()
-        cmd_raw = parts[0].lstrip("/").split("@")[0].lower()
-        coin_arg = parts[1].upper() if len(parts) >= 2 else ""
-        amt_arg = 0.0
-        if len(parts) >= 3:
-            try:
-                amt_arg = float(parts[2])
-            except ValueError:
-                amt_arg = 0.0
-
-        if cmd_raw.startswith("open_") and len(cmd_raw) > 5:
-            coin_arg = cmd_raw.split("_", 1)[1].upper()
-            cmd_raw = "open"
-        elif cmd_raw.startswith("sell_") and len(cmd_raw) > 5:
-            coin_arg = cmd_raw.split("_", 1)[1].upper()
-            cmd_raw = "sell_all"
-
-        if cmd_raw in ("close", "chiudi", "panic", "stop"):
-            cmd_found = {"command": "close", "coin": coin_arg, "usdt": 0.0}
-        elif cmd_raw in ("sellall", "sell_all", "venditutto"):
-            cmd_found = {"command": "sell_all", "coin": coin_arg, "usdt": 0.0}
-        elif cmd_raw in ("open", "buy", "apri", "long"):
-            cmd_found = {"command": "open", "coin": coin_arg, "usdt": amt_arg}
-        elif cmd_raw in ("status", "stato", "report", "start"):
-            cmd_found = {"command": "status", "coin": "", "usdt": 0.0}
-
-    if cmd_found:
-        save_state(state)
-    return cmd_found
-
-
 def fetch_eur_usd_rate():
     data = safe_get_json("https://api.kraken.com/0/public/Ticker", params={"pair": "EURUSD"})
     try:
@@ -580,262 +516,149 @@ def fetch_eur_usd_rate():
     return 1.08
 
 
-def fetch_kraken_ohlc(pair="SOLUSD", interval=60):
+def fetch_kraken_ohlc(pair, interval=60):
     data = safe_get_json("https://api.kraken.com/0/public/OHLC", params={"pair": pair, "interval": interval})
     if not data or data.get("error"):
         return []
-    candles_raw = None
+    raw = None
     for k, v in data.get("result", {}).items():
         if k != "last" and isinstance(v, list):
-            candles_raw = v
+            raw = v
             break
-    if not candles_raw:
-        return []
-    candles = []
-    for row in candles_raw:
+    out = []
+    for r in raw or []:
         try:
-            candles.append({"time": int(row[0]), "open": float(row[1]), "high": float(row[2]),
-                            "low": float(row[3]), "close": float(row[4]), "vwap": float(row[5]),
-                            "volume": float(row[6]), "count": int(row[7])})
+            out.append({"time": int(r[0]), "open": float(r[1]), "high": float(r[2]), "low": float(r[3]),
+                        "close": float(r[4]), "volume": float(r[6])})
         except Exception:
             continue
-    return candles
+    return out
 
 
 def drop_unfinished(candles, interval_sec):
+    """Solo barre CHIUSE: una barra in formazione non e' mai un segnale (skill entry)."""
     if candles and candles[-1]["time"] + interval_sec > time.time():
         return candles[:-1]
     return candles
 
 
-def build_4h_from_1h(candles_1h):
-    if not candles_1h:
-        return []
-    buckets = {}
-    for c in candles_1h:
-        b_time = (c["time"] // 14400) * 14400
-        b = buckets.get(b_time)
-        if b is None:
-            buckets[b_time] = {"time": b_time, "open": c["open"], "high": c["high"], "low": c["low"],
-                               "close": c["close"], "vwap": c["vwap"], "volume": c["volume"], "count": c["count"]}
-        else:
-            b["high"] = max(b["high"], c["high"])
-            b["low"] = min(b["low"], c["low"])
-            b["close"] = c["close"]
-            b["volume"] += c["volume"]
-            b["count"] += c["count"]
-    out = [buckets[k] for k in sorted(buckets)]
-    if out and out[-1]["time"] + 3 * 3600 > candles_1h[-1]["time"]:
-        out.pop()
-    return out
-
-
-def fetch_kraken_orderbook(pair="SOLUSD", count=50):
+def fetch_kraken_orderbook(pair, count=50):
+    default = {"imbalance": 0.0, "spread_bps": 5.0, "fetched": False}
     data = safe_get_json("https://api.kraken.com/0/public/Depth", params={"pair": pair, "count": count})
-    default = {
-        "imbalance": 0.0, "spread_bps": 5.0, "bid_ask_ratio": 1.0,
-        "near_bid_usdt": 0.0, "near_ask_usdt": 0.0, "wall_pressure": 0.0
-    }
     if not data or data.get("error"):
         return default
     try:
         res = data.get("result", {})
-        key = list(res.keys())[0]
-        bids, asks = res[key].get("bids", []), res[key].get("asks", [])
-        if not bids or not asks:
-            return default
-        best_bid, best_ask = float(bids[0][0]), float(asks[0][0])
-        mid = (best_bid + best_ask) / 2.0
-        spread_bps = ((best_ask - best_bid) / mid) * 10000.0 if mid > 0 else 5.0
-        bid_w, ask_w = 0.0, 0.0
-        near_bid_usdt, near_ask_usdt = 0.0, 0.0
-        for b in bids:
-            p, v = float(b[0]), float(b[1])
-            dist = max(0.0001, (mid - p) / mid)
-            bid_w += p * v * math.exp(-dist * 100.0)
-            if dist <= 0.006:
-                near_bid_usdt += p * v
-        for a in asks:
-            p, v = float(a[0]), float(a[1])
-            dist = max(0.0001, (p - mid) / mid)
-            ask_w += p * v * math.exp(-dist * 100.0)
-            if dist <= 0.006:
-                near_ask_usdt += p * v
-        total = bid_w + ask_w
-        near_tot = near_bid_usdt + near_ask_usdt
-        return {
-            "imbalance": (bid_w - ask_w) / total if total > 0 else 0.0,
-            "spread_bps": spread_bps,
-            "bid_ask_ratio": bid_w / ask_w if ask_w > 0 else 1.0,
-            "near_bid_usdt": near_bid_usdt,
-            "near_ask_usdt": near_ask_usdt,
-            "wall_pressure": (near_bid_usdt - near_ask_usdt) / near_tot if near_tot > 0 else 0.0,
-        }
+        book = res[list(res.keys())[0]]
+        bids, asks = book.get("bids", []), book.get("asks", [])
+        bb, ba = float(bids[0][0]), float(asks[0][0])
+        mid = (bb + ba) / 2.0
+        bw = sum(float(b[0]) * float(b[1]) * math.exp(-max(1e-4, (mid - float(b[0])) / mid) * 100.0) for b in bids)
+        aw = sum(float(a[0]) * float(a[1]) * math.exp(-max(1e-4, (float(a[0]) - mid) / mid) * 100.0) for a in asks)
+        return {"imbalance": (bw - aw) / (bw + aw) if (bw + aw) > 0 else 0.0,
+                "spread_bps": (ba - bb) / mid * 10000.0, "fetched": True}
     except Exception:
         return default
 
 
 def fetch_all_kraken_futures():
     data = safe_get_json("https://futures.kraken.com/derivatives/api/v3/tickers")
-    futures_map = {}
+    out = {}
     if not data or "tickers" not in data:
-        return futures_map
-    try:
-        for t in data["tickers"]:
-            sym = str(t.get("symbol", "")).upper()
-            fr_raw = float(t.get("fundingRate", 0.0) or 0.0)
-            oi = float(t.get("openInterest", 0.0) or 0.0)
+        return out
+    for t in data["tickers"]:
+        try:
+            fr = float(t.get("fundingRate", 0.0) or 0.0)
             mark = float(t.get("markPrice", 0.0) or 0.0)
-            fr_8h_pct = fr_raw * 8.0 * 100.0 if (abs(fr_raw) < 0.0005 and mark > 0) else fr_raw * 100.0
-            futures_map[sym] = {"funding_8h_pct": clamp(fr_8h_pct, -0.5, 0.5), "open_interest": oi, "available": True}
-    except Exception:
-        pass
-    return futures_map
+            pct = fr * 8.0 * 100.0 if (abs(fr) < 0.0005 and mark > 0) else fr * 100.0
+            out[str(t.get("symbol", "")).upper()] = {"funding_8h_pct": clamp(pct, -0.5, 0.5), "available": True}
+        except Exception:
+            continue
+    return out
 
 
 def fetch_fear_and_greed():
     data = safe_get_json("https://api.alternative.me/fng/?limit=1")
     try:
-        if data and data.get("data"):
-            item = data["data"][0]
-            return int(item.get("value", 50)), item.get("value_classification", "Neutral")
+        item = data["data"][0]
+        return int(item.get("value", 50)), item.get("value_classification", "Neutral")
     except Exception:
-        pass
-    return 50, "Neutral"
-
-
-MACRO_STATUS = {"ok": False}
+        return 50, "Neutral"
 
 
 def fetch_macro_calendar():
-    now_utc = datetime.now(timezone.utc)
+    """Eventi USD High/Medium nelle prossime 36h / ultime 12h (blackout macro, skill news)."""
+    now = datetime.now(timezone.utc)
     events = []
     MACRO_STATUS["ok"] = False
     data = safe_get_json("https://nfs.faireconomy.media/ff_calendar_thisweek.json")
     if isinstance(data, list):
         MACRO_STATUS["ok"] = True
-        for item in data:
+        for it in data:
             try:
-                country = str(item.get("country", "")).upper()
-                impact = str(item.get("impact", "")).capitalize()
-                title = str(item.get("title", "Evento Macro"))
-                date_str = str(item.get("date", ""))
-                if country != "USD" or impact not in ("High", "Medium") or not date_str:
+                impact = str(it.get("impact", "")).capitalize()
+                if str(it.get("country", "")).upper() != "USD" or impact not in ("High", "Medium"):
                     continue
-                ev_dt = datetime.fromisoformat(date_str).astimezone(timezone.utc)
-                diff_hours = (ev_dt - now_utc).total_seconds() / 3600.0
-                if -12.0 <= diff_hours <= 36.0:
-                    events.append({"title": title, "impact": impact, "diff_hours": diff_hours, "ts": int(now_utc.timestamp() + diff_hours * 3600)})
+                dt = datetime.fromisoformat(str(it.get("date", ""))).astimezone(timezone.utc)
+                diff = (dt - now).total_seconds() / 3600.0
+                if -12.0 <= diff <= 36.0:
+                    events.append({"title": str(it.get("title", "Evento Macro")), "impact": impact,
+                                   "diff_hours": diff, "ts": int(dt.timestamp())})
             except Exception:
                 continue
-    if not events:
+    elif data is None:
         try:
             r = SESSION.get("https://nfs.faireconomy.media/ff_calendar_thisweek.xml", timeout=HTTP_TIMEOUT)
             if r.status_code == 200 and r.text.strip().startswith("<"):
-                root = ET.fromstring(r.text)
                 MACRO_STATUS["ok"] = True
-                for ev in root.findall("event"):
-                    country = (ev.findtext("country") or "").strip().upper()
+                for ev in ET.fromstring(r.text).findall("event"):
                     impact = (ev.findtext("impact") or "").strip().capitalize()
-                    title = (ev.findtext("title") or "Evento USD").strip()
-                    date_s = (ev.findtext("date") or "").strip()
-                    time_s = (ev.findtext("time") or "").strip().lower()
-                    if country != "USD" or impact not in ("High", "Medium") or not date_s or not time_s:
+                    if (ev.findtext("country") or "").strip().upper() != "USD" or impact not in ("High", "Medium"):
                         continue
-                    if "all day" in time_s or "tentative" in time_s:
-                        continue
-                    m = re.match(r"(\d{1,2}):(\d{2})(am|pm)", time_s)
+                    m = re.match(r"(\d{1,2}):(\d{2})(am|pm)", (ev.findtext("time") or "").strip().lower())
                     if not m:
                         continue
-                    hh, mm, ampm = int(m.group(1)), int(m.group(2)), m.group(3)
-                    if ampm == "pm" and hh < 12:
-                        hh += 12
-                    if ampm == "am" and hh == 12:
-                        hh = 0
-                    dt_parsed = datetime.strptime(f"{date_s} {hh:02d}:{mm:02d}", "%m-%d-%Y %H:%M").replace(tzinfo=timezone.utc)
-                    diff_hours = (dt_parsed - now_utc).total_seconds() / 3600.0
-                    if -12.0 <= diff_hours <= 36.0:
-                        events.append({"title": title, "impact": impact, "diff_hours": diff_hours, "ts": int(now_utc.timestamp() + diff_hours * 3600)})
+                    hh, mm, ap = int(m.group(1)), int(m.group(2)), m.group(3)
+                    hh = hh + 12 if (ap == "pm" and hh < 12) else (0 if (ap == "am" and hh == 12) else hh)
+                    dt = datetime.strptime(f"{(ev.findtext('date') or '').strip()} {hh:02d}:{mm:02d}",
+                                           "%m-%d-%Y %H:%M").replace(tzinfo=timezone.utc)
+                    diff = (dt - now).total_seconds() / 3600.0
+                    if -12.0 <= diff <= 36.0:
+                        events.append({"title": (ev.findtext("title") or "Evento USD").strip(), "impact": impact,
+                                       "diff_hours": diff, "ts": int(dt.timestamp())})
         except Exception:
             pass
     events.sort(key=lambda x: x["ts"])
     return events
 
 
-def fetch_crypto_news(limit=8):
-    """Scarica le ultime notizie crypto reali via RSS pubblico (zero API key richieste)."""
-    feeds = [
-        ("CoinDesk", "https://www.coindesk.com/arc/outboundfeeds/rss/"),
-        ("CoinTelegraph", "https://cointelegraph.com/rss"),
-    ]
-    items = []
-    for source, url in feeds:
-        try:
-            r = SESSION.get(url, timeout=5)
-            if r.status_code != 200 or not r.text.strip().startswith("<"):
-                continue
-            root = ET.fromstring(r.text)
-            for it in root.findall(".//item")[:limit]:
-                title = (it.findtext("title") or "").strip()
-                link = (it.findtext("link") or "").strip()
-                pub = (it.findtext("pubDate") or "").strip()
-                ts = int(time.time())
-                if pub:
-                    try:
-                        ts = int(parsedate_to_datetime(pub).timestamp())
-                    except Exception:
-                        pass
-                if title and link:
-                    items.append({"source": source, "title": html_lib.unescape(title), "url": link, "ts": ts})
-            if len(items) >= limit:
-                break
-        except Exception:
-            continue
-    items.sort(key=lambda x: x["ts"], reverse=True)
-    return items[:limit]
-
-
 # ==============================================================================
-# 5. INDICATORI TECNICI + EMULATORE `ta` & `qtpylib`
+# 5. INDICATORI
 # ==============================================================================
 def calc_ema_series(values, period):
     if not values:
         return []
     k = 2.0 / (period + 1.0)
-    ema = [values[0]]
-    for price in values[1:]:
-        ema.append(price * k + ema[-1] * (1.0 - k))
-    return ema
-
-
-def calc_ema(values, period):
-    series = calc_ema_series(values, period)
-    return series[-1] if series else 0.0
+    out = [values[0]]
+    for v in values[1:]:
+        out.append(v * k + out[-1] * (1.0 - k))
+    return out
 
 
 def calc_rsi_series(closes, period=14):
     if len(closes) < period + 1:
         return [50.0] * len(closes)
     rsis = [50.0] * period
-    gains, losses = [], []
-    for i in range(1, period + 1):
-        d = closes[i] - closes[i - 1]
-        gains.append(max(0.0, d))
-        losses.append(max(0.0, -d))
-    avg_gain = sum(gains) / period
-    avg_loss = sum(losses) / period
-    rsis.append(100.0 if avg_loss == 0 else 100.0 - (100.0 / (1.0 + avg_gain / avg_loss)))
+    gains = [max(0.0, closes[i] - closes[i - 1]) for i in range(1, period + 1)]
+    losses = [max(0.0, closes[i - 1] - closes[i]) for i in range(1, period + 1)]
+    ag, al = sum(gains) / period, sum(losses) / period
+    rsis.append(100.0 if al == 0 else 100.0 - 100.0 / (1.0 + ag / al))
     for i in range(period + 1, len(closes)):
         d = closes[i] - closes[i - 1]
-        g, l = max(0.0, d), max(0.0, -d)
-        avg_gain = (avg_gain * (period - 1) + g) / period
-        avg_loss = (avg_loss * (period - 1) + l) / period
-        rsis.append(100.0 if avg_loss == 0 else 100.0 - (100.0 / (1.0 + avg_gain / avg_loss)))
+        ag = (ag * (period - 1) + max(0.0, d)) / period
+        al = (al * (period - 1) + max(0.0, -d)) / period
+        rsis.append(100.0 if al == 0 else 100.0 - 100.0 / (1.0 + ag / al))
     return rsis
-
-
-def calc_rsi(closes, period=14):
-    return calc_rsi_series(closes, period)[-1]
 
 
 def calc_atr_series(candles, period=14):
@@ -848,1962 +671,827 @@ def calc_atr_series(candles, period=14):
     return calc_ema_series(trs, period)
 
 
-def calc_atr(candles, period=14):
-    s = calc_atr_series(candles, period)
-    return s[-1] if s else 0.0
-
-
-def calc_macd_hist_series(closes, fast=12, slow=26, signal=9):
-    if len(closes) < slow + signal:
-        return [0.0] * len(closes)
-    ema_f = calc_ema_series(closes, fast)
-    ema_s = calc_ema_series(closes, slow)
-    macd_line = [f - s for f, s in zip(ema_f, ema_s)]
-    sig_line = calc_ema_series(macd_line, signal)
-    return [m - s for m, s in zip(macd_line, sig_line)]
-
-
 def calc_adx_series(candles, period=14):
     n = len(candles)
     if n < period * 2 + 2:
-        return [20.0] * n, [20.0] * n, [20.0] * n
-    tr_list, pdm_list, mdm_list = [0.0], [0.0], [0.0]
+        return [20.0] * n
+    tr, pdm, mdm = [0.0], [0.0], [0.0]
     for i in range(1, n):
         h, l, pc = candles[i]["high"], candles[i]["low"], candles[i - 1]["close"]
-        ph, pl = candles[i - 1]["high"], candles[i - 1]["low"]
-        tr_list.append(max(h - l, abs(h - pc), abs(l - pc)))
-        up, dn = h - ph, pl - l
-        pdm_list.append(up if (up > dn and up > 0) else 0.0)
-        mdm_list.append(dn if (dn > up and dn > 0) else 0.0)
-    atr_s = calc_ema_series(tr_list, period)
-    pdm_s = calc_ema_series(pdm_list, period)
-    mdm_s = calc_ema_series(mdm_list, period)
-    dx_list, pdi_s, mdi_s = [], [], []
-    for a, p, m in zip(atr_s, pdm_s, mdm_s):
-        if a <= 0:
-            dx_list.append(0.0)
-            pdi_s.append(20.0)
-            mdi_s.append(20.0)
+        up, dn = h - candles[i - 1]["high"], candles[i - 1]["low"] - l
+        tr.append(max(h - l, abs(h - pc), abs(l - pc)))
+        pdm.append(up if (up > dn and up > 0) else 0.0)
+        mdm.append(dn if (dn > up and dn > 0) else 0.0)
+    a, p, m = calc_ema_series(tr, period), calc_ema_series(pdm, period), calc_ema_series(mdm, period)
+    dx = []
+    for av, pv, mv in zip(a, p, m):
+        if av <= 0:
+            dx.append(0.0)
             continue
-        pdi, mdi = 100.0 * (p / a), 100.0 * (m / a)
-        pdi_s.append(pdi)
-        mdi_s.append(mdi)
-        denom = pdi + mdi
-        dx_list.append(100.0 * abs(pdi - mdi) / denom if denom > 0 else 0.0)
-    adx_s = calc_ema_series(dx_list, period)
-    return adx_s, pdi_s, mdi_s
+        pdi, mdi = 100.0 * pv / av, 100.0 * mv / av
+        dx.append(100.0 * abs(pdi - mdi) / (pdi + mdi) if (pdi + mdi) > 0 else 0.0)
+    return calc_ema_series(dx, period)
 
 
-def calc_adx(candles, period=14):
-    adx_s, pdi_s, mdi_s = calc_adx_series(candles, period)
-    return adx_s[-1], pdi_s[-1], mdi_s[-1]
+def prep_series(candles):
+    c = [x["close"] for x in candles]
+    return {"t": [x["time"] for x in candles], "c": c, "h": [x["high"] for x in candles],
+            "l": [x["low"] for x in candles], "v": [x["volume"] for x in candles],
+            "ema20": calc_ema_series(c, 20), "ema50": calc_ema_series(c, 50), "ema100": calc_ema_series(c, 100),
+            "atr": calc_atr_series(candles, 14), "rsi": calc_rsi_series(c, 14), "adx": calc_adx_series(candles, 14)}
 
 
-def calc_supertrend_series(candles, period=10, multiplier=3.0):
-    n = len(candles)
-    if n < period + 2:
-        return [1] * n, [c["close"] for c in candles]
-    atr_s = calc_atr_series(candles, period)
-    final_upper, final_lower = 0.0, 0.0
-    direction = 1
-    dirs, vals = [1], [candles[0]["close"]]
-    for i in range(1, n):
-        hl2 = (candles[i]["high"] + candles[i]["low"]) / 2.0
-        atr = atr_s[i]
-        basic_upper, basic_lower = hl2 + multiplier * atr, hl2 - multiplier * atr
-        prev_close = candles[i - 1]["close"]
-        if i == 1:
-            final_upper, final_lower = basic_upper, basic_lower
-            dirs.append(1)
-            vals.append(final_lower)
-            continue
-        if basic_upper < final_upper or prev_close > final_upper:
-            final_upper = basic_upper
-        if basic_lower > final_lower or prev_close < final_lower:
-            final_lower = basic_lower
-        c = candles[i]["close"]
-        if c > final_upper:
-            direction = 1
-        elif c < final_lower:
-            direction = -1
-        dirs.append(direction)
-        vals.append(final_lower if direction == 1 else final_upper)
-    return dirs, vals
+# ==============================================================================
+# 6. SETUP (skill scanner + entry): STESSA regola per live e backtest
+# ==============================================================================
+def detect_setup(S, i, bt, price=None, vr=1.0, fresh=None):
+    """
+    bt=True : i e' la barra 1h di trigger, gia' chiusa (backtest).
+    bt=False: i == len(S['c']); il trigger e' la prima chiusura 15m sopra il livello (fresh(level)).
+    Livelli calcolati solo su barre PRECEDENTI al trigger. Ritorna [(setup, livello), ...] in ordine di priorita'.
+    """
+    c, h, l = S["c"], S["h"], S["l"]
+    if i < 120 or (bt and i >= len(c)):
+        return []
+    j = i if bt else i - 1
+    px = c[i] if bt else price
+    atr = S["atr"][j]
+    if not px or atr <= 0:
+        return []
+    e20, e50, e100 = S["ema20"][j], S["ema50"][j], S["ema100"][j]
+    if not (e20 > e50 and px > e100):            # niente long contro il trend
+        return []
+    if px / c[i - 25] - 1.0 > MAX_PUMP_24H_PCT / 100.0:   # anti-pump (skill news: MOVING)
+        return []
+    rsi, adx = S["rsi"][j], S["adx"][j]
 
+    def crossed(level):
+        return (c[i - 1] <= level) if bt else bool(fresh and fresh(level))
 
-def calc_supertrend(candles, period=10, multiplier=3.0):
-    dirs, vals = calc_supertrend_series(candles, period, multiplier)
-    return (dirs[-1], vals[-1]) if dirs else (1, 0.0)
-
-
-def calc_hurst_exponent(closes, max_lag=20):
-    if len(closes) < 60:
-        return 0.50
-    log_p = [math.log(max(p, 1e-8)) for p in closes[-120:]]
-    x_vals, y_vals = [], []
-    for lag in range(2, min(max_lag, len(log_p) // 3)):
-        diffs = [log_p[i] - log_p[i - lag] for i in range(lag, len(log_p))]
-        std = statistics.pstdev(diffs)
-        if std > 0:
-            x_vals.append(math.log(lag))
-            y_vals.append(math.log(std))
-    if len(x_vals) < 3:
-        return 0.50
-    mx, my = sum(x_vals) / len(x_vals), sum(y_vals) / len(y_vals)
-    num = sum((x - mx) * (y - my) for x, y in zip(x_vals, y_vals))
-    den = sum((x - mx) ** 2 for x in x_vals)
-    return clamp(num / den if den > 0 else 0.50, 0.20, 0.85)
-
-
-def calc_linreg_zscore(closes, window=40):
-    if len(closes) < window:
-        return 0.0, 0.0
-    y = closes[-window:]
-    x = list(range(window))
-    mx, my = (window - 1) / 2.0, sum(y) / window
-    num = sum((xi - mx) * (yi - my) for xi, yi in zip(x, y))
-    den = sum((xi - mx) ** 2 for xi in x)
-    slope = num / den if den > 0 else 0.0
-    intercept = my - slope * mx
-    residuals = [yi - (slope * xi + intercept) for xi, yi in zip(x, y)]
-    std_res = statistics.pstdev(residuals)
-    z_score = residuals[-1] / std_res if std_res > 0 else 0.0
-    return z_score, ((slope / my) * 100.0 if my > 0 else 0.0)
-
-
-def calc_volume_profile_poc(candles, bins=24, lookback=120):
-    subset = candles[-lookback:] if len(candles) >= lookback else candles
-    if not subset:
-        return 0.0
-    low_min = min(c["low"] for c in subset)
-    high_max = max(c["high"] for c in subset)
-    if high_max <= low_min:
-        return subset[-1]["close"]
-    step = (high_max - low_min) / bins
-    vol_bins = [0.0] * bins
-    for c in subset:
-        typical = (c["high"] + c["low"] + c["close"]) / 3.0
-        idx = int(clamp(int((typical - low_min) / step), 0, bins - 1))
-        vol_bins[idx] += c["volume"]
-    best_idx = max(range(bins), key=lambda i: vol_bins[i])
-    return low_min + (best_idx + 0.5) * step
-
-
-def calc_rolling_vwap_bands(candles_15m, bars=96):
-    subset = candles_15m[-bars:] if len(candles_15m) >= bars else candles_15m
-    if not subset:
-        return 0.0, 0.0, 0.0
-    tps = [(c["high"] + c["low"] + c["close"]) / 3.0 for c in subset]
-    vols = [c["volume"] for c in subset]
-    vv = sum(vols)
-    vwap = sum(t * v for t, v in zip(tps, vols)) / vv if vv > 0 else subset[-1]["close"]
-    var = sum(v * ((t - vwap) ** 2) for t, v in zip(tps, vols)) / vv if vv > 0 else 0.0
-    std = math.sqrt(max(0.0, var))
-    z = (subset[-1]["close"] - vwap) / std if std > 1e-9 else 0.0
-    return vwap, std, z
-
-
-def calc_volume_zscore_series(candles, window=30):
-    n = len(candles)
-    out = [0.0] * n
-    for i in range(window + 1, n):
-        vols = [candles[j]["volume"] for j in range(i - window, i)]
-        mv, sv = sum(vols) / window, statistics.pstdev(vols)
-        out[i] = (candles[i]["volume"] - mv) / sv if sv > 0 else 0.0
+    out = []
+    lvl = max(h[i - 24:i])
+    if px > lvl and crossed(lvl) and adx >= 18 and 50 <= rsi <= 75 and vr >= 1.2 and (px - lvl) / atr <= MAX_EXT_ATR:
+        out.append(("breakout_24h", lvl))
+    pole = c[i - 7] / c[i - 17] - 1.0
+    f_hi, f_lo = max(h[i - 6:i]), min(l[i - 6:i])
+    if (pole >= 0.035 and (f_hi - f_lo) / c[i - 1] <= 0.025 and px > f_hi and crossed(f_hi)
+            and vr >= 1.2 and rsi <= 75 and (px - f_hi) / atr <= MAX_EXT_ATR):
+        out.append(("flag_break", f_hi))
+    pulled = any(c[k] < S["ema20"][k] for k in range(i - 4, i))
+    if pulled and px > e20 and crossed(e20) and 40 <= rsi <= 65 and vr >= 1.0 and (px - e20) / atr <= 1.0:
+        out.append(("reclaim_ma20", e20))
     return out
 
 
-def calc_volume_zscore(candles, window=30):
-    if len(candles) < window + 2:
-        return 0.0
-    vols = [c["volume"] for c in candles[-window - 1:-1]]
-    mean_v, std_v = sum(vols) / len(vols), statistics.pstdev(vols)
-    return (candles[-1]["volume"] - mean_v) / std_v if std_v > 0 else 0.0
+SETUPS = ("breakout_24h", "flag_break", "reclaim_ma20")
 
 
-def candles_to_dataframe(candles):
-    if HAS_PANDAS:
-        df = pd.DataFrame(candles)
-        if not df.empty:
-            df["date"] = pd.to_datetime(df["time"], unit="s", utc=True)
-        return df
-    return candles
-
-
-def _df_col(df, col):
-    if HAS_PANDAS and isinstance(df, pd.DataFrame):
-        return df[col].tolist()
-    return [r.get(col, 0.0) for r in df]
-
-
-def _df_candles(df):
-    if HAS_PANDAS and isinstance(df, pd.DataFrame):
-        return df[["time", "open", "high", "low", "close", "volume"]].to_dict("records")
-    return df
-
-
-def _to_series(df, values):
-    if HAS_PANDAS and isinstance(df, pd.DataFrame):
-        return pd.Series(values, index=df.index)
-    return values
-
-
-class _TaLibEmulator:
-    @staticmethod
-    def RSI(df, timeperiod=14):
-        return _to_series(df, calc_rsi_series(_df_col(df, "close"), timeperiod))
-
-    @staticmethod
-    def EMA(df, timeperiod=20):
-        return _to_series(df, calc_ema_series(_df_col(df, "close"), timeperiod))
-
-    @staticmethod
-    def SMA(df, timeperiod=20):
-        closes = _df_col(df, "close")
-        out = [sum(closes[max(0, i - timeperiod + 1):i + 1]) / min(i + 1, timeperiod) for i in range(len(closes))]
-        return _to_series(df, out)
-
-    @staticmethod
-    def ATR(df, timeperiod=14):
-        return _to_series(df, calc_atr_series(_df_candles(df), timeperiod))
-
-    @staticmethod
-    def ADX(df, timeperiod=14):
-        adx_s, _, _ = calc_adx_series(_df_candles(df), timeperiod)
-        return _to_series(df, adx_s)
-
-    @staticmethod
-    def MACD(df, fastperiod=12, slowperiod=26, signalperiod=9):
-        closes = _df_col(df, "close")
-        ema_f = calc_ema_series(closes, fastperiod)
-        ema_s = calc_ema_series(closes, slowperiod)
-        macd_l = [f - s for f, s in zip(ema_f, ema_s)]
-        sig_l = calc_ema_series(macd_l, signalperiod)
-        hist_l = [m - s for m, s in zip(macd_l, sig_l)]
-        return {
-            "macd": _to_series(df, macd_l),
-            "macdsignal": _to_series(df, sig_l),
-            "macdhist": _to_series(df, hist_l),
-        }
-
-    @staticmethod
-    def SUPERTREND(df, period=10, multiplier=3.0):
-        dirs, vals = calc_supertrend_series(_df_candles(df), period, multiplier)
-        return _to_series(df, dirs), _to_series(df, vals)
-
-
-class _QtpylibEmulator:
-    @staticmethod
-    def crossed_above(series1, series2):
-        if HAS_PANDAS and isinstance(series1, pd.Series):
-            s2 = series2 if isinstance(series2, pd.Series) else pd.Series(series2, index=series1.index)
-            return (series1 > s2) & (series1.shift(1) <= s2.shift(1))
-        s2 = series2 if isinstance(series2, list) else [series2] * len(series1)
-        return [False] + [series1[i] > s2[i] and series1[i - 1] <= s2[i - 1] for i in range(1, len(series1))]
-
-    @staticmethod
-    def crossed_below(series1, series2):
-        if HAS_PANDAS and isinstance(series1, pd.Series):
-            s2 = series2 if isinstance(series2, pd.Series) else pd.Series(series2, index=series1.index)
-            return (series1 < s2) & (series1.shift(1) >= s2.shift(1))
-        s2 = series2 if isinstance(series2, list) else [series2] * len(series1)
-        return [False] + [series1[i] < s2[i] and series1[i - 1] >= s2[i - 1] for i in range(1, len(series1))]
-
-    @staticmethod
-    def typical_price(df):
-        if HAS_PANDAS and isinstance(df, pd.DataFrame):
-            return (df["high"] + df["low"] + df["close"]) / 3.0
-        return [(r["high"] + r["low"] + r["close"]) / 3.0 for r in df]
-
-
-ta = _TaLibEmulator()
-qtpylib = _QtpylibEmulator()
+def make_features(S, i, bt, px, vr, setup, level):
+    j = i if bt else i - 1
+    atr = max(S["atr"][j], 1e-12)
+    return [S["rsi"][j] / 100.0 - 0.5, S["adx"][j] / 50.0, min(vr, 4.0) / 4.0, (px - level) / atr,
+            atr / px * 100.0, clamp(px / S["c"][i - 25] - 1.0, -0.3, 0.3) * 10.0,
+            clamp((S["ema20"][j] - S["ema50"][j]) / atr, -5.0, 5.0) / 5.0,
+            1.0 if setup == SETUPS[0] else 0.0, 1.0 if setup == SETUPS[1] else 0.0, 1.0 if setup == SETUPS[2] else 0.0]
 
 
 # ==============================================================================
-# 6. FREQAI v11 (12 Feature Stazionarie + Triple-Barrier + Purged Ensemble)
+# 7. PIANO DI USCITA E SIZE (skill exit + budget)
 # ==============================================================================
-def build_feature_matrix(candles_1h):
-    """Matrice a 12 feature stazionarie normalizzate su ATR/volatilita'."""
-    n = len(candles_1h)
-    closes = [c["close"] for c in candles_1h]
-    rsis = calc_rsi_series(closes, 14)
-    ema20s = calc_ema_series(closes, 20)
-    ema50s = calc_ema_series(closes, 50)
-    macds = calc_macd_hist_series(closes, 12, 26, 9)
-    atrs = calc_atr_series(candles_1h, 14)
-    adx_s, pdi_s, mdi_s = calc_adx_series(candles_1h, 14)
-    vol_zs = calc_volume_zscore_series(candles_1h, 30)
-
-    features = []
-    for i in range(n):
-        if i < 52:
-            features.append([0.0] * 12)
-            continue
-        c = closes[i]
-        atr = max(atrs[i], c * 0.002)
-        f1 = clamp((rsis[i] - 50.0) / 22.0, -2.5, 2.5)
-        f2 = clamp((c - ema20s[i]) / (1.8 * atr), -2.5, 2.5)
-        f3 = clamp((c - ema50s[i]) / (2.8 * atr), -2.5, 2.5)
-        f4 = clamp((ema20s[i] - ema50s[i]) / (2.0 * atr), -2.5, 2.5)
-        f5 = clamp(macds[i] / (0.45 * atr), -2.5, 2.5)
-        f6 = clamp((c - closes[i - 3]) / (2.0 * atr), -2.5, 2.5)
-        f7 = clamp((c - closes[i - 12]) / (3.8 * atr), -2.5, 2.5)
-        f8 = clamp(vol_zs[i], -2.5, 2.5)
-        rng = max(candles_1h[i]["high"] - candles_1h[i]["low"], 1e-9)
-        close_loc = ((c - candles_1h[i]["low"]) / rng) * 2.0 - 1.0
-        f9 = clamp(close_loc, -1.5, 1.5)
-        atr_pct = (atr / c) * 100.0 if c > 0 else 1.5
-        f10 = clamp((atr_pct - 1.5) / 1.2, -2.0, 2.5)
-        f11 = clamp((pdi_s[i] - mdi_s[i]) / 30.0, -2.5, 2.5)
-        f12 = clamp((adx_s[i] - 22.0) / 15.0, -2.0, 2.5)
-        features.append([f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12])
-    return features
+def build_plan(entry, atr, swing_low, target_r=None):
+    """Stop e target decisi PRIMA dell'ingresso. Stop sotto struttura/ATR; mai 'aggiustato' per far passare il piano."""
+    tr = TARGET_R if target_r is None else target_r
+    if entry <= 0 or atr <= 0:
+        return {"ok": False, "reason": "dati insufficienti per il piano"}
+    stop_raw = min(entry - ATR_STOP_K * atr, swing_low - 0.1 * atr)
+    risk = max(entry - stop_raw, entry * MIN_STOP_PCT / 100.0)
+    risk_pct = risk / entry * 100.0
+    plan = {"ok": True, "reason": "", "entry": entry, "stop": entry - risk, "target": entry + tr * risk,
+            "risk": risk, "one_r": risk, "risk_pct": risk_pct, "target_r": tr,
+            "rr_net": (tr * risk_pct - COST_RT) / (risk_pct + COST_RT)}
+    if risk_pct > MAX_STOP_PCT:
+        plan.update(ok=False, reason=f"stop troppo lontano ({risk_pct:.2f}% > {MAX_STOP_PCT:.1f}%)")
+    elif plan["rr_net"] < MIN_RR_NET:
+        plan.update(ok=False, reason=f"R:R netto {plan['rr_net']:.2f} < {MIN_RR_NET} (stop troppo stretto per i costi)")
+    return plan
 
 
-def build_triple_barrier_labels(candles_1h, horizon=8, tp_atr_mult=1.70, sl_atr_mult=1.0):
-    """Triple-Barrier Labeling (1.0 se TP raggiunto prima dello SL entro `horizon` barre)."""
-    n = len(candles_1h)
-    closes = [c["close"] for c in candles_1h]
-    highs = [c["high"] for c in candles_1h]
-    lows = [c["low"] for c in candles_1h]
-    atrs = calc_atr_series(candles_1h, 14)
-    labels = [0.5] * n
-    for i in range(52, n - horizon - 1):
-        entry = closes[i]
-        risk = max(atrs[i] * 1.40, entry * 0.014)
-        tp = entry + tp_atr_mult * risk
-        sl = entry - sl_atr_mult * risk
-        outcome = None
-        for h in range(1, horizon + 1):
-            if lows[i + h] <= sl:
-                outcome = 0.0
-                break
-            if highs[i + h] >= tp:
-                outcome = 1.0
-                break
-        if outcome is None:
-            outcome = 1.0 if closes[i + horizon] > entry + 0.35 * risk else 0.0
-        labels[i] = outcome
-    return labels
+def manage_stop(entry, stop, one_r, highest):
+    """Stop che puo' solo salire: break-even netto a +BE_AT_R, trailing da +TRAIL_START_R."""
+    r_hi = (highest - entry) / one_r if one_r > 0 else 0.0
+    new = stop
+    if r_hi >= BE_AT_R:
+        new = max(new, entry * (1.0 + COST_RT / 100.0))
+    if r_hi >= TRAIL_START_R:
+        new = max(new, highest - TRAIL_R * one_r)
+    return new
 
 
-def lorentzian_knn_predict(candles_1h, features, tb_labels, horizon=8, k=20):
-    """Lorentzian k-NN con Non-Maximum Suppression (no cluster di barre adiacenti)."""
-    n = len(candles_1h)
-    if n < 130:
-        return 0.50
-    curr_x = features[-1]
-    candidates = []
-    for i in range(54, n - horizon - 1):
-        dist = sum(math.log(1.0 + abs(a - b)) for a, b in zip(curr_x, features[i]))
-        candidates.append((dist, i, tb_labels[i]))
-    candidates.sort(key=lambda x: x[0])
+def net_r(entry, exit_px, risk_pct):
+    """R netto: 1R = perdita massima (rischio dello stop + costi). Stesso metro del sizing."""
+    s = SLIP_SIDE / 100.0
+    pnl = ((exit_px * (1 - s)) / (entry * (1 + s)) - 1.0) * 100.0 - 2.0 * FEE_SIDE
+    return pnl / (risk_pct + COST_RT)
 
-    selected = []
-    used_idx = []
-    for dist, idx, label in candidates:
-        if any(abs(idx - u) < 4 for u in used_idx):
-            continue
-        selected.append((dist, label))
-        used_idx.append(idx)
-        if len(selected) >= k:
+
+def size_position(capital_usdt, plan):
+    max_loss = capital_usdt * RISK_PER_TRADE_PCT / 100.0
+    pos = max_loss / ((plan["risk_pct"] + COST_RT) / 100.0)
+    usable = capital_usdt * (1.0 - CASH_BUFFER_PCT / 100.0)
+    limit = "perdita massima"
+    if pos > usable:
+        pos, limit = usable, "cassa disponibile"
+    return pos, pos * (plan["risk_pct"] + COST_RT) / 100.0, limit
+
+
+# ==============================================================================
+# 8. TIME MACHINE: backtest pooled + Monte Carlo + filtro ML validato out-of-sample
+# ==============================================================================
+def simulate_trade(S, i, plan, H):
+    c, h, l = S["c"], S["h"], S["l"]
+    entry, one_r, stop, tgt = plan["entry"], plan["one_r"], plan["stop"], plan["target"]
+    highest, exit_px = entry, None
+    for k in range(1, H + 1):
+        j = i + k
+        if l[j] <= stop:                                   # stop prima del target (conservativo)
+            exit_px = stop - 0.25 * max(0.0, stop - l[j])  # gap parziale oltre lo stop
             break
-
-    if not selected:
-        return 0.50
-    ws = wt = 0.0
-    for dist, label in selected:
-        w = 1.0 / (dist + 0.15)
-        ws += w * label
-        wt += w
-    return clamp(ws / wt if wt > 0 else 0.50, 0.08, 0.92)
-
-
-def online_mlp_neural_net(candles_1h, features, tb_labels, horizon=8, epochs=40, lr=0.035):
-    """MLP regolarizzato con Purged Temporal Split (gap = horizon barre tra train e holdout)."""
-    n = len(candles_1h)
-    if n < 140:
-        return 0.50, 0.50
-    dataset = [(features[i], tb_labels[i]) for i in range(max(54, n - 360), n - horizon - 1)]
-    if len(dataset) < 80:
-        return 0.50, 0.50
-
-    split = int(len(dataset) * 0.72)
-    purge = min(horizon, 6)
-    train = dataset[:max(30, split - purge)]
-    hold = dataset[split:]
-    if len(hold) < 15:
-        return 0.50, 0.50
-
-    rng = random.Random(42)
-    in_dim, hid_dim = len(features[0]), 10
-    W1 = [[rng.uniform(-0.25, 0.25) for _ in range(in_dim)] for _ in range(hid_dim)]
-    b1 = [0.0] * hid_dim
-    W2 = [rng.uniform(-0.25, 0.25) for _ in range(hid_dim)]
-    b2 = 0.0
-
-    def forward(x):
-        h = [math.tanh(clamp(sum(W1[j][i] * x[i] for i in range(in_dim)) + b1[j], -10.0, 10.0)) for j in range(hid_dim)]
-        return sigmoid(sum(W2[j] * h[j] for j in range(hid_dim)) + b2), h
-
-    for ep in range(epochs):
-        step_lr = lr * (0.96 ** ep)
-        shuffled = list(train)
-        rng.shuffle(shuffled)
-        for x, y in shuffled:
-            y_hat, h_act = forward(x)
-            dz2 = y_hat - y
-            for j in range(hid_dim):
-                grad_w2 = dz2 * h_act[j] + 0.003 * W2[j]
-                dh = dz2 * W2[j] * (1.0 - h_act[j] ** 2)
-                W2[j] -= step_lr * grad_w2
-                b1[j] -= step_lr * dh
-                for i in range(in_dim):
-                    W1[j][i] -= step_lr * (dh * x[i] + 0.003 * W1[j][i])
-            b2 -= step_lr * dz2
-
-    hits = sum(1 for x, y in hold if (forward(x)[0] > 0.5) == (y >= 0.5))
-    acc = hits / len(hold)
-    up_rate = sum(1.0 for _, y in hold if y >= 0.5) / len(hold)
-    edge = acc - max(up_rate, 1.0 - up_rate)
-    shrink = clamp(0.35 + edge / 0.12, 0.20, 1.0)
-    raw = forward(features[-1])[0]
-    return clamp(0.5 + (raw - 0.5) * shrink, 0.08, 0.92), acc
+        if h[j] >= tgt:
+            exit_px = tgt
+            break
+        highest = max(highest, h[j])
+        stop = manage_stop(entry, stop, one_r, highest)
+    if exit_px is None:
+        exit_px = c[i + H]
+    return net_r(entry, exit_px, plan["risk_pct"])
 
 
-def monte_carlo_ev_sim(candles_1h, curr_price, tp_price, sl_price, paths=400, horizon_bars=12):
-    """Monte Carlo basato sull'Aspettativa Matematica (Expected R) pesata sui rendimenti recenti."""
-    if len(candles_1h) < 60 or curr_price <= 0 or sl_price >= curr_price or tp_price <= curr_price:
-        return 0.50, 0.0
-    closes = [c["close"] for c in candles_1h[-120:]]
-    rets = [math.log(closes[i] / closes[i - 1]) for i in range(1, len(closes)) if closes[i - 1] > 0]
-    if len(rets) < 25:
-        return 0.50, 0.0
-    recent_rets = rets[-48:] + rets[-24:] + rets
-    risk = curr_price - sl_price
-    tp_r = (tp_price - curr_price) / risk
-    rng = random.Random(1337)
-    sum_r = 0.0
+def backtest_coin(code, S, target_r=None):
+    """Rigioca la STESSA regola su ogni barra storica. Un evento ogni H barre (niente sovrapposizioni)."""
+    n, H = len(S["c"]), MAX_HOLD_H
+    events, last = [], -10 ** 9
+    for i in range(120, n - H - 1):
+        if i - last < H:
+            continue
+        base = sum(S["v"][i - 24:i]) / 24.0
+        vr = S["v"][i] / base if base > 0 else 1.0
+        cands = detect_setup(S, i, True, vr=vr)
+        if not cands:
+            continue
+        setup, level = cands[0]
+        plan = build_plan(S["c"][i], S["atr"][i], min(S["l"][i - 2:i + 1]), target_r)
+        if not plan["ok"]:
+            continue
+        events.append({"code": code, "setup": setup, "t": S["t"][i], "R": simulate_trade(S, i, plan, H),
+                       "feat": make_features(S, i, True, S["c"][i], vr, setup, level)})
+        last = i
+    return events
+
+
+def _auc(scores, labels):
+    pos = [s for s, y in zip(scores, labels) if y]
+    neg = [s for s, y in zip(scores, labels) if not y]
+    if not pos or not neg:
+        return 0.5
+    return sum((p > q) + 0.5 * (p == q) for p in pos for q in neg) / (len(pos) * len(neg))
+
+
+def _fit_logit(X, y, l2=0.15, epochs=250, lr=0.15):
+    d, n = len(X[0]), len(X)
+    w, b = [0.0] * d, 0.0
+    for _ in range(epochs):
+        gw, gb = [0.0] * d, 0.0
+        for xi, yi in zip(X, y):
+            e = sigmoid(sum(wj * xj for wj, xj in zip(w, xi)) + b) - yi
+            for k in range(d):
+                gw[k] += e * xi[k]
+            gb += e
+        for k in range(d):
+            w[k] -= lr * (gw[k] / n + l2 * w[k])
+        b -= lr * gb / n
+    return w, b
+
+
+def _norm_stats(X):
+    d = len(X[0])
+    mu = [sum(r[k] for r in X) / len(X) for k in range(d)]
+    sd = [(statistics.pstdev([r[k] for r in X]) or 1.0) for k in range(d)]
+    return mu, sd
+
+
+def _score(model, feat):
+    z = [(f - m) / s for f, m, s in zip(feat, model["mu"], model["sd"])]
+    return sigmoid(sum(w * x for w, x in zip(model["w"], z)) + model["b"])
+
+
+def train_edge_model(events):
+    """
+    Regressione logistica regolarizzata, validata walk-forward: addestro sul 65% PIU' VECCHIO (con embargo di H ore),
+    misuro sul 35% piu' recente. Il filtro si attiva SOLO se fuori campione ordina davvero i trade
+    (AUC >= 0.55 e metà migliore con R medio > media complessiva + 0.05). Altrimenti non viene usato.
+    """
+    ev = sorted(events, key=lambda e: e["t"])
+    n = len(ev)
+    if n < 60:
+        return {"active": False, "why": f"eventi insufficienti ({n} < 60)"}
+    split = int(n * 0.65)
+    t_split = ev[split]["t"]
+    train = [e for e in ev[:split] if e["t"] < t_split - MAX_HOLD_H * 3600]
+    test = ev[split:]
+    if len(train) < 30 or len(test) < 20:
+        return {"active": False, "why": "campione train/test insufficiente"}
+    mu, sd = _norm_stats([e["feat"] for e in train])
+    Xtr = [[(f - m) / s for f, m, s in zip(e["feat"], mu, sd)] for e in train]
+    w, b = _fit_logit(Xtr, [1.0 if e["R"] > 0 else 0.0 for e in train])
+    m1 = {"w": w, "b": b, "mu": mu, "sd": sd}
+    sc = [_score(m1, e["feat"]) for e in test]
+    rs = [e["R"] for e in test]
+    auc = _auc(sc, [r > 0 for r in rs])
+    order = sorted(range(len(test)), key=lambda k: sc[k], reverse=True)
+    top_r = sum(rs[k] for k in order[:len(order) // 2]) / max(1, len(order) // 2)
+    all_r = sum(rs) / len(rs)
+    res = {"active": False, "auc": auc, "top_r": top_r, "all_r": all_r, "n_test": len(test), "n": n}
+    if auc >= 0.55 and top_r >= all_r + 0.05:
+        mu, sd = _norm_stats([e["feat"] for e in ev])
+        Xa = [[(f - m) / s for f, m, s in zip(e["feat"], mu, sd)] for e in ev]
+        w, b = _fit_logit(Xa, [1.0 if e["R"] > 0 else 0.0 for e in ev])
+        m2 = {"w": w, "b": b, "mu": mu, "sd": sd}
+        thr = statistics.median([_score(m2, e["feat"]) for e in ev])
+        res.update(active=True, thr=thr, **m2)
+    else:
+        res["why"] = f"non validato fuori campione (AUC {auc:.2f}, top {top_r:+.2f}R vs tutti {all_r:+.2f}R)"
+    return res
+
+
+def monte_carlo_plan(c15, plan, paths=None, seed=19):
+    """
+    Bootstrap a blocchi dei rendimenti 15m (senza drift). NON e' una previsione: verifica solo che
+    il piano sia geometricamente raggiungibile (target entro il time-stop) con la volatilita' attuale.
+    """
+    paths = paths or MC_PATHS
+    closes = [x["close"] for x in c15[-600:]]
+    rets = [math.log(closes[k] / closes[k - 1]) for k in range(1, len(closes)) if closes[k - 1] > 0]
+    if len(rets) < 100:
+        return None
+    mu = sum(rets) / len(rets)
+    rets = [r - mu for r in rets]
+    steps, block, rng = MAX_HOLD_H * 4, 4, random.Random(seed)
+    entry, stop, tgt = plan["entry"], plan["stop"], plan["target"]
+    ht = hs = 0
+    rsum = 0.0
     for _ in range(paths):
-        p = curr_price
-        outcome_r = None
-        for _ in range(horizon_bars):
-            p *= math.exp(rng.choice(recent_rets))
-            if p <= sl_price:
-                outcome_r = -1.0
-                break
-            if p >= tp_price:
-                outcome_r = tp_r
-                break
-        if outcome_r is None:
-            outcome_r = clamp((p - curr_price) / risk, -1.0, tp_r)
-        sum_r += outcome_r
-    ev_r = sum_r / paths
-    prob_eq = clamp(sigmoid(ev_r * 1.45), 0.15, 0.85)
-    return prob_eq, ev_r
+        p, k, res = entry, 0, None
+        while k < steps and res is None:
+            st = rng.randrange(0, len(rets) - block)
+            for b in range(block):
+                p *= math.exp(rets[st + b])
+                k += 1
+                if p <= stop:
+                    res = ("s", stop)
+                    break
+                if p >= tgt:
+                    res = ("t", tgt)
+                    break
+                if k >= steps:
+                    break
+        if res is None:
+            res = ("n", p)
+        ht += res[0] == "t"
+        hs += res[0] == "s"
+        rsum += net_r(entry, res[1], plan["risk_pct"])
+    return {"p_target": ht / paths, "p_stop": hs / paths, "p_open": 1.0 - (ht + hs) / paths,
+            "avg_r": rsum / paths, "seed": seed, "paths": paths}
 
 
-class FreqAIEngine:
-    def __init__(self, config):
-        self.config = config
-        self.freqai_cfg = config.get("freqai", {})
-        self.fp = self.freqai_cfg.get("feature_parameters", {})
-        self.di_threshold = float(self.fp.get("DI_threshold", 2.4))
-        self.horizon = int(self.fp.get("label_period_candles", 8))
+_EDGE = {"key": None, "codes": 0, "n": 0, "by_setup": {}, "by_coin": {}, "all": summarize([]),
+         "ml": {"active": False, "why": "n/d"}}
 
-    def start(self, dataframe, metadata, strategy):
-        candles_1h = metadata["candles_1h"]
-        for period in self.fp.get("indicator_periods_candles", [14, 20, 50]):
-            dataframe = strategy.feature_engineering_expand_all(dataframe, period, metadata=metadata)
-        dataframe = strategy.feature_engineering_expand_basic(dataframe, metadata=metadata)
-        dataframe = strategy.feature_engineering_standard(dataframe, metadata=metadata)
-        dataframe = strategy.set_freqai_targets(dataframe, metadata=metadata)
 
-        features = build_feature_matrix(candles_1h)
-        tb_labels = build_triple_barrier_labels(candles_1h, horizon=self.horizon)
-
-        curr_x = features[-1]
-        hist_x = features[max(54, len(features) - 180):-1]
-        if hist_x:
-            dists = [math.sqrt(sum((a - b) ** 2 for a, b in zip(curr_x, hx)) / len(curr_x)) for hx in hist_x]
-            di_val = min(dists) if dists else 0.5
-        else:
-            di_val = 0.5
-        do_predict = 1 if di_val <= self.di_threshold else 0
-
-        prob_knn = lorentzian_knn_predict(candles_1h, features, tb_labels, horizon=self.horizon, k=20)
-        prob_mlp, mlp_acc = online_mlp_neural_net(candles_1h, features, tb_labels, horizon=self.horizon)
-
-        if HAS_SKLEARN and len(candles_1h) >= 160:
-            try:
-                X_all = np.array(features[54:-self.horizon - 1])
-                y_all = np.array([1 if tb_labels[i] >= 0.5 else 0 for i in range(54, len(candles_1h) - self.horizon - 1)])
-                if len(set(y_all)) > 1:
-                    clf = HistGradientBoostingClassifier(
-                        max_depth=3, min_samples_leaf=12, l2_regularization=1.2, max_iter=60, random_state=42
-                    )
-                    clf.fit(X_all, y_all)
-                    prob_sk = float(clf.predict_proba(np.array([curr_x]))[0][1])
-                    prob_mlp = 0.50 * prob_mlp + 0.50 * prob_sk
-            except Exception:
-                pass
-
-        prob_mc, mc_ev_r = monte_carlo_ev_sim(
-            candles_1h, metadata["price"], metadata["tp_price"], metadata["sl_price"], paths=400, horizon_bars=12
-        )
-        ai_ensemble_prob = 0.42 * prob_mlp + 0.36 * prob_knn + 0.22 * prob_mc
-        tm_stats = skill_07_time_machine_backtest(candles_1h, features, horizon_bars=self.horizon)
-
-        if HAS_PANDAS and isinstance(dataframe, pd.DataFrame):
-            dataframe["DI_values"] = di_val
-            dataframe["do_predict"] = do_predict
-            dataframe["&-up_prob"] = ai_ensemble_prob
-            dataframe["&-prob_mlp"] = prob_mlp
-            dataframe["&-prob_knn"] = prob_knn
-            dataframe["&-prob_mc"] = prob_mc
-        elif isinstance(dataframe, list) and dataframe:
-            dataframe[-1].update({
-                "DI_values": di_val, "do_predict": do_predict, "&-up_prob": ai_ensemble_prob,
-                "&-prob_mlp": prob_mlp, "&-prob_knn": prob_knn, "&-prob_mc": prob_mc,
-            })
-
-        metadata["freqai_result"] = {
-            "ai_prob": ai_ensemble_prob, "prob_mlp": prob_mlp, "prob_knn": prob_knn,
-            "prob_mc": prob_mc, "mc_ev_r": mc_ev_r, "mlp_holdout_acc": mlp_acc,
-            "di_values": di_val, "do_predict": do_predict, "tm_stats": tm_stats,
-        }
-        return dataframe
+def refresh_edge(series_by_code):
+    """Ricalcolato solo quando chiude una nuova barra 1h."""
+    global _EDGE
+    key = max(S["t"][-1] for S in series_by_code.values())
+    if _EDGE["key"] == key and _EDGE["codes"] == len(series_by_code):
+        return _EDGE
+    events = []
+    for code, S in series_by_code.items():
+        events += backtest_coin(code, S)
+    by_setup, by_coin = {}, {}
+    for e in events:
+        by_setup.setdefault(e["setup"], []).append(e["R"])
+        by_coin.setdefault((e["code"], e["setup"]), []).append(e["R"])
+    _EDGE = {"key": key, "codes": len(series_by_code), "n": len(events),
+             "by_setup": {k: summarize(v) for k, v in by_setup.items()},
+             "by_coin": {k: summarize(v) for k, v in by_coin.items()},
+             "all": summarize([e["R"] for e in events]), "ml": train_edge_model(events)}
+    log("INFO", f"Time Machine aggiornata: {len(events)} eventi storici, expectancy {_EDGE['all']['exp_r']:+.2f}R, "
+                f"ML {'ATTIVO' if _EDGE['ml'].get('active') else 'spento'}")
+    return _EDGE
 
 
 # ==============================================================================
-# 7. LE 11 SKILL DI TRADING AUTOMATICO + CLAUDE 5.5 AI SUPERVISOR
+# 9. VALUTAZIONE COIN + GATE DI RISCHIO
 # ==============================================================================
-
-# --- SKILL 01: Multi-Timeframe Regime & Market Structure ---
-def skill_01_regime_and_structure(candles_4h, candles_1h, candles_15m, price):
-    closes_4h = [c["close"] for c in candles_4h]
-    closes_1h = [c["close"] for c in candles_1h]
-
-    ema20_4h, ema50_4h = calc_ema(closes_4h, 20), calc_ema(closes_4h, 50)
-    ema20_1h, ema50_1h = calc_ema(closes_1h, 20), calc_ema(closes_1h, 50)
-    st_dir_4h, _ = calc_supertrend(candles_4h, 10, 3.0)
-    st_dir_1h, _ = calc_supertrend(candles_1h, 10, 3.0)
-    adx_1h, pdi_1h, mdi_1h = calc_adx(candles_1h, 14)
-    rsi_4h = calc_rsi(closes_4h, 14)
-    rsi_1h_s = calc_rsi_series(closes_1h, 14)
-    rsi_1h, rsi_1h_prev = rsi_1h_s[-1], rsi_1h_s[-2]
-    hurst = calc_hurst_exponent(closes_1h, 20)
-    z_linreg, lin_slope = calc_linreg_zscore(closes_1h, 40)
-
-    h_recent = max(c["high"] for c in candles_1h[-12:])
-    l_recent = min(c["low"] for c in candles_1h[-12:])
-    h_prev = max(c["high"] for c in candles_1h[-28:-12])
-    l_prev = min(c["low"] for c in candles_1h[-28:-12])
-    higher_lows = l_recent > l_prev * 0.999
-    higher_highs = h_recent > h_prev * 0.999
-
-    bear_impulse = (st_dir_1h == -1 and st_dir_4h == -1 and mdi_1h > pdi_1h and adx_1h >= 23.0 and price < ema20_1h)
-    oversold_bounce = (rsi_1h <= 38.0 and rsi_1h > rsi_1h_prev + 1.0 and z_linreg <= -1.35)
-
-    if price > ema20_4h and ema20_4h >= ema50_4h * 0.998 and st_dir_1h == 1 and pdi_1h > mdi_1h:
-        regime = "STRONG_UPTREND"
-    elif price > ema50_4h and higher_lows and price >= ema20_1h * 0.994:
-        regime = "BULL_PULLBACK"
-    elif oversold_bounce:
-        regime = "MEAN_REVERT_OVERSOLD"
-    elif bear_impulse:
-        regime = "BEAR_TREND"
-    else:
-        regime = "ACCUMULATION_RANGE"
-
-    score = 0
-    if price > ema50_4h:
-        score += 5
-    elif price > ema20_4h * 0.995:
-        score += 3
-    if st_dir_4h == 1:
-        score += 3
-    if price > ema20_1h and ema20_1h >= ema50_1h * 0.997:
-        score += 5
-    elif oversold_bounce:
-        score += 4
-    if st_dir_1h == 1 and pdi_1h > mdi_1h:
-        score += 4
-    if higher_lows:
-        score += 3
-    if regime == "BEAR_TREND":
-        score = max(0, score - 6)
-
-    hard_block = (regime == "BEAR_TREND")
-    return {
-        "score": clamp(score, 0, 20), "regime": regime, "hard_block": hard_block,
-        "ema20_4h": ema20_4h, "ema50_4h": ema50_4h, "ema20_1h": ema20_1h, "ema50_1h": ema50_1h,
-        "st_dir_4h": st_dir_4h, "st_dir_1h": st_dir_1h, "adx_1h": adx_1h, "pdi_1h": pdi_1h, "mdi_1h": mdi_1h,
-        "rsi_4h": rsi_4h, "rsi_1h": rsi_1h, "rsi_1h_prev": rsi_1h_prev, "hurst": hurst,
-        "z_linreg": z_linreg, "lin_slope": lin_slope, "higher_lows": higher_lows, "higher_highs": higher_highs,
-    }
-
-
-# --- SKILL 02: BTC Correlation & Altcoin Relative Alpha Filter ---
-def skill_02_btc_correlation_alpha(code, candles_15m, candles_1h, ema20_1h, ob, price, vwap_15m):
-    closes_15m = [c["close"] for c in candles_15m]
-    closes_1h = [c["close"] for c in candles_1h]
-    ret_1h = ((closes_15m[-1] - closes_15m[-5]) / closes_15m[-5] * 100.0) if len(closes_15m) >= 5 else 0.0
-    ret_4h = ((closes_1h[-1] - closes_1h[-5]) / closes_1h[-5] * 100.0) if len(closes_1h) >= 5 else 0.0
-    rsi_15m = calc_rsi(closes_15m, 14)
-
-    if code == "BTC":
-        is_dump = (rsi_15m < 33.0 and ret_1h < -0.80) or (vwap_15m > 0 and price < vwap_15m * 0.988 and ob["imbalance"] < -0.08)
-        is_bull = price >= ema20_1h and rsi_15m >= 50.0 and ret_1h >= -0.15
-        BTC_REGIME.update({
-            "state": "BTC_DUMP_GUARD" if is_dump else ("BULL_IMPULSE" if is_bull else "NEUTRAL"),
-            "rsi_15m": round(rsi_15m, 1),
-            "ret_1h_pct": round(ret_1h, 2),
-            "ret_4h_pct": round(ret_4h, 2),
-            "allow_alts": not is_dump,
-            "label": "🚨 BTC Dump Guard (Altcoin Bloccate)" if is_dump else ("🟢 BTC Bull Impulse" if is_bull else "⚪ BTC Neutrale / Range"),
-        })
-        BTC_CONTEXT.update({"ret_1h": ret_1h, "ret_4h": ret_4h})
-        return {"score": 7 if not is_dump else 2, "alpha_1h": 0.0, "alpha_4h": 0.0, "btc_ok": True}
-
-    alpha_1h = ret_1h - BTC_CONTEXT.get("ret_1h", 0.0)
-    alpha_4h = ret_4h - BTC_CONTEXT.get("ret_4h", 0.0)
-    btc_ok = BTC_REGIME.get("allow_alts", True)
-
-    if not btc_ok:
-        return {"score": 0, "alpha_1h": alpha_1h, "alpha_4h": alpha_4h, "btc_ok": False}
-    if alpha_1h > 0.25 and alpha_4h > 0.30:
-        score = 10
-    elif alpha_1h > 0.0 or alpha_4h > 0.0:
-        score = 7
-    elif alpha_1h > -0.60:
-        score = 4
-    else:
-        score = 1
-    return {"score": score, "alpha_1h": alpha_1h, "alpha_4h": alpha_4h, "btc_ok": btc_ok}
-
-
-# --- SKILL 03: Institutional Liquidity, VWAP Bands & Volume Profile POC ---
-def skill_03_liquidity_vwap_poc(candles_15m, candles_1h, price):
-    vwap_15m, vwap_std, vwap_z = calc_rolling_vwap_bands(candles_15m, 96)
-    poc_price = calc_volume_profile_poc(candles_1h, 24, 120)
-    vol_z_1h = calc_volume_zscore(candles_1h, 30)
-    vol_z_15m = calc_volume_zscore(candles_15m, 24)
-
-    vwap_diff_pct = ((price - vwap_15m) / vwap_15m * 100.0) if vwap_15m > 0 else 0.0
-    overextended = (vwap_diff_pct > 1.65) or (vwap_z > 1.90)
-
-    bp_vals = []
-    for c in candles_15m[-3:]:
-        rng = max(c["high"] - c["low"], 1e-9)
-        bp_vals.append((c["close"] - c["low"]) / rng)
-    buy_pressure = sum(bp_vals) / len(bp_vals) if bp_vals else 0.5
-
-    score = 0
-    if -0.75 <= vwap_diff_pct <= 1.25:
-        score += 5
-    elif -1.4 <= vwap_diff_pct < -0.75:
-        score += 3
-    if price >= poc_price * 0.995:
-        score += 4
-    if vol_z_1h > 0.15 or vol_z_15m > 0.30:
-        score += 3
-    if buy_pressure >= 0.56:
-        score += 3
-    if overextended:
-        score = max(0, score - 6)
-
-    return {
-        "score": clamp(score, 0, 15), "vwap_15m": vwap_15m, "vwap_z": vwap_z,
-        "vwap_diff_pct": vwap_diff_pct, "poc_price": poc_price, "vol_z": vol_z_1h,
-        "vol_z_15m": vol_z_15m, "buy_pressure": buy_pressure, "overextended": overextended,
-    }
-
-
-# --- SKILL 04: Orderbook L2 Microstructure & Anti-Slippage ---
-def skill_04_orderbook_microstructure(ob):
-    imb = ob.get("imbalance", 0.0)
-    wall = ob.get("wall_pressure", 0.0)
-    spread = ob.get("spread_bps", 5.0)
-
-    score = 0
-    if imb >= 0.12:
-        score += 6
-    elif imb >= 0.03:
-        score += 4
-    elif imb >= -0.02:
-        score += 2
-    if wall >= 0.05:
-        score += 3
-    elif wall >= -0.05:
-        score += 1
-    if spread <= 12.0:
-        score += 1
-
-    book_ok = (spread <= 18.0) and (imb >= -0.05)
-    return {"score": clamp(score, 0, 10), "book_ok": book_ok, "spread_bps": spread, "imbalance": imb, "wall_pressure": wall}
-
-
-# --- SKILL 05: Derivatives, Funding Rate & Squeeze Detector ---
-def skill_05_derivatives_sentiment(fut, fng_val, price, ema20_1h):
-    fr = fut.get("funding_8h_pct", 0.0)
-    score = 0
-    squeeze_fuel = (fr < -0.005 and price >= ema20_1h * 0.997)
-    crowded_long = (fr > 0.045 and fng_val > 76)
-
-    if squeeze_fuel:
-        score += 5
-    elif -0.005 <= fr <= 0.022:
-        score += 4
-    elif not crowded_long:
-        score += 2
-
-    if 24 <= fng_val <= 74:
-        score += 3
-    elif fng_val < 24:
-        score += 4
-    else:
-        score += 1
-
-    return {"score": clamp(score, 0, 8), "squeeze_fuel": squeeze_fuel, "crowded_long": crowded_long, "funding_8h_pct": fr}
-
-
-# --- SKILL 06: Macro Calendar USD Shield & NYSE / Session Liquidity ---
-def skill_06_macro_and_session(macro_events):
-    now_utc = datetime.now(timezone.utc)
-    ny = now_utc.astimezone(ZoneInfo("America/New_York"))
-    nyse_bell_risk = False
-    session_str = "🌏 Sessione Asiatica / Notturna"
-
-    if ny.weekday() < 5:
-        open_utc = ny.replace(hour=9, minute=30, second=0, microsecond=0).astimezone(timezone.utc)
-        close_utc = ny.replace(hour=16, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
-        if abs((now_utc - open_utc).total_seconds()) <= 1500:
-            nyse_bell_risk = True
-            session_str = "🔔 NYSE OPENING BELL (Whipsaw Risk USA)"
-        elif open_utc < now_utc <= close_utc:
-            session_str = "🇺🇸 Sessione Wall Street Attiva (Alta Liquidita')"
-    m = now_utc.hour * 60 + now_utc.minute
-    if not nyse_bell_risk and "Wall Street" not in session_str:
-        if 7 * 60 <= m < 13 * 60:
-            session_str = "🇪🇺 Sessione Europea Attiva"
-        elif now_utc.weekday() >= 5:
-            session_str = "📅 Weekend (Liquidita' Ridotta)"
-
-    high_soon = [e for e in macro_events if e["impact"] == "High" and -0.75 <= e["diff_hours"] <= 2.0]
-    score = 0 if high_soon else (4 if nyse_bell_risk else 7)
-    return {"score": score, "high_soon": bool(high_soon), "nyse_bell_risk": nyse_bell_risk, "session_str": session_str}
-
-
-# --- SKILL 07: Time Machine Historical Analog Backtest ---
-def skill_07_time_machine_backtest(candles_1h, features, horizon_bars=8):
-    if len(candles_1h) < 130:
-        return {"win_rate": 52.0, "expectancy_r": 0.15, "matches": 10}
-    closes = [c["close"] for c in candles_1h]
-    highs = [c["high"] for c in candles_1h]
-    lows = [c["low"] for c in candles_1h]
-    atrs = calc_atr_series(candles_1h, 14)
-    curr_x = features[-1]
-    candidates = []
-    for i in range(54, len(candles_1h) - horizon_bars - 1):
-        dist = sum(math.log(1.0 + abs(a - b)) for a, b in zip(curr_x, features[i]))
-        candidates.append((dist, i))
-    candidates.sort(key=lambda x: x[0])
-
-    top, used = [], []
-    for dist, idx in candidates:
-        if any(abs(idx - u) < 5 for u in used):
-            continue
-        top.append((dist, idx))
-        used.append(idx)
-        if len(top) >= 20:
-            break
-
-    wins, total_r = 0, 0.0
-    for _, idx in top:
-        entry = closes[idx]
-        risk = max(atrs[idx] * 1.40, entry * 0.014)
-        tp, sl = entry + 1.70 * risk, entry - 1.0 * risk
-        outcome_r = None
-        for h in range(1, horizon_bars + 1):
-            if lows[idx + h] <= sl:
-                outcome_r = -1.0
-                break
-            if highs[idx + h] >= tp:
-                outcome_r = 1.70
-                break
-        if outcome_r is None:
-            outcome_r = clamp((closes[idx + horizon_bars] - entry) / risk, -1.0, 1.70)
-        if outcome_r > 0:
-            wins += 1
-        total_r += outcome_r
-    n = len(top)
-    return {"win_rate": (wins / n) * 100.0 if n else 50.0, "expectancy_r": total_r / n if n else 0.0, "matches": n}
-
-
-# --- SKILL 08: Chart Scanner 15m Precision Pullback/Reclaim Sniper ---
-def skill_08_chart_scanner_entry_timer(candles_15m, candles_1h, s3_vwap, ob_imbalance, rsi_1h):
-    if len(candles_15m) < 25:
-        return {"triggered": False, "triggers": 0, "vwap_15m": 0.0, "ema20_15m": 0.0,
-                "rsi_15m": 50.0, "rsi_15m_prev": 50.0, "upper_wick_pct": 0.0, "summary": "Dati 15m insufficienti"}
-    closes_15m = [c["close"] for c in candles_15m]
-    last_c = candles_15m[-1]
-    c15, o15, h15, l15 = last_c["close"], last_c["open"], last_c["high"], last_c["low"]
-    p15 = closes_15m[-2]
-    ema20_15m = calc_ema(closes_15m, 20)
-    rsi_s = calc_rsi_series(closes_15m, 14)
-    rsi_15m = rsi_s[-1]
-    rsi_15m_prev = rsi_s[-2] if len(rsi_s) >= 2 else rsi_15m
-
-    rng = max(h15 - l15, 1e-9)
-    upper_wick_pct = (h15 - max(o15, c15)) / rng * 100.0
-    green_or_reclaim = (c15 >= o15) or (c15 > p15 and (c15 - l15) / rng >= 0.55)
-
-    triggers, notes = 0, []
-    if not s3_vwap["overextended"] and -0.9 <= s3_vwap["vwap_diff_pct"] <= 1.45 and green_or_reclaim:
-        triggers += 1
-        notes.append("VWAP Reclaim")
-    if c15 >= ema20_15m * 0.998 and rsi_15m >= rsi_15m_prev - 0.5:
-        triggers += 1
-        notes.append("EMA20 15m Hold")
-    if 33.0 <= rsi_15m <= 64.0 and rsi_15m > rsi_15m_prev:
-        triggers += 1
-        notes.append(f"RSI Turn ({rsi_15m:.0f})")
-    if upper_wick_pct < 42.0 and green_or_reclaim:
-        triggers += 1
-        notes.append("Clean Candle")
-    if s3_vwap["vol_z"] >= 0.0 or ob_imbalance >= 0.04:
-        triggers += 1
-        notes.append("Flow/L2 Bid")
-
-    anti_top_ok = (30.0 <= rsi_15m <= 66.0) and (rsi_1h <= 68.0) and (upper_wick_pct < 55.0) and (not s3_vwap["overextended"])
-    triggered = (triggers >= 3) and anti_top_ok
-    if not anti_top_ok:
-        notes.append(f"Filtro Anti-Top (RSI15={rsi_15m:.0f}, Wick={upper_wick_pct:.0f}%)")
-
-    return {
-        "triggered": triggered, "triggers": triggers, "vwap_15m": s3_vwap["vwap_15m"], "ema20_15m": ema20_15m,
-        "rsi_15m": rsi_15m, "rsi_15m_prev": rsi_15m_prev, "upper_wick_pct": upper_wick_pct,
-        "summary": " + ".join(notes) if notes else "In attesa trigger 15m",
-    }
-
-
-# --- SKILL 09: ATR-Adaptive Structural Risk & Position Sizing ---
-def skill_09_adaptive_risk_and_sizing(invest_eur, eur_usd, entry_price, sl_price, tp_price, state, macro_high_soon, code=None, ev=None):
-    total_usdt = invest_eur * eur_usd
-    cash_buffer_usdt = total_usdt * (CASH_BUFFER_PCT / 100.0)
-    usable_usdt = total_usdt - cash_buffer_usdt
-
-    sl_dist_pct = ((entry_price - sl_price) / entry_price) * 100.0 if entry_price > 0 else 2.2
-    tp_dist_pct = ((tp_price - entry_price) / entry_price) * 100.0 if entry_price > 0 else 3.6
-    fee_rt = PIONEX_FEE_ROUNDTRIP_PCT
-    rr_ratio = (tp_dist_pct - fee_rt) / (sl_dist_pct + fee_rt) if sl_dist_pct > 0 else 0.0
-
-    risk_usdt = total_usdt * (RISK_PER_TRADE_PCT / 100.0)
-    proposed_usdt = risk_usdt / ((sl_dist_pct + fee_rt) / 100.0) if sl_dist_pct > 0 else usable_usdt
-    now = datetime.now(timezone.utc)
-    position_usdt = STRATEGY.custom_stake_amount(
-        pair=f"{code}_USDT" if code else "SOL_USDT", current_time=now, current_rate=entry_price,
-        proposed_stake=proposed_usdt, min_stake=MIN_ORDER_USDT, max_stake=usable_usdt,
-        leverage=1.0, entry_tag="", side="long", ev=ev or {}
-    )
-    max_loss_usdt = position_usdt * ((sl_dist_pct + fee_rt) / 100.0)
-    expected_gain_usdt = position_usdt * ((tp_dist_pct - fee_rt) / 100.0)
-
-    now_ts = int(now.timestamp())
-    stats = state["stats"]
-    today_str = now.strftime("%Y-%m-%d")
-    if stats.get("daily_date") != today_str:
-        stats.update({"daily_date": today_str, "daily_pnl_pct": 0.0, "daily_pnl_usdt": 0.0,
-                      "daily_trades": 0, "consec_losses": 0})
-
-    reasons = []
-    if usable_usdt < MIN_ORDER_USDT:
-        reasons.append(f"Capitale utilizzabile {usable_usdt:.2f} USDT < minimo ordine")
-    if rr_ratio < MIN_REWARD_RISK_R:
-        reasons.append(f"R:R netto basso ({rr_ratio:.2f}x < {MIN_REWARD_RISK_R}x)")
-    if code and code != "BTC" and not BTC_REGIME.get("allow_alts", True):
-        reasons.append("BTC Dump Guard attivo")
-    if stats.get("daily_pnl_pct", 0.0) <= -DAILY_MAX_LOSS_PCT:
-        reasons.append(f"Circuit Breaker Giornaliero ({stats['daily_pnl_pct']:+.2f}%)")
-    if stats.get("daily_trades", 0) >= MAX_TRADES_PER_DAY:
-        reasons.append(f"Max {MAX_TRADES_PER_DAY} trade/giorno raggiunti")
-    if stats.get("consec_losses", 0) >= MAX_CONSEC_LOSSES:
-        reasons.append(f"{MAX_CONSEC_LOSSES} stop consecutivi: pausa")
-    if macro_high_soon:
-        reasons.append("News Macro USD High Impact imminente")
-    if not (ENTRY_START_UTC <= now.hour < ENTRY_END_UTC):
-        reasons.append(f"Fuori finestra operativa {ENTRY_START_UTC:02d}-{ENTRY_END_UTC:02d} UTC")
-    last_close = stats.get("last_close_ts", 0)
-    if last_close and now_ts - last_close < MIN_MINUTES_BETWEEN_TRADES * 60:
-        reasons.append(f"Cooldown post-chiusura ({MIN_MINUTES_BETWEEN_TRADES}m)")
-    last_loss = stats.get("last_loss_ts", 0)
-    if last_loss and now_ts - last_loss < COOLDOWN_AFTER_LOSS_MIN * 60:
-        reasons.append(f"Cooldown post-perdita ({COOLDOWN_AFTER_LOSS_MIN}m)")
-    if code:
-        cl = stats.get("coin_last_close", {}).get(code, 0)
-        if cl and now_ts - cl < SAME_COIN_COOLDOWN_H * 3600:
-            reasons.append(f"{code} in cooldown ({SAME_COIN_COOLDOWN_H:.0f}h)")
-
-    passed = not reasons
-    return {
-        "passed": passed, "status_str": "PASS (Rischio OK)" if passed else "BLOCCATO: " + ", ".join(reasons),
-        "total_usdt": total_usdt, "position_usdt": position_usdt, "cash_buffer_usdt": cash_buffer_usdt,
-        "rr_ratio": rr_ratio, "sl_dist_pct": sl_dist_pct, "tp_dist_pct": tp_dist_pct,
-        "max_loss_usdt": max_loss_usdt, "expected_gain_usdt": expected_gain_usdt
-    }
-
-
-# --- SKILL 10: Smart Exit Planner & Chandelier ATR Trailing ---
-def skill_10_exit_planner(entry_price, sl_price, tp_price):
-    one_r = max(entry_price - sl_price, entry_price * 0.014)
-    be_fee_lock = entry_price * (1.0 + (PIONEX_FEE_ROUNDTRIP_PCT + 0.08) / 100.0)
-    return {
-        "one_r": one_r,
-        "be_trigger": entry_price + 1.00 * one_r,
-        "be_fee_lock": be_fee_lock,
-        "scaleout_trigger": entry_price + 1.35 * one_r,
-        "tp1_lock": entry_price + 0.45 * one_r,
-        "trail_trigger": entry_price + 1.65 * one_r,
-        "tp3_target": tp_price,
-    }
-
-
-# --- SKILL 11: Claude 5.5 AI Supervisor (Adaptive Thinking + Structured Outputs + Prompt Caching) ---
-_CLAUDE_SYSTEM_PROMPT = (
-    "Sei il Chief Investment Officer quantitativo di un bot crypto spot LONG su Pionex. "
-    "Il tuo obiettivo primario e' ELIMINARE i falsi segnali e le chiusure in perdita dovute a ingressi "
-    "affrettati, compravendite contro-trend o inseguimento di candele estese (chasing). "
-    "Ricevi il dossier completo delle 11 Skill di trading automatico e lo storico degli ultimi trade chiusi. "
-    "Regole ferree:\n"
-    "1. Approva ('APPROVE') un nuovo ingresso LONG SOLO se c'e' vera confluenza tra struttura 4H/1H, "
-    "reclaim/supporto 15m senza estensione eccessiva, orderbook sano e Risk/Reward netto >= 1.55x.\n"
-    "2. Se lo storico recente mostra stop consecutivi nello stesso regime o sulla stessa coin, sii piu' severo ('WAIT_PULLBACK' o 'REJECT').\n"
-    "3. Su una posizione GIA' APERTA: usa 'HOLD' finche' la tesi regge; suggerisci 'TIGHTEN_SL' se il momentum rallenta in profitto; "
-    "'TAKE_PROFIT_NOW' solo se il target e' vicino e il book si gira in vendita; 'CLOSE_DEFENSIVE' solo su chiara rottura strutturale.\n"
-    "4. Rispondi sempre rispettando esattamente lo schema JSON richiesto e motivando in italiano chiaro e sintetico."
-)
-
-_CLAUDE_RESPONSE_SCHEMA = {
-    "type": "object",
-    "additionalProperties": False,
-    "required": [
-        "decision", "best_coin", "confidence", "conviction_mult",
-        "sl_adjustment_pct", "tp_adjustment_pct", "market_regime_note", "reason_it"
-    ],
-    "properties": {
-        "decision": {
-            "type": "string",
-            "enum": ["APPROVE", "WAIT_PULLBACK", "REJECT", "HOLD", "TIGHTEN_SL", "TAKE_PROFIT_NOW", "CLOSE_DEFENSIVE"]
-        },
-        "best_coin": {"type": "string"},
-        "confidence": {"type": "integer", "description": "Confidence score from 0 to 100"},
-        "conviction_mult": {"type": "number", "description": "Position size multiplier between 0.70 and 1.15"},
-        "sl_adjustment_pct": {"type": "number", "description": "Optional SL tweak in percent, between -0.5 and 0.5; 0 for no change"},
-        "tp_adjustment_pct": {"type": "number", "description": "Optional TP tweak in percent, between -0.8 and 1.2; 0 for no change"},
-        "market_regime_note": {"type": "string"},
-        "reason_it": {"type": "string"}
-    }
-}
-
-
-def claude_call_api(user_payload, model=None, effort=None):
-    """Chiamata nativa API Anthropic `2026-10-21` con Adaptive Thinking, Effort, Caching e JSON Schema strict."""
-    if not CLAUDE_ENABLED:
-        return None
-    use_model = model or CLAUDE_MODEL
-    use_effort = effort or CLAUDE_EFFORT
-    max_tok = 4096 if use_effort == "high" else 2048
-
-    body = {
-        "model": use_model,
-        "max_tokens": max_tok,
-        "thinking": {"type": "adaptive"},
-        "system": [
-            {
-                "type": "text",
-                "text": _CLAUDE_SYSTEM_PROMPT,
-                "cache_control": {"type": "ephemeral"},
-            }
-        ],
-        "output_config": {
-            "effort": use_effort,
-            "format": {
-                "type": "json_schema",
-                "schema": _CLAUDE_RESPONSE_SCHEMA,
-            },
-        },
-        "messages": [
-            {
-                "role": "user",
-                "content": json.dumps(user_payload, ensure_ascii=False),
-            }
-        ],
-    }
-
-    headers = {
-        "x-api-key": ANTHROPIC_API_KEY,
-        "anthropic-version": CLAUDE_API_VERSION,
-        "content-type": "application/json",
-    }
-
-    try:
-        r = SESSION.post("https://api.anthropic.com/v1/messages", headers=headers, json=body, timeout=28)
-        if r.status_code != 200:
-            log("WARN", f"Claude API HTTP {r.status_code}: {r.text[:180]}")
-            return None
-        rj = r.json()
-        for block in rj.get("content", []):
-            if block.get("type") == "text":
-                parsed = json.loads(block["text"])
-                parsed["confidence"] = int(clamp(int(parsed.get("confidence", 50)), 0, 100))
-                parsed["conviction_mult"] = clamp(float(parsed.get("conviction_mult", 1.0)), 0.70, 1.15)
-                parsed["sl_adjustment_pct"] = clamp(float(parsed.get("sl_adjustment_pct", 0.0)), -0.5, 0.5)
-                parsed["tp_adjustment_pct"] = clamp(float(parsed.get("tp_adjustment_pct", 0.0)), -0.8, 1.2)
-                parsed["model_used"] = use_model
-                return parsed
-    except Exception as e:
-        log("WARN", f"Claude Supervisor errore: {e}")
-    return None
-
-
-def _summarize_eval_for_claude(ev):
-    s = ev.get("skills", {})
-    rm = ev.get("risk_manager", {})
-    return {
-        "code": ev["code"],
-        "price": round(ev["price"], 6),
-        "raw_100": ev["raw_100"],
-        "final_score": ev["final_score"],
-        "ai_ensemble_prob": round(ev["ai_prob"], 3),
-        "mc_ev_r": round(ev.get("mc_ev_r", 0.0), 2),
-        "di_do_predict": ev.get("do_predict", 1),
-        "sl_price": round(ev["sl_price"], 6),
-        "tp_price": round(ev["tp_price"], 6),
-        "sl_dist_pct": round(rm.get("sl_dist_pct", 0.0), 2),
-        "tp_dist_pct": round(rm.get("tp_dist_pct", 0.0), 2),
-        "net_rr_ratio": round(rm.get("rr_ratio", 0.0), 2),
-        "skill_01_regime": s.get("s1", {}).get("regime"),
-        "skill_01_adx_1h": round(ev.get("adx_1h", 20.0), 1),
-        "skill_01_rsi_1h": round(ev.get("rsi_1h", 50.0), 1),
-        "skill_01_higher_lows": s.get("s1", {}).get("higher_lows"),
-        "skill_02_alpha_vs_btc_1h": round(s.get("s2", {}).get("alpha_1h", 0.0), 2),
-        "skill_03_vwap_diff_pct": round(s.get("s3", {}).get("vwap_diff_pct", 0.0), 2),
-        "skill_03_vol_z": round(ev.get("vol_z", 0.0), 2),
-        "skill_03_buy_pressure": round(s.get("s3", {}).get("buy_pressure", 0.5), 2),
-        "skill_04_ob_imbalance": round(ev.get("ob", {}).get("imbalance", 0.0), 3),
-        "skill_04_wall_pressure": round(ev.get("ob", {}).get("wall_pressure", 0.0), 3),
-        "skill_04_spread_bps": round(ev.get("ob", {}).get("spread_bps", 5.0), 1),
-        "skill_05_funding_8h_pct": round(ev.get("fut", {}).get("funding_8h_pct", 0.0), 4),
-        "skill_07_timemachine_wr": round(ev.get("tm_stats", {}).get("win_rate", 50.0), 1),
-        "skill_07_timemachine_ev_r": round(ev.get("tm_stats", {}).get("expectancy_r", 0.0), 2),
-        "skill_08_triggers_15m": f"{ev['scanner_timer']['triggers']}/5 ({ev['scanner_timer']['summary']})",
-    }
-
-
-def skill_11_claude_ai_supervisor(state, mode, ranked_evals=None, open_eval=None, fng_val=50, session_str="", macro_events=None):
-    if not CLAUDE_ENABLED:
-        return None
-    now_ts = int(time.time())
-    last_call = int(state["stats"].get("claude_last_call_ts", 0))
-    cached = state["stats"].get("claude_last_verdict") or None
-
-    if mode == "SUPERVISE_OPEN" and (now_ts - last_call) < CLAUDE_COOLDOWN_SEC:
-        return cached
-
-    recent_history = [
-        {"coin": h.get("coin"), "pnl_pct": h.get("pnl_pct"), "reason": h.get("reason"), "closed_at": h.get("closed_at")}
-        for h in state.get("history", [])[:6]
-    ]
-    macro_brief = [
-        {"title": m["title"], "impact": m["impact"], "in_hours": round(m["diff_hours"], 1)}
-        for m in (macro_events or []) if -1.0 <= m.get("diff_hours", 99) <= 8.0
-    ]
-
-    if mode == "SUPERVISE_OPEN" and open_eval is not None:
-        pos = state["position"]
-        curr_p = open_eval["price"]
-        entry = pos["entry_price"]
-        one_r = pos.get("one_r") or max(entry - pos.get("initial_sl", pos["sl_price"]), entry * 0.014)
-        payload = {
-            "task": "SUPERVISE_OPEN_LONG_POSITION",
-            "btc_regime": BTC_REGIME,
-            "fear_greed": fng_val,
-            "session": session_str,
-            "upcoming_usd_macro": macro_brief,
-            "open_position": {
-                "coin": pos["coin_code"],
-                "entry_price": entry,
-                "current_price": curr_p,
-                "sl_price": pos["sl_price"],
-                "tp_price": pos["tp_price"],
-                "current_r": round((curr_p - entry) / one_r, 2) if one_r > 0 else 0.0,
-                "hours_open": round((now_ts - pos.get("opened_ts", now_ts)) / 3600.0, 2),
-                "breakeven_locked": pos.get("breakeven_locked", False),
-                "partial_tp_done": pos.get("partial_tp_done", False),
-            },
-            "coin_skills_snapshot": _summarize_eval_for_claude(open_eval),
-            "recent_trade_lessons": recent_history,
-        }
-        verdict = claude_call_api(payload, model=CLAUDE_FAST_MODEL, effort="medium")
-    else:
-        top_cands = [_summarize_eval_for_claude(e) for e in (ranked_evals or [])[:3]]
-        payload = {
-            "task": "EVALUATE_NEW_LONG_ENTRY",
-            "btc_regime": BTC_REGIME,
-            "fear_greed": fng_val,
-            "session": session_str,
-            "upcoming_usd_macro": macro_brief,
-            "daily_stats": {
-                "daily_trades": state["stats"].get("daily_trades", 0),
-                "consec_losses": state["stats"].get("consec_losses", 0),
-                "daily_pnl_pct": state["stats"].get("daily_pnl_pct", 0.0),
-            },
-            "candidates": top_cands,
-            "recent_trade_lessons": recent_history,
-        }
-        verdict = claude_call_api(payload, model=CLAUDE_MODEL, effort=CLAUDE_EFFORT)
-
-    if verdict:
-        verdict["ts"] = now_ts
-        state["stats"]["claude_last_call_ts"] = now_ts
-        state["stats"]["claude_last_verdict"] = verdict
-        save_state(state)
-        log("INFO", f"Claude AI ({verdict['model_used']}): {verdict['decision']} {verdict['best_coin']} (conf {verdict['confidence']}%) - {verdict['reason_it']}")
-    return verdict
-
-
-# ==============================================================================
-# 8. INTERFACCIA FREQTRADE `IStrategy` v3
-# ==============================================================================
-class IntParameter:
-    def __init__(self, low: int, high: int, default: int, space: str = "buy", optimize: bool = True):
-        self.low = low
-        self.high = high
-        self.value = default
-        self.space = space
-        self.optimize = optimize
-
-
-class DecimalParameter:
-    def __init__(self, low: float, high: float, default: float, decimals: int = 2, space: str = "buy", optimize: bool = True):
-        self.low = low
-        self.high = high
-        self.value = round(default, decimals)
-        self.space = space
-        self.optimize = optimize
-
-
-@dataclass
-class Trade:
-    pair: str
-    coin_code: str
-    open_rate: float
-    amount: float
-    stake_amount: float
-    open_date_utc: datetime
-    stop_loss: float
-    initial_stop_loss: float
-    take_profit: float
-    one_r: float
-    max_rate: float
-    enter_tag: str = "freqai_claude_11skills"
-    is_short: bool = False
-    breakeven_locked: bool = False
-    tp1_locked: bool = False
-    tp2_locked: bool = False
-    partial_tp_done: bool = False
-    alerts_triggered: list = field(default_factory=list)
-
-    def calc_profit_ratio(self, rate: float) -> float:
-        if self.open_rate <= 0:
-            return 0.0
-        gross = (rate - self.open_rate) / self.open_rate
-        return gross - (PIONEX_FEE_ROUNDTRIP_PCT / 100.0)
-
-
-class IStrategy:
-    INTERFACE_VERSION: int = 3
-    timeframe: str = "1h"
-    informative_timeframe: str = "4h"
-    detail_timeframe: str = "15m"
-    minimal_roi: dict = {"0": 0.045, "480": 0.008}
-    stoploss: float = -0.032
-    trailing_stop: bool = True
-    use_custom_stoploss: bool = True
-    use_exit_signal: bool = True
-    position_adjustment_enable: bool = True
-    process_only_new_candles: bool = True
-    startup_candle_count: int = 60
-
-    def __init__(self, config: dict):
-        self.config = config
-        self.freqai = FreqAIEngine(config)
-
-    def feature_engineering_expand_all(self, dataframe, period: int, metadata: dict, **kwargs):
-        return dataframe
-
-    def feature_engineering_expand_basic(self, dataframe, metadata: dict, **kwargs):
-        return dataframe
-
-    def feature_engineering_standard(self, dataframe, metadata: dict, **kwargs):
-        return dataframe
-
-    def set_freqai_targets(self, dataframe, metadata: dict, **kwargs):
-        return dataframe
-
-    def populate_indicators(self, dataframe, metadata: dict):
-        return dataframe
-
-    def populate_entry_trend(self, dataframe, metadata: dict):
-        return dataframe
-
-    def populate_exit_trend(self, dataframe, metadata: dict):
-        return dataframe
-
-    def custom_stoploss(self, pair: str, trade: Trade, current_time: datetime,
-                        current_rate: float, current_profit: float, after_fill: bool = False, **kwargs) -> float:
-        return self.stoploss
-
-    def custom_exit(self, pair: str, trade: Trade, current_time: datetime,
-                    current_rate: float, current_profit: float, **kwargs):
-        return None
-
-    def adjust_trade_position(self, trade: Trade, current_time: datetime, current_rate: float,
-                              current_profit: float, min_stake: float, max_stake: float, **kwargs):
-        return None
-
-    def custom_stake_amount(self, pair: str, current_time: datetime, current_rate: float,
-                            proposed_stake: float, min_stake: float, max_stake: float,
-                            leverage: float, entry_tag: str, side: str, **kwargs) -> float:
-        return proposed_stake
-
-    def confirm_trade_entry(self, pair: str, order_type: str, amount: float, rate: float,
-                            time_in_force: str, current_time: datetime, entry_tag: str,
-                            side: str, **kwargs) -> bool:
-        return True
-
-    def should_exit_roi(self, trade: Trade, current_time: datetime, current_profit: float) -> bool:
-        elapsed_min = max(0.0, (current_time - trade.open_date_utc).total_seconds() / 60.0)
-        for min_str, roi_target in sorted(self.minimal_roi.items(), key=lambda x: int(x[0]), reverse=True):
-            if elapsed_min >= int(min_str) and current_profit >= roi_target:
-                return True
-        return False
-
-
-class PionexFreqAIStrategy(IStrategy):
-    INTERFACE_VERSION = 3
-    timeframe = "1h"
-    minimal_roi = {"0": 0.048, "480": 0.008}
-    stoploss = -0.035
-    trailing_stop = True
-    use_custom_stoploss = True
-    position_adjustment_enable = True
-
-    buy_score_min = IntParameter(60, 78, default=Entry_Raw_100_Min, space="buy")
-    buy_ai_prob_min = DecimalParameter(0.52, 0.65, default=Entry_AI_Prob_Min, decimals=2, space="buy")
-    sell_score_defensive = IntParameter(2, 4, default=3, space="sell")
-
-    @property
-    def protections(self):
-        return [
-            {"method": "CooldownPeriod", "stop_duration": MIN_MINUTES_BETWEEN_TRADES},
-            {"method": "StoplossGuard", "lookback_period": 1440, "trade_limit": MAX_CONSEC_LOSSES,
-             "stop_duration": COOLDOWN_AFTER_LOSS_MIN, "only_per_pair": False},
-            {"method": "MaxDrawdown", "lookback_period": 1440, "max_allowed_drawdown": DAILY_MAX_LOSS_PCT / 100.0},
-        ]
-
-    def feature_engineering_expand_all(self, dataframe, period: int, metadata: dict, **kwargs):
-        if HAS_PANDAS and isinstance(dataframe, pd.DataFrame):
-            dataframe[f"%-rsi-period_{period}"] = ta.RSI(dataframe, timeperiod=period)
-            dataframe[f"%-ema-period_{period}"] = ta.EMA(dataframe, timeperiod=period)
-            dataframe[f"%-atr-period_{period}"] = ta.ATR(dataframe, timeperiod=period)
-        return dataframe
-
-    def feature_engineering_expand_basic(self, dataframe, metadata: dict, **kwargs):
-        if HAS_PANDAS and isinstance(dataframe, pd.DataFrame):
-            dataframe["%-pct-change"] = dataframe["close"].pct_change().fillna(0.0)
-            dataframe["%-raw_volume"] = dataframe["volume"]
-        return dataframe
-
-    def feature_engineering_standard(self, dataframe, metadata: dict, **kwargs):
-        if HAS_PANDAS and isinstance(dataframe, pd.DataFrame):
-            macd = ta.MACD(dataframe)
-            dataframe["%-macdhist"] = macd["macdhist"]
-            dataframe["%-vol_zscore"] = calc_volume_zscore_series(metadata["candles_1h"], 30)
-            dataframe["%-day_of_week"] = dataframe["date"].dt.dayofweek / 6.0
-            dataframe["%-hour_of_day"] = dataframe["date"].dt.hour / 23.0
-        return dataframe
-
-    def set_freqai_targets(self, dataframe, metadata: dict, **kwargs):
-        horizon = self.freqai.horizon
-        if HAS_PANDAS and isinstance(dataframe, pd.DataFrame):
-            dataframe["&-s_close"] = (dataframe["close"].shift(-horizon) - dataframe["close"]) / dataframe["close"]
-        return dataframe
-
-    def populate_indicators(self, dataframe, metadata: dict):
-        candles_1h = metadata["candles_1h"]
-        candles_4h = metadata["candles_4h"]
-        candles_15m = metadata["candles_15m"]
-        ob = metadata["ob"]
-        fut = metadata["fut"]
-        fng_val = metadata["fng_val"]
-        macro_events = metadata["macro_events"]
-        price = metadata["price"]
-
-        s1 = skill_01_regime_and_structure(candles_4h, candles_1h, candles_15m, price)
-        s3 = skill_03_liquidity_vwap_poc(candles_15m, candles_1h, price)
-        s4 = skill_04_orderbook_microstructure(ob)
-        s5 = skill_05_derivatives_sentiment(fut, fng_val, price, s1["ema20_1h"])
-        s6 = skill_06_macro_and_session(macro_events)
-        s2 = skill_02_btc_correlation_alpha(
-            metadata["code"], candles_15m, candles_1h, s1["ema20_1h"], ob, price, s3["vwap_15m"]
-        )
-
-        atr_1h = calc_atr(candles_1h, 14)
-        atr_15m = calc_atr(candles_15m, 14)
-        atr_pct = (atr_1h / price) * 100.0 if price > 0 else 1.5
-        recent_lows = [c["low"] for c in candles_15m[-20:]]
-        swing_low = min(recent_lows) if recent_lows else price * 0.978
-        recent_highs = [c["high"] for c in candles_1h[-36:]]
-        swing_high = max(recent_highs) if recent_highs else price * 1.045
-
-        sl_dist = max(price * 0.014, min(price * 0.032, 1.45 * atr_1h))
-        sl_price = min(price - sl_dist, swing_low - 0.35 * atr_15m)
-        sl_price = clamp(sl_price, price * 0.965, price * 0.986)
-
-        actual_risk = max(price - sl_price, price * 0.014)
-        tp_candidate = max(price + actual_risk * 1.85, min(swing_high * 0.998, price + 2.8 * atr_1h))
-        tp_price = clamp(tp_candidate, price * 1.024, price * 1.060)
-
-        metadata["sl_price"] = sl_price
-        metadata["tp_price"] = tp_price
-
-        dataframe = self.freqai.start(dataframe, metadata, self)
-        fai = metadata["freqai_result"]
-        ai_ensemble_prob = fai["ai_prob"]
-        tm_stats = fai["tm_stats"]
-
-        s8 = skill_08_chart_scanner_entry_timer(candles_15m, candles_1h, s3, ob["imbalance"], s1["rsi_1h"])
-
-        ai_pts = round(clamp((ai_ensemble_prob - 0.42) / 0.28, 0.0, 1.0) * 14.0)
-        tm_pts = 6 if (tm_stats["win_rate"] >= 54.0 and tm_stats["expectancy_r"] > 0.12) else (3 if tm_stats["win_rate"] >= 48.0 else 0)
-        score_ai_s7 = clamp(ai_pts + tm_pts, 0, 20)
-        score_s8 = clamp(s8["triggers"] * 2, 0, 10) if not s3["overextended"] else 0
-
-        raw_100 = clamp(
-            s1["score"] + s2["score"] + s3["score"] + s4["score"] + s5["score"] + s6["score"] + score_ai_s7 + score_s8,
-            0, 100
-        )
-        final_score = clamp(int(round(raw_100 / 10.0)), 1, 10)
-
-        closes_1h = [c["close"] for c in candles_1h]
-        macd_hist_s = calc_macd_hist_series(closes_1h, 12, 26, 9)
-        if HAS_PANDAS and isinstance(dataframe, pd.DataFrame):
-            dataframe["rsi"] = calc_rsi_series(closes_1h, 14)
-            dataframe["ema20"] = calc_ema_series(closes_1h, 20)
-            dataframe["ema50"] = calc_ema_series(closes_1h, 50)
-            dataframe["macdhist"] = macd_hist_s
-            dataframe["raw_100"] = raw_100
-            dataframe["final_score"] = final_score
-            dataframe["scanner_triggered"] = 1 if s8["triggered"] else 0
-
-        metadata["eval"] = {
-            "coin": metadata["coin_cfg"], "code": metadata["code"], "price": price,
-            "ref_close_15m": candles_15m[-1]["close"], "sl_price": sl_price, "tp_price": tp_price,
-            "atr_1h": atr_1h, "atr_15m": atr_15m, "atr_pct": atr_pct,
-            "raw_100": raw_100, "final_score": final_score,
-            "score_trend": s1["score"], "score_ai": score_ai_s7, "score_mom": score_s8,
-            "score_micro": s3["score"] + s4["score"], "score_macro": s5["score"] + s6["score"],
-            "ai_prob": ai_ensemble_prob, "prob_mlp": fai["prob_mlp"], "prob_knn": fai["prob_knn"],
-            "prob_mc": fai["prob_mc"], "mc_ev_r": fai["mc_ev_r"],
-            "mlp_holdout_acc": fai["mlp_holdout_acc"], "di_values": fai["di_values"],
-            "do_predict": fai["do_predict"], "rsi_1h": s1["rsi_1h"], "rsi_4h": s1["rsi_4h"],
-            "rsi_15m": s8["rsi_15m"], "rsi_15m_prev": s8["rsi_15m_prev"], "adx_1h": s1["adx_1h"],
-            "hurst": s1["hurst"], "z_linreg": s1["z_linreg"], "poc_price": s3["poc_price"],
-            "vol_z": s3["vol_z"], "ob": ob, "fut": fut, "st_dir_1h": s1["st_dir_1h"],
-            "tm_stats": tm_stats, "scanner_timer": s8, "high_soon": s6["high_soon"],
-            "skills": {"s1": s1, "s2": s2, "s3": s3, "s4": s4, "s5": s5, "s6": s6, "s8": s8},
-            "c15_recent": [{"time": c["time"], "high": c["high"], "low": c["low"]} for c in candles_15m[-24:]],
-        }
-        return dataframe
-
-    def populate_entry_trend(self, dataframe, metadata: dict):
-        ev = metadata["eval"]
-        s1 = ev["skills"]["s1"]
-        s2 = ev["skills"]["s2"]
-        s4 = ev["skills"]["s4"]
-        s6 = ev["skills"]["s6"]
-
-        req_score = self.buy_score_min.value + (4 if s6["nyse_bell_risk"] else 0)
-        cond = (
-            s2["btc_ok"]
-            and not s1["hard_block"]
-            and s4["book_ok"]
-            and ev["do_predict"] == 1
-            and ev["final_score"] >= Entry_Score_Min
-            and ev["raw_100"] >= req_score
-            and ev["ai_prob"] >= self.buy_ai_prob_min.value
-            and ev["scanner_timer"]["triggered"]
-        )
-        tag = f"11sk_{ev['raw_100']}_ai_{int(ev['ai_prob'] * 100)}_{s1['regime']}"
-        if HAS_PANDAS and isinstance(dataframe, pd.DataFrame):
-            dataframe["enter_long"] = 0
-            dataframe["enter_tag"] = ""
-            if cond and len(dataframe) > 0:
-                dataframe.iloc[-1, dataframe.columns.get_loc("enter_long")] = 1
-                dataframe.iloc[-1, dataframe.columns.get_loc("enter_tag")] = tag
-        ev["enter_long"] = 1 if cond else 0
-        ev["enter_tag"] = tag if cond else ""
-        return dataframe
-
-    def populate_exit_trend(self, dataframe, metadata: dict):
-        ev = metadata["eval"]
-        s1 = ev["skills"]["s1"]
-        cond = (
-            (ev["final_score"] <= self.sell_score_defensive.value and ev["ai_prob"] < 0.42)
-            or (s1["regime"] == "BEAR_TREND" and ev["ob"]["imbalance"] < -0.10)
-        )
-        tag = f"⚠️ USCITA DIFENSIVA ({s1['regime']}, Score {ev['code']}={ev['final_score']}/10)"
-        if HAS_PANDAS and isinstance(dataframe, pd.DataFrame):
-            dataframe["exit_long"] = 0
-            dataframe["exit_tag"] = ""
-            if cond and len(dataframe) > 0:
-                dataframe.iloc[-1, dataframe.columns.get_loc("exit_long")] = 1
-                dataframe.iloc[-1, dataframe.columns.get_loc("exit_tag")] = tag
-        ev["exit_long"] = 1 if cond else 0
-        ev["exit_tag"] = tag if cond else ""
-        return dataframe
-
-    def custom_stake_amount(self, pair: str, current_time: datetime, current_rate: float,
-                            proposed_stake: float, min_stake: float, max_stake: float,
-                            leverage: float, entry_tag: str, side: str, **kwargs) -> float:
-        ev = kwargs.get("ev", {})
-        ai_prob = ev.get("ai_prob", 0.56)
-        claude_mult = kwargs.get("claude_mult", 1.0)
-        mult = clamp(0.85 + (ai_prob - 0.52) * 1.4, 0.75, 1.10) * claude_mult
-        stake = min(proposed_stake * mult, max_stake)
-        return max(stake, min_stake) if max_stake >= min_stake else max_stake
-
-    def confirm_trade_entry(self, pair: str, order_type: str, amount: float, rate: float,
-                            time_in_force: str, current_time: datetime, entry_tag: str,
-                            side: str, **kwargs) -> bool:
-        ev = kwargs.get("ev", {})
-        spread_bps = ev.get("ob", {}).get("spread_bps", 5.0)
-        ref_close = ev.get("ref_close_15m", rate)
-        if spread_bps > 18.0:
-            log("WARN", f"confirm_trade_entry rifiutato su {pair}: spread troppo alto ({spread_bps:.1f} bps)")
-            return False
-        if ref_close > 0 and (rate - ref_close) / ref_close > 0.011:
-            log("WARN", f"confirm_trade_entry rifiutato su {pair}: spike improvviso +{(rate/ref_close - 1)*100:.2f}% sopra close 15m")
-            return False
-        return True
-
-    def adjust_trade_position(self, trade: Trade, current_time: datetime, current_rate: float,
-                              current_profit: float, min_stake: float, max_stake: float, **kwargs):
-        if not PARTIAL_TP_ENABLED or trade.partial_tp_done:
-            return None
-        current_r = (current_rate - trade.open_rate) / trade.one_r if trade.one_r > 0 else 0.0
-        current_val_usdt = trade.amount * current_rate
-        if current_r >= 1.35 and current_val_usdt >= 2.25 * min_stake:
-            return -(trade.stake_amount * 0.50)
-        return None
-
-    def custom_stoploss(self, pair: str, trade: Trade, current_time: datetime,
-                        current_rate: float, current_profit: float, after_fill: bool = False, **kwargs) -> float:
-        open_eval = kwargs.get("open_eval", {})
-        claude_verdict = kwargs.get("claude_verdict")
-        entry = trade.open_rate
-        sl = trade.stop_loss
-        one_r = trade.one_r
-        atr_15m = open_eval.get("atr_15m", 0.0) or (entry * 0.005)
-        current_r = (current_rate - entry) / one_r if one_r > 0 else 0.0
-        be_fee_price = round(entry * (1.0 + (PIONEX_FEE_ROUNDTRIP_PCT + 0.08) / 100.0), 6)
-        trail_msg = ""
-
-        btc_dump_lock = (trade.coin_code != "BTC" and not BTC_REGIME.get("allow_alts", True) and current_r >= 0.55)
-        claude_tighten = bool(claude_verdict and claude_verdict.get("decision") == "TIGHTEN_SL" and current_r >= 0.50)
-
-        if not trade.breakeven_locked and (current_r >= 1.00 or btc_dump_lock or claude_tighten):
-            if sl < be_fee_price:
-                sl = be_fee_price
-            trade.breakeven_locked = True
-            trade.alerts_triggered.append(f"🛡️ Break-Even Netto Attivato a {fmt_price(sl)} (+{current_r:.2f}R)")
-            trail_msg = "🛡️ Break-Even Netto Attivato"
-
-        if not trade.tp1_locked and current_r >= 1.35:
-            new_sl = round(entry + 0.45 * one_r, 6)
-            if new_sl > sl:
-                sl = new_sl
-            trade.tp1_locked = True
-            trade.alerts_triggered.append(f"🔒 Profitto +0.45R Blindato ({fmt_price(sl)})")
-            trail_msg = f"🔒 Profitto Blindato ({fmt_price(sl)})"
-
-        if current_r >= 1.65:
-            chandelier = round(max(entry + 0.90 * one_r, trade.max_rate - 1.35 * atr_15m), 6)
-            if chandelier > sl:
-                sl = chandelier
-                if not trade.tp2_locked:
-                    trade.tp2_locked = True
-                    trade.alerts_triggered.append(f"🚀 Chandelier Trailing Attivato ({fmt_price(sl)})")
-                trail_msg = f"🚀 Chandelier Trail ({fmt_price(sl)})"
-
-        if current_r >= 2.25 and "R225" not in trade.alerts_triggered:
-            new_sl = round(entry + 1.55 * one_r, 6)
-            if new_sl > sl:
-                sl = new_sl
-            trade.alerts_triggered.append("R225")
-            trade.alerts_triggered.append(f"💎 Super-Trailing +1.55R ({fmt_price(sl)})")
-
-        trade.stop_loss = sl
-        trade.trail_msg = trail_msg
-        return sl
-
-    def custom_exit(self, pair: str, trade: Trade, current_time: datetime,
-                    current_rate: float, current_profit: float, **kwargs):
-        open_eval = kwargs.get("open_eval", {})
-        claude_verdict = kwargs.get("claude_verdict")
-        net_pnl_pct = current_profit * 100.0
-        hours_open = max(0.0, (current_time - trade.open_date_utc).total_seconds() / 3600.0)
-        current_r = (current_rate - trade.open_rate) / trade.one_r if trade.one_r > 0 else 0.0
-
-        if claude_verdict and claude_verdict.get("confidence", 0) >= 72:
-            dec = claude_verdict.get("decision")
-            if dec == "CLOSE_DEFENSIVE":
-                return f"🧠 CLAUDE AI USCITA DIFENSIVA ({claude_verdict['reason_it'][:75]})"
-            if dec == "TAKE_PROFIT_NOW" and net_pnl_pct >= SCALP_MIN_NET_PROFIT_PCT:
-                return f"🧠 CLAUDE AI TAKE PROFIT ({net_pnl_pct:+.2f}% | {claude_verdict['reason_it'][:65]})"
-
-        rsi_15m = open_eval.get("rsi_15m", 50.0)
-        rsi_15m_prev = open_eval.get("rsi_15m_prev", rsi_15m)
-        ob_imb = open_eval.get("ob", {}).get("imbalance", 0.0)
-
-        momentum_fading_peak = (
-            current_r >= 1.25
-            and (
-                (rsi_15m_prev >= 68.0 and rsi_15m < rsi_15m_prev - 4.5)
-                or (ob_imb <= -0.14 and open_eval.get("ai_prob", 0.5) < 0.48)
-                or (trade.max_rate >= trade.open_rate + 1.4 * trade.one_r and current_rate <= trade.max_rate - 0.50 * trade.one_r)
-            )
-        )
-
-        if net_pnl_pct >= SCALP_MIN_NET_PROFIT_PCT and momentum_fading_peak:
-            return f"💰 PROFIT TAKE SU INVERSIONE 15m (+{net_pnl_pct:.2f}% netto / {current_r:+.2f}R)"
-        if self.should_exit_roi(trade, current_time, current_profit) and hours_open >= TIME_STOP_PROFIT_HOURS:
-            return f"⏱️ TIME-STOP IN PROFITTO (+{net_pnl_pct:.2f}% dopo {hours_open:.1f}h)"
-        if hours_open >= TIME_STOP_STALE_HOURS and open_eval.get("ai_prob", 0.5) < 0.45 and -0.50 <= net_pnl_pct <= 0.40:
-            return f"⏱️ ROTAZIONE CAPITALE ({hours_open:.1f}h in stallo, AI={open_eval['ai_prob'] * 100:.0f}%)"
-        if open_eval.get("exit_long") == 1 and not open_eval.get("fallback"):
-            return open_eval.get("exit_tag") or f"⚠️ USCITA DIFENSIVA (Score {trade.coin_code}={open_eval['final_score']}/10)"
-        return None
-
-
-STRATEGY = PionexFreqAIStrategy(FREQTRADE_CONFIG)
-
-
-# ==============================================================================
-# 9. VALUTAZIONE COIN (BTC Analizzato per Primo per Skill 02)
-# ==============================================================================
-def evaluate_coin(coin_cfg, futures_map, fng_val, macro_events):
+def blank_eval(cfg, price, **kw):
+    ev = {"coin": cfg, "code": cfg["code"], "price": price, "ref_close_15m": price, "setup": None, "level": 0.0,
+          "plan": {"ok": False, "reason": "n/d"}, "feat": None, "atr": 0.0, "rsi_1h": 50.0, "rsi_15m": 50.0,
+          "adx": 20.0, "vr": 1.0, "ret24": 0.0, "ret_1h": 0.0, "ret_4h": 0.0, "ema50_1h": price, "trend_ok": False,
+          "near_level": 0.0, "dist_atr": 0.0, "ob": {"imbalance": 0.0, "spread_bps": 5.0, "fetched": False},
+          "fut": {"funding_8h_pct": 0.0, "available": False}, "c15_recent": [], "score": 0, "tm": None,
+          "verdict": {"ok": False, "blocks": ["dati non disponibili"]}, "fallback": True}
+    ev.update(kw)
+    return ev
+
+
+def evaluate_coin(coin_cfg, futures_map):
     code, pair = coin_cfg["code"], coin_cfg["kraken"]
-
-    candles_1h = drop_unfinished(fetch_kraken_ohlc(pair, interval=60), 3600)
-    candles_15m = drop_unfinished(fetch_kraken_ohlc(pair, interval=15), 900)
-    candles_4h = build_4h_from_1h(candles_1h)
-    ob = fetch_kraken_orderbook(pair, count=50)
-
-    if len(candles_1h) < 60 or len(candles_4h) < 30 or len(candles_15m) < 30:
+    c1h = drop_unfinished(fetch_kraken_ohlc(pair, 60), 3600)
+    c15 = drop_unfinished(fetch_kraken_ohlc(pair, 15), 900)
+    if len(c1h) < 150 or len(c15) < 40:
         return None
-
-    fut = futures_map.get(coin_cfg["futures"], {"funding_8h_pct": 0.005, "open_interest": 0.0, "available": False})
-    ref_price = candles_15m[-1]["close"]
+    S, n = prep_series(c1h), len(c1h)
+    cl15 = [x["close"] for x in c15]
+    ref = cl15[-1]
     px = LIVE_PX.get(coin_cfg["pionex"])
-    price = px if (px and abs(px / ref_price - 1.0) < 0.03) else ref_price
+    price = px if (px and abs(px / ref - 1.0) < 0.03) else ref
+    v15 = [x["volume"] for x in c15]
+    base = sum(v15[-25:-1]) / 24.0
+    vr = v15[-1] / base if base > 0 else 1.0
 
-    dataframe = candles_to_dataframe(candles_1h)
-    metadata = {
-        "pair": coin_cfg["pionex"], "code": code, "coin_cfg": coin_cfg, "price": price,
-        "candles_1h": candles_1h, "candles_4h": candles_4h, "candles_15m": candles_15m,
-        "ob": ob, "fut": fut, "fng_val": fng_val, "macro_events": macro_events,
-    }
+    def fresh(lv):  # prima chiusura 15m sopra il livello (una delle due barre precedenti era sotto)
+        return cl15[-1] > lv and any(x <= lv for x in cl15[-3:-1])
 
-    dataframe = STRATEGY.populate_indicators(dataframe, metadata)
-    dataframe = STRATEGY.populate_entry_trend(dataframe, metadata)
-    dataframe = STRATEGY.populate_exit_trend(dataframe, metadata)
-    return metadata["eval"]
-
-
-def make_fallback_eval(coin_cfg, pos):
-    px = LIVE_PX.get(coin_cfg["pionex"])
-    price = px or pos.get("entry_price", 0.0)
-    return {
-        "coin": coin_cfg, "code": coin_cfg["code"], "price": price, "ref_close_15m": price,
-        "sl_price": pos.get("sl_price", 0.0), "tp_price": pos.get("tp_price", 0.0),
-        "atr_1h": 0.0, "atr_15m": pos.get("atr_15m", 0.0), "atr_pct": 0.0,
-        "raw_100": 0, "final_score": 5, "ai_prob": 0.5, "prob_mlp": 0.5, "prob_knn": 0.5,
-        "prob_mc": 0.5, "mc_ev_r": 0.0, "mlp_holdout_acc": 0.5, "di_values": 0.5, "do_predict": 1,
-        "rsi_1h": 50.0, "rsi_4h": 50.0, "rsi_15m": 50.0, "rsi_15m_prev": 50.0,
-        "adx_1h": 20.0, "hurst": 0.5, "z_linreg": 0.0, "poc_price": price, "vol_z": 0.0,
-        "ob": {"imbalance": 0.0, "spread_bps": 0.0, "bid_ask_ratio": 1.0, "wall_pressure": 0.0},
-        "fut": {"funding_8h_pct": 0.0, "open_interest": 0.0, "available": False},
-        "tm_stats": {"win_rate": 50.0, "expectancy_r": 0.0, "matches": 0},
-        "scanner_timer": {"triggered": False, "triggers": 0, "vwap_15m": 0.0, "summary": "Dati non disponibili"},
-        "skills": {
-            "s1": {"regime": "UNKNOWN", "hard_block": False, "higher_lows": False},
-            "s2": {"btc_ok": True, "alpha_1h": 0.0},
-            "s3": {"vwap_diff_pct": 0.0, "buy_pressure": 0.5, "overextended": False},
-            "s4": {"book_ok": True},
-            "s6": {"nyse_bell_risk": False, "high_soon": False},
-        },
-        "high_soon": False, "c15_recent": [], "stale": not bool(px), "fallback": True,
-        "enter_long": 0, "enter_tag": "", "exit_long": 0, "exit_tag": "",
-    }
+    cands = detect_setup(S, n, False, price=price, vr=vr, fresh=fresh)
+    setup, level = cands[0] if cands else (None, 0.0)
+    atr = S["atr"][n - 1]
+    plan = build_plan(price, atr, min(S["l"][n - 3:n]))
+    near = max(S["h"][n - 24:n])
+    ev = blank_eval(coin_cfg, price, ref_close_15m=ref, setup=setup, level=level, plan=plan, atr=atr,
+                    rsi_1h=S["rsi"][n - 1], rsi_15m=calc_rsi_series(cl15, 14)[-1], adx=S["adx"][n - 1], vr=vr,
+                    ret24=price / S["c"][n - 25] - 1.0, ret_1h=price / cl15[-5] - 1.0, ret_4h=price / cl15[-17] - 1.0,
+                    ema50_1h=S["ema50"][n - 1], near_level=near, dist_atr=(near - price) / atr if atr > 0 else 0.0,
+                    trend_ok=bool(S["ema20"][n - 1] > S["ema50"][n - 1] and price > S["ema100"][n - 1]),
+                    fut=futures_map.get(coin_cfg["futures"], {"funding_8h_pct": 0.0, "available": False}),
+                    c15_recent=[{"time": x["time"], "high": x["high"], "low": x["low"]} for x in c15[-48:]],
+                    fallback=False)
+    ev["_S"], ev["_c15"] = S, c15
+    if setup:
+        ev["feat"] = make_features(S, n, False, price, vr, setup, level)
+        ev["ob"] = fetch_kraken_orderbook(pair)
+    return ev
 
 
-def scan_all_coins(coins, futures_map, fng_val, macro_events):
+def update_btc_regime(ev):
+    dump = (ev["rsi_15m"] < 32 and ev["ret_1h"] < -0.011) or ev["ret_4h"] < -0.03
+    weak = ev["price"] < ev["ema50_1h"] and ev["ret24"] < -0.02
+    BTC_REGIME.update({"state": "DUMP" if dump else ("WEAK" if weak else "OK"), "allow_alts": not (dump or weak),
+                       "label": "🚨 BTC in dump: altcoin bloccate" if dump else
+                                ("🟠 BTC debole: altcoin bloccate" if weak else "🟢 BTC stabile")})
+
+
+def scan_all_coins(coins, futures_map):
     results = {}
-    btc_cfg = COIN_MAP.get("BTC")
-    if btc_cfg and any(c["code"] == "BTC" for c in coins):
+    btc = COIN_MAP["BTC"]
+    if any(c["code"] == "BTC" for c in coins):
         try:
-            btc_res = evaluate_coin(btc_cfg, futures_map, fng_val, macro_events)
-            if btc_res:
-                results["BTC"] = btc_res
+            r = evaluate_coin(btc, futures_map)
+            if r:
+                results["BTC"] = r
+                update_btc_regime(r)
         except Exception as e:
             log("WARN", f"Errore analisi BTC: {e}")
-
-    rem_coins = [c for c in coins if c["code"] not in results]
-    if rem_coins:
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            future_to_code = {executor.submit(evaluate_coin, cfg, futures_map, fng_val, macro_events): cfg["code"] for cfg in rem_coins}
-            for future in as_completed(future_to_code):
-                code = future_to_code[future]
-                try:
-                    res = future.result()
-                    if res:
-                        results[code] = res
-                except Exception as e:
-                    log("WARN", f"Errore analisi {code}: {e}")
+    rest = [c for c in coins if c["code"] not in results]
+    with ThreadPoolExecutor(max_workers=2) as ex:
+        fut = {ex.submit(evaluate_coin, cfg, futures_map): cfg["code"] for cfg in rest}
+        for f in as_completed(fut):
+            try:
+                r = f.result()
+                if r:
+                    results[fut[f]] = r
+            except Exception as e:
+                log("WARN", f"Errore analisi {fut[f]}: {e}")
     return results
 
 
-# ==============================================================================
-# 10. MOTORE AUTONOMO + SCALE-OUT + TICK GUARDIAN REAL-TIME
-# ==============================================================================
-def entry_conditions(ev):
-    rm = ev.get("risk_manager")
-    return bool(
-        not ev.get("fallback") and rm and rm["passed"]
-        and ev.get("enter_long", 0) == 1
-        and ev["final_score"] >= Entry_Score_Min and ev["raw_100"] >= Entry_Raw_100_Min
-        and ev["ai_prob"] >= Entry_AI_Prob_Min and ev["scanner_timer"]["triggered"]
-    )
+def compute_score(ev, edge):
+    """Punteggio 0-100 trasparente, usato solo per ordinare i candidati che passano i gate."""
+    trend = (10.0 if ev["trend_ok"] else 0.0) + min(ev["adx"], 40.0) / 40.0 * 15.0
+    rs = clamp(ev.get("rs_vs_btc", 0.0) / 0.03, -1.0, 1.0) * 10.0 + 10.0
+    mom = rs + (5.0 if 45 <= ev["rsi_1h"] <= 68 else 0.0)
+    vol = min(ev["vr"], 3.0) / 3.0 * 15.0
+    ob = ev["ob"]
+    micro = clamp((ob["imbalance"] + 0.2) / 0.4, 0.0, 1.0) * 7.0 + (3.0 if ob["spread_bps"] <= 10 else 0.0)
+    st = edge["by_setup"].get(ev["setup"] or "", None)
+    e = clamp(st["exp_r"] / 0.4, 0.0, 1.0) * 25.0 if st and st["n"] >= MIN_POOL_N else 0.0
+    return int(round(trend + mom + vol + micro + e))
 
 
-def _finalize_close(state, open_code, coin_cfg, curr_price, close_reason, close, alerts_fired, now_str, now_ts, capital_usdt):
+def strategy_proof(state):
+    hs = [h for h in state["history"] if h.get("ver") == STRAT_VER and "r_mult" in h][:40]
+    s = summarize([h["r_mult"] for h in hs])
+    s["ok"] = s["n"] >= PROOF_MIN_TRADES and s["exp_r"] >= PROOF_MIN_EXP_R and s["pf"] >= 1.15
+    return s
+
+
+def trading_mode(state):
+    """Skill broker: simulazione di default; live solo con prova positiva e demozione se i trade live peggiorano."""
+    if not pionex_live_enabled():
+        return "SIMULATION", "live non abilitato"
+    if LIVE_PROOF_REQUIRED:
+        pr = strategy_proof(state)
+        if not pr["ok"]:
+            return "SIMULATION", f"prova in corso: {pr['n']}/{PROOF_MIN_TRADES} trade, {pr['exp_r']:+.2f}R, PF {pr['pf']:.2f}"
+    lv = [h["r_mult"] for h in state["history"] if h.get("ver") == STRAT_VER and h.get("mode") == "LIVE_PIONEX"
+          and "r_mult" in h][:10]
+    if len(lv) >= 8 and sum(lv) / len(lv) < -0.25:
+        return "SIMULATION", "demozione: ultimi trade live negativi"
+    return "LIVE_PIONEX", "prova superata"
+
+
+def evaluate_gates(ev, edge, state, capital_usdt, fng_val, high_soon):
+    """Tutti i filtri in un posto, tutti i motivi di blocco elencati (skill risk). Le USCITE non passano da qui."""
+    b = []
+    code, setup, plan, now = ev["code"], ev["setup"], ev["plan"], datetime.now(timezone.utc)
+    out = {"ok": False, "blocks": b, "size_usdt": 0.0, "max_loss_usdt": 0.0, "limit": ""}
+    if not setup:
+        b.append("nessun setup attivo")
+        return out
+    stats, now_ts = state["stats"], int(now.timestamp())
+
+    # --- edge (Time Machine) ---
+    st = edge["by_setup"].get(setup)
+    if not st or st["n"] < MIN_POOL_N:
+        b.append(f"edge non verificabile ({setup}: {st['n'] if st else 0} casi < {MIN_POOL_N})")
+    elif st["exp_r"] < MIN_EXP_R or st["exp_r"] - 0.5 * st["se"] <= 0:
+        b.append(f"edge storico insufficiente ({setup}: {st['exp_r']:+.2f}R su {st['n']} casi)")
+    own = edge["by_coin"].get((code, setup))
+    if own and own["n"] >= 6 and own["exp_r"] < -0.30:
+        b.append(f"{code} storicamente negativa su {setup} ({own['exp_r']:+.2f}R su {own['n']})")
+    ml = edge["ml"]
+    if ml.get("active") and ev["feat"]:
+        p = _score(ml, ev["feat"])
+        ev["ml_p"] = p
+        if p < ml["thr"]:
+            b.append(f"filtro ML sfavorevole ({p:.2f} < {ml['thr']:.2f})")
+
+    # --- piano + simulazione ---
+    if not plan["ok"]:
+        b.append(plan["reason"])
+    else:
+        tm = monte_carlo_plan(ev["_c15"], plan)
+        ev["tm"] = tm
+        if tm and tm["p_target"] < MC_MIN_P_TARGET:
+            b.append(f"target poco raggiungibile in {MAX_HOLD_H}h (MC {tm['p_target'] * 100:.0f}% < {MC_MIN_P_TARGET * 100:.0f}%)")
+
+    # --- contesto ---
+    if code != "BTC" and not BTC_REGIME["allow_alts"]:
+        b.append("BTC debole/in dump")
+    if high_soon:
+        b.append("evento macro USD High-impact (-30m/+2h)")
+    if ev["fut"]["funding_8h_pct"] > FUNDING_MAX_PCT:
+        b.append(f"funding troppo alto ({ev['fut']['funding_8h_pct']:+.3f}%): mercato affollato")
+    if ev["ob"].get("fetched") and ev["ob"]["spread_bps"] > MAX_SPREAD_BPS:
+        b.append(f"spread alto ({ev['ob']['spread_bps']:.1f} bps)")
+    if ev["ref_close_15m"] > 0 and ev["price"] / ev["ref_close_15m"] - 1.0 > 0.012:
+        b.append("spike improvviso sopra la chiusura 15m")
+    if ev["score"] < ENTRY_SCORE_MIN:
+        b.append(f"punteggio {ev['score']} < {ENTRY_SCORE_MIN}")
+
+    # --- limiti (skill risk) ---
+    if not (ENTRY_START_UTC <= now.hour < ENTRY_END_UTC):
+        b.append(f"fuori finestra {ENTRY_START_UTC:02d}-{ENTRY_END_UTC:02d} UTC")
+    if stats.get("paused_until_ts", 0) > now_ts:
+        b.append("pausa per edge in calo (ultimi trade negativi)")
+    if stats["daily_trades"] >= MAX_TRADES_PER_DAY:
+        b.append(f"max {MAX_TRADES_PER_DAY} trade/giorno")
+    if stats["consec_losses"] >= MAX_CONSEC_LOSSES:
+        b.append(f"{MAX_CONSEC_LOSSES} stop consecutivi")
+    if stats["daily_pnl_pct"] <= -DAILY_MAX_LOSS_PCT:
+        b.append(f"circuit breaker giornaliero ({stats['daily_pnl_pct']:+.2f}%)")
+    if stats["last_close_ts"] and now_ts - stats["last_close_ts"] < MIN_MINUTES_BETWEEN_TRADES * 60:
+        b.append("cooldown dopo ultima chiusura")
+    if stats["last_loss_ts"] and now_ts - stats["last_loss_ts"] < COOLDOWN_AFTER_LOSS_MIN * 60:
+        b.append("cooldown dopo perdita")
+    cl = stats.get("coin_last_close", {}).get(code, 0)
+    if cl and now_ts - cl < SAME_COIN_COOLDOWN_H * 3600:
+        b.append(f"{code} chiusa da meno di {SAME_COIN_COOLDOWN_H:.0f}h")
+
+    # --- size (skill budget): lo stop decide la size; troppo piccola = rifiuto ---
+    if plan["ok"]:
+        pos, max_loss, limit = size_position(capital_usdt, plan)
+        out.update(size_usdt=pos, max_loss_usdt=max_loss, limit=limit)
+        if pos < MIN_ORDER_USDT:
+            b.append(f"ordine {pos:.2f} USDT sotto il minimo {MIN_ORDER_USDT}")
+        if stats["daily_risk_usdt"] + max_loss > capital_usdt * DAILY_MAX_LOSS_PCT / 100.0:
+            b.append("rischio giornaliero cumulato oltre il limite")
+    out["ok"] = not b
+    return out
+
+
+def finalize_signals(all_evals, state, eur_usd, macro_events, fng_val):
+    series = {c: ev["_S"] for c, ev in all_evals.items() if "_S" in ev}
+    edge = refresh_edge(series) if series else _EDGE
+    capital = INVEST_EUR * eur_usd
+    roll_daily(state["stats"])
+    high_soon = any(e["impact"] == "High" and -0.5 <= e["diff_hours"] <= 2.0 for e in macro_events)
+    btc_ret = all_evals["BTC"]["ret24"] if "BTC" in all_evals else 0.0
+    for code, ev in all_evals.items():
+        if ev.get("fallback"):
+            continue
+        ev["rs_vs_btc"] = 0.0 if code == "BTC" else ev["ret24"] - btc_ret
+        ev["score"] = compute_score(ev, edge)
+        ev["verdict"] = evaluate_gates(ev, edge, state, capital, fng_val, high_soon)
+    ranked = sorted(all_evals.values(), key=lambda e: (e["verdict"]["ok"], bool(e["setup"]), e["score"]), reverse=True)
+    return ranked, edge, high_soon
+
+
+# ==============================================================================
+# 10. REVISORE CLAUDE (opzionale, solo veto) + APPROVAZIONE
+# ==============================================================================
+def claude_review(ev, edge, macro_events, fng_val):
+    if not (CLAUDE_REVIEW and ANTHROPIC_KEY):
+        return {"veto": False, "reason": "revisore disattivato"}
+    p = ev["plan"]
+    facts = {"coin": ev["code"], "setup": ev["setup"], "prezzo": ev["price"], "livello": ev["level"],
+             "stop": p["stop"], "target": p["target"], "rischio_pct": round(p["risk_pct"], 2),
+             "rr_netto": round(p["rr_net"], 2), "rsi_1h": round(ev["rsi_1h"], 1), "adx_1h": round(ev["adx"], 1),
+             "ritorno_24h_pct": round(ev["ret24"] * 100, 2), "forza_vs_btc_pct": round(ev.get("rs_vs_btc", 0) * 100, 2),
+             "funding_8h_pct": ev["fut"]["funding_8h_pct"], "fear_greed": fng_val, "regime_btc": BTC_REGIME["state"],
+             "storico_setup": {k: round(v, 3) if isinstance(v, float) else v
+                               for k, v in (edge["by_setup"].get(ev["setup"]) or {}).items()},
+             "eventi_macro": [{"titolo": m["title"], "ore": round(m["diff_hours"], 1)} for m in macro_events[:6]]}
+    system = ("Sei un risk reviewer per un bot di trading crypto spot long-only. Ricevi i numeri di UN ticket gia' "
+              "approvato dalle regole. Puoi solo mettere il VETO, mai proporre acquisti. Metti veto=true solo per rischi "
+              "concreti visibili nei dati (evento macro imminente, setup gia' esteso, incoerenza tra stop e volatilita', "
+              "regime sfavorevole). Nel dubbio veto=false. Rispondi SOLO con JSON: {\"veto\": true|false, \"reason\": \"max 25 parole\"}.")
+    try:
+        r = SESSION.post("https://api.anthropic.com/v1/messages",
+                         headers={"x-api-key": ANTHROPIC_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json"},
+                         json={"model": CLAUDE_MODEL, "max_tokens": 200, "system": system,
+                               "messages": [{"role": "user", "content": json.dumps(facts, ensure_ascii=False)}]}, timeout=20)
+        r.raise_for_status()
+        txt = "".join(b.get("text", "") for b in r.json().get("content", []) if b.get("type") == "text")
+        j = json.loads(re.sub(r"```(?:json)?", "", txt).strip())
+        return {"veto": bool(j.get("veto")), "reason": str(j.get("reason", ""))[:200]}
+    except Exception as e:
+        log("WARN", f"Revisore Claude non disponibile (si prosegue con le sole regole): {redact(e)}")
+        return {"veto": False, "reason": "revisore non raggiungibile"}
+
+
+def expire_pending(state):
+    p = state.get("pending")
+    if p and p["expires_ts"] < time.time():
+        state["pending"] = None
+        state["stats"]["last_action"] = f"Ticket {p['code']} scaduto senza approvazione"
+
+
+# ==============================================================================
+# 11. ESECUZIONE
+# ==============================================================================
+def status(action, headline, detail, pnl_pct=0.0, pnl_usdt=0.0, r=0.0, alerts=None):
+    return {"action_state": action, "headline": headline, "detail": detail, "pnl_pct": pnl_pct, "pnl_usdt": pnl_usdt,
+            "current_r": r, "alerts_fired": alerts or []}
+
+
+def _execute_open(state, ev, usdt, now_str, now_ts, mode, label="EDGE"):
+    pos, stats, plan = state["position"], state["stats"], ev["plan"]
+    cfg, code, price = ev["coin"], ev["code"], ev["price"]
+    buy = live_buy(cfg, usdt, price, mode == "LIVE_PIONEX")
+    if not buy["ok"]:
+        stats["last_action"] = f"ACQUISTO {code} FALLITO ({now_str})"
+        save_state(state)
+        return status("ENTRY_FAILED", f"🚨 ACQUISTO {code} NON ESEGUITO", f"{buy['msg']} (nessuna posizione registrata)")
+    entry = buy["entry_price"]
+    stop, tgt = plan["stop"], plan["target"]
+    if stop >= entry:                                   # sicurezza: lo stop deve stare sotto l'ingresso
+        stop = entry * (1 - MIN_STOP_PCT / 100.0)
+    one_r = entry - stop
+    max_loss = buy["invested_usdt"] * (one_r / entry * 100.0 + COST_RT) / 100.0
+    pos.update({"is_open": True, "coin_code": code, "symbol": cfg["pionex"], "setup": ev.get("setup") or label.lower(),
+                "level": ev.get("level", 0.0), "entry_price": entry, "amount_coin": buy["amount_coin"],
+                "invested_usdt": buy["invested_usdt"], "max_loss_usdt": max_loss, "sl_price": stop, "tp_price": tgt,
+                "initial_sl": stop, "one_r": one_r, "highest_price": entry, "lowest_price": entry,
+                "be_locked": False, "trail_on": False, "time_warned": False, "opened_at": now_str, "opened_ts": now_ts,
+                "last_check_ts": now_ts, "close_fail_count": 0, "mode": buy["mode"], "order_id": buy.get("order_id", "SIM"),
+                "enter_tag": f"{STRAT_VER}_{ev.get('setup') or label.lower()}"})
+    stats["daily_trades"] += 1
+    stats["daily_risk_usdt"] = stats.get("daily_risk_usdt", 0.0) + max_loss
+    stats["last_action"] = f"APERTO LONG {code} a {fmt_price(entry)} il {now_str} ({label})"
+    save_state(state)
+    return status("OPENED_NOW", f"🚀 NUOVA POSIZIONE {label} SU {code} ({buy['mode']})",
+                  f"{ev.get('setup') or label}: {buy['amount_coin']} {code} ({buy['invested_usdt']:.2f} USDT) a {fmt_price(entry)} | "
+                  f"SL {fmt_price(stop)} | TP {fmt_price(tgt)} ({plan['target_r']:.1f}R) | perdita max {max_loss:.2f} USDT | {buy['msg']}",
+                  alerts=[f"🔔 Piano fissato prima dell'ingresso: SL {fmt_price(stop)} · TP {fmt_price(tgt)} · time-stop {MAX_HOLD_H}h"])
+
+
+def _finalize_close(state, code, cfg, price, reason, close, alerts, now_str, now_ts, capital_usdt):
     pos, stats = state["position"], state["stats"]
-    entry = pos["entry_price"]
-    partial_pnl = float(pos.get("realized_partial_usdt", 0.0))
-    total_pnl_usdt = close["pnl_usdt"] + partial_pnl
-    orig_invested = pos["invested_usdt"] * (2.0 if pos.get("partial_tp_done") else 1.0)
-    net_pnl_pct = (total_pnl_usdt / orig_invested) * 100.0 if orig_invested > 0 else 0.0
-    exit_price = close.get("exit_price", curr_price)
-
+    entry, pnl, inv = pos["entry_price"], close["pnl_usdt"], pos["invested_usdt"]
+    pct = pnl / inv * 100.0 if inv > 0 else 0.0
+    r_mult = pnl / pos["max_loss_usdt"] if pos.get("max_loss_usdt", 0) > 0 else pct / 1.7
+    one_r = pos.get("one_r") or max(entry * 0.009, 1e-12)
+    mfe = (pos.get("highest_price", entry) - entry) / one_r
+    mae = (entry - (pos.get("lowest_price") or entry)) / one_r
     stats["total_trades"] += 1
-    if total_pnl_usdt >= 0:
+    if pnl >= 0:
         stats["wins"] += 1
         stats["consec_losses"] = 0
     else:
         stats["losses"] += 1
-        stats["consec_losses"] = stats.get("consec_losses", 0) + 1
+        stats["consec_losses"] += 1
         stats["last_loss_ts"] = now_ts
-    stats["total_pnl_pct"] = round(stats["total_pnl_pct"] + net_pnl_pct, 2)
-    stats["total_pnl_usdt"] = round(stats["total_pnl_usdt"] + total_pnl_usdt, 2)
-    stats["daily_pnl_usdt"] = round(stats.get("daily_pnl_usdt", 0.0) + total_pnl_usdt, 2)
-    stats["daily_pnl_pct"] = round(stats.get("daily_pnl_pct", 0.0) + (total_pnl_usdt / capital_usdt) * 100.0, 2)
+    stats["total_pnl_pct"] = round(stats["total_pnl_pct"] + pct, 2)
+    stats["total_pnl_usdt"] = round(stats["total_pnl_usdt"] + pnl, 2)
+    stats["daily_pnl_usdt"] = round(stats["daily_pnl_usdt"] + pnl, 2)
+    stats["daily_pnl_pct"] = round(stats["daily_pnl_pct"] + pnl / capital_usdt * 100.0, 2)
     stats["last_close_ts"] = now_ts
-    stats.setdefault("coin_last_close", {})[open_code] = now_ts
-    stats["last_action"] = f"CHIUSO {open_code} ({net_pnl_pct:+.2f}%) il {now_str}"
-
-    state.setdefault("history", []).insert(0, {
-        "coin": open_code, "entry": entry, "exit": exit_price, "pnl_pct": round(net_pnl_pct, 2),
-        "pnl_usdt": round(total_pnl_usdt, 2), "reason": close_reason, "closed_at": now_str, "mode": pos.get("mode", "SIMULATION")})
-    state["history"] = state["history"][:25]
+    stats.setdefault("coin_last_close", {})[code] = now_ts
+    stats["last_action"] = f"CHIUSO {code} ({r_mult:+.2f}R) il {now_str}"
+    state["history"].insert(0, {"coin": code, "setup": pos.get("setup", ""), "entry": entry, "exit": close.get("exit_price", price),
+                                "pnl_pct": round(pct, 2), "pnl_usdt": round(pnl, 2), "r_mult": round(r_mult, 3),
+                                "mfe_r": round(mfe, 2), "mae_r": round(mae, 2), "reason": reason, "closed_at": now_str,
+                                "closed_ts": now_ts, "mode": pos.get("mode", "SIMULATION"), "ver": STRAT_VER})
+    state["history"] = state["history"][:200]
+    recent = [h["r_mult"] for h in state["history"] if h.get("ver") == STRAT_VER and "r_mult" in h][:10]
+    extra = []
+    if len(recent) >= 8 and sum(recent) / len(recent) < -0.25:   # edge in calo: pausa 12h
+        stats["paused_until_ts"] = now_ts + 12 * 3600
+        extra.append("⏸️ Ultimi 10 trade negativi: nuove entrate in pausa per 12h")
     pos["is_open"] = False
     pos["close_fail_count"] = 0
-    pos["partial_tp_done"] = False
-    pos["realized_partial_usdt"] = 0.0
     save_state(state)
-    return {"action_state": "CLOSED_NOW", "headline": f"🔔 POSIZIONE {open_code} CHIUSA AUTOMATICAMENTE",
-            "detail": f"{close_reason} | PnL Netto Totale: {net_pnl_pct:+.2f}% ({total_pnl_usdt:+.2f} USDT) | {close['msg']}",
-            "pnl_pct": net_pnl_pct, "pnl_usdt": total_pnl_usdt, "current_r": 0.0, "alerts_fired": alerts_fired}
+    return status("CLOSED_NOW", f"🔔 POSIZIONE {code} CHIUSA", f"{reason} | {r_mult:+.2f}R ({pnl:+.2f} USDT, {pct:+.2f}%) | "
+                  f"MFE {mfe:+.1f}R / MAE {-mae:+.1f}R | {close['msg']}", pct, pnl, 0.0, alerts + extra)
 
 
-def _manage_open_position(state, all_evals, capital_usdt, now_str, now_ts, fng_val=50, session_str="", macro_events=None, allow_claude=False):
+def _manage_open_position(state, all_evals, capital_usdt, now_str, now_ts):
     pos = state["position"]
-    open_code = pos.get("coin_code", "SOL")
-    coin_cfg = COIN_MAP.get(open_code, COINS[0])
-    open_eval = all_evals[open_code]
-    curr_price = LIVE_PX.get(coin_cfg["pionex"]) or open_eval["price"]
-    open_eval["price"] = curr_price
+    code = pos["coin_code"]
+    cfg = COIN_MAP.get(code, COINS[0])
+    ev = all_evals.get(code) or blank_eval(cfg, pos["entry_price"])
+    px_live = LIVE_PX.get(cfg["pionex"])
+    price = px_live or ev["price"]
     entry, sl, tp = pos["entry_price"], pos["sl_price"], pos["tp_price"]
-    one_r = pos.get("one_r") or max(entry - pos.get("initial_sl", sl), entry * 0.014)
+    one_r = pos.get("one_r") or max(entry - pos.get("initial_sl", sl), entry * 0.009)
     opened_ts = pos.get("opened_ts") or now_ts
-    alerts_fired = []
+    alerts = []
 
-    if pos.get("mode") == "LIVE_PIONEX" and pionex_live_enabled():
+    if pos.get("mode") == "LIVE_PIONEX" and pionex_live_enabled():     # chiusura esterna
         bal = pionex_get_balances()
         if bal is not None:
-            held = bal.get(open_code, {"free": 0.0, "locked": 0.0})
+            held = bal.get(code, {"free": 0.0, "locked": 0.0})
             if held["free"] + held["locked"] < pos["amount_coin"] * 0.90:
-                est = pos["amount_coin"] * curr_price * (1 - FEE_PCT_PER_SIDE / 100.0) - pos["invested_usdt"]
-                close = {"ok": True, "exit_price": curr_price, "pnl_usdt": est, "msg": "Rilevata chiusura esterna (PnL stimato)"}
-                return _finalize_close(state, open_code, coin_cfg, curr_price, "🧾 CHIUSA ESTERNAMENTE (saldo coin assente)",
-                                       close, alerts_fired, now_str, now_ts, capital_usdt)
-
-    if open_eval.get("stale") and not LIVE_PX.get(coin_cfg["pionex"]):
+                est = pos["amount_coin"] * price * (1 - FEE_SIDE / 100.0) - pos["invested_usdt"]
+                return _finalize_close(state, code, cfg, price, "🧾 CHIUSA ESTERNAMENTE (saldo assente)",
+                                       {"ok": True, "exit_price": price, "pnl_usdt": est, "msg": "PnL stimato"},
+                                       alerts, now_str, now_ts, capital_usdt)
+    if not px_live and ev.get("fallback"):
         save_state(state)
-        return {"action_state": "HOLDING", "headline": f"⚠️ {open_code}: PREZZO NON DISPONIBILE",
-                "detail": "Analisi e ticker non raggiungibili: gestione SL/TP sospesa fino al prossimo giro.",
-                "pnl_pct": 0.0, "pnl_usdt": 0.0, "current_r": 0.0, "alerts_fired": []}
+        return status("HOLDING", f"⚠️ {code}: PREZZO NON DISPONIBILE", "Gestione SL/TP sospesa fino al prossimo giro.")
 
     last_chk = pos.get("last_check_ts") or opened_ts
-    c15 = open_eval.get("c15_recent", [])
-    fresh = [c for c in c15 if c["time"] >= last_chk]
-    since_open = [c for c in c15 if c["time"] >= opened_ts]
-    wick_low = min((c["low"] for c in fresh), default=curr_price)
-    wick_high = max((c["high"] for c in fresh), default=curr_price)
-    highest = max(pos.get("highest_price", entry), curr_price, max((c["high"] for c in since_open), default=0.0))
-    pos["highest_price"] = highest
+    valid = [c for c in ev.get("c15_recent", []) if c["time"] >= opened_ts]
+    fresh = [c for c in valid if c["time"] + 900 > last_chk]
+    wick_low = min([c["low"] for c in fresh] + [price])
+    wick_high = max([c["high"] for c in fresh] + [price])
+    highest = max([pos.get("highest_price", entry), price] + [c["high"] for c in valid])
+    lowest = min([pos.get("lowest_price") or entry, price] + [c["low"] for c in valid])
+    pos["highest_price"], pos["lowest_price"] = highest, lowest
     sl_at_start = sl
+    cur_r = (price - entry) / one_r if one_r > 0 else 0.0
+    hours = max(0.0, (now_ts - opened_ts) / 3600.0)
 
-    est_proceeds = pos["amount_coin"] * curr_price * (1 - FEE_PCT_PER_SIDE / 100.0)
-    pnl_usdt_live = est_proceeds - pos["invested_usdt"] + float(pos.get("realized_partial_usdt", 0.0))
-    orig_inv = pos["invested_usdt"] * (2.0 if pos.get("partial_tp_done") else 1.0)
-    net_pnl_pct = (pnl_usdt_live / orig_inv) * 100.0 if orig_inv > 0 else 0.0
-    current_r = (curr_price - entry) / one_r if one_r > 0 else 0.0
+    new_sl = manage_stop(entry, sl, one_r, highest)                      # lo stop sale soltanto
+    if code != "BTC" and not BTC_REGIME["allow_alts"] and cur_r >= 0.35:
+        new_sl = max(new_sl, entry * (1.0 + COST_RT / 100.0))           # BTC in dump: blinda il profitto
+    if new_sl > sl:
+        if (highest - entry) / one_r >= BE_AT_R and not pos["be_locked"]:
+            pos["be_locked"] = True
+            alerts.append(f"🛡️ +{BE_AT_R:.1f}R raggiunto: stop a break-even netto ({fmt_price(new_sl)})")
+        if (highest - entry) / one_r >= TRAIL_START_R and not pos["trail_on"]:
+            pos["trail_on"] = True
+            alerts.append(f"🚀 +{TRAIL_START_R:.1f}R: trailing attivo (stop {fmt_price(new_sl)})")
+        sl = new_sl
+        pos["sl_price"] = sl
+    if hours >= 0.8 * MAX_HOLD_H and not pos["time_warned"]:
+        pos["time_warned"] = True
+        alerts.append(f"⏳ {hours:.1f}h aperta: time-stop tra {MAX_HOLD_H - hours:.1f}h")
 
-    claude_verdict = None
-    if allow_claude and not open_eval.get("fallback"):
-        claude_verdict = skill_11_claude_ai_supervisor(
-            state, mode="SUPERVISE_OPEN", open_eval=open_eval,
-            fng_val=fng_val, session_str=session_str, macro_events=macro_events
-        )
+    reason, fill = None, price
+    if wick_low <= sl_at_start or price <= sl:
+        kind = "TRAILING/BREAK-EVEN" if sl_at_start >= entry else "STOP LOSS"
+        fill = min(price, sl_at_start) if wick_low <= sl_at_start else price
+        reason = f"{'🔒' if sl_at_start >= entry else '🛑'} {kind} ({fmt_price(fill)})"
+    elif price >= tp or wick_high >= tp:
+        fill = max(price, tp) if price >= tp else tp
+        reason = f"🎯 TARGET {pos.get('setup', '')} ({fmt_price(fill)})"
+    elif hours >= MAX_HOLD_H:
+        reason = f"⏱️ TIME-STOP {MAX_HOLD_H}h ({cur_r:+.2f}R)"
 
-    now_dt = datetime.fromtimestamp(now_ts, tz=timezone.utc)
-    trade = Trade(
-        pair=coin_cfg["pionex"], coin_code=open_code, open_rate=entry,
-        amount=pos["amount_coin"], stake_amount=pos["invested_usdt"],
-        open_date_utc=datetime.fromtimestamp(opened_ts, tz=timezone.utc),
-        stop_loss=sl, initial_stop_loss=pos.get("initial_sl", sl),
-        take_profit=tp, one_r=one_r, max_rate=highest,
-        enter_tag=pos.get("enter_tag", "freqai_claude_11skills"),
-        breakeven_locked=pos.get("breakeven_locked", False),
-        tp1_locked=pos.get("tp1_locked", False),
-        tp2_locked=pos.get("tp2_locked", False),
-        partial_tp_done=pos.get("partial_tp_done", False),
-        alerts_triggered=list(pos.get("alerts_triggered", [])),
-    )
-
-    adj = STRATEGY.adjust_trade_position(
-        trade=trade, current_time=now_dt, current_rate=curr_price,
-        current_profit=net_pnl_pct / 100.0, min_stake=MIN_ORDER_USDT, max_stake=capital_usdt
-    )
-    if adj is not None and adj < 0 and not pos.get("partial_tp_done"):
-        part = live_sell(pos, coin_cfg, curr_price, fraction=0.5)
-        if part["ok"]:
-            pos["amount_coin"] = max(0.0, pos["amount_coin"] - part["sold_qty"])
-            pos["invested_usdt"] = pos["invested_usdt"] * 0.5
-            pos["partial_tp_done"] = True
-            pos["realized_partial_usdt"] = round(float(pos.get("realized_partial_usdt", 0.0)) + part["pnl_usdt"], 4)
-            alerts_fired.append(f"💰 Scale-Out 50% eseguito a {fmt_price(curr_price)} ({part['pnl_usdt']:+.2f} USDT incassati)")
-
-    prev_alerts_len = len(trade.alerts_triggered)
-    sl = STRATEGY.custom_stoploss(
-        pair=trade.pair, trade=trade, current_time=now_dt,
-        current_rate=curr_price, current_profit=net_pnl_pct / 100.0,
-        open_eval=open_eval, claude_verdict=claude_verdict
-    )
-    pos["sl_price"] = sl
-    pos["breakeven_locked"] = trade.breakeven_locked
-    pos["tp1_locked"] = trade.tp1_locked
-    pos["tp2_locked"] = trade.tp2_locked
-    pos["alerts_triggered"] = [a for a in trade.alerts_triggered if a == "R225"]
-    alerts_fired.extend([a for a in trade.alerts_triggered[prev_alerts_len:] if a != "R225"])
-    trail_msg = getattr(trade, "trail_msg", "")
-
-    close_reason = None
-    if wick_low <= sl_at_start or curr_price <= sl:
-        kind = "PROFIT LOCK / TRAILING STOP" if sl_at_start > entry else "STOP LOSS"
-        tag = " (toccato tra due controlli)" if curr_price > sl and wick_low <= sl_at_start else ""
-        close_reason = f"{'🔒' if sl_at_start > entry else '🛑'} {kind} ({fmt_price(curr_price)}){tag}"
-    elif curr_price >= tp or wick_high >= tp:
-        close_reason = f"🎯 TAKE PROFIT RAGGIUNTO ({fmt_price(curr_price)})"
-    else:
-        close_reason = STRATEGY.custom_exit(
-            pair=trade.pair, trade=trade, current_time=now_dt,
-            current_rate=curr_price, current_profit=net_pnl_pct / 100.0,
-            open_eval=open_eval, claude_verdict=claude_verdict
-        )
-
-    if close_reason:
-        close = live_sell(pos, coin_cfg, curr_price, fraction=1.0)
+    est = pos["amount_coin"] * price * (1 - FEE_SIDE / 100.0) - pos["invested_usdt"]
+    pct = est / pos["invested_usdt"] * 100.0 if pos["invested_usdt"] > 0 else 0.0
+    if reason:
+        close = live_sell(pos, cfg, fill)
         if not close["ok"]:
             pos["close_fail_count"] = pos.get("close_fail_count", 0) + 1
             pos["last_check_ts"] = now_ts
-            state["stats"]["last_action"] = f"CHIUSURA {open_code} FALLITA ({now_str})"
+            state["stats"]["last_action"] = f"CHIUSURA {code} FALLITA ({now_str})"
             save_state(state)
-            return {"action_state": "CLOSE_FAILED",
-                    "headline": f"🚨 CHIUSURA {open_code} FALLITA - POSIZIONE ANCORA APERTA",
-                    "detail": f"{close_reason} | {close['msg']} | Tentativo #{pos['close_fail_count']}. Verifica subito su Pionex!",
-                    "pnl_pct": net_pnl_pct, "pnl_usdt": pnl_usdt_live, "current_r": current_r, "alerts_fired": alerts_fired}
-        return _finalize_close(state, open_code, coin_cfg, curr_price, close_reason, close, alerts_fired, now_str, now_ts, capital_usdt)
+            return status("CLOSE_FAILED", f"🚨 CHIUSURA {code} FALLITA - POSIZIONE ANCORA APERTA",
+                          f"{reason} | {close['msg']} | tentativo #{pos['close_fail_count']}. Verifica subito su Pionex!",
+                          pct, est, cur_r, alerts)
+        return _finalize_close(state, code, cfg, fill, reason, close, alerts, now_str, now_ts, capital_usdt)
 
     pos["last_check_ts"] = now_ts
     save_state(state)
-    extra = f" | {trail_msg}" if trail_msg else ""
-    if claude_verdict and claude_verdict.get("reason_it"):
-        extra += f" | 🧠 Claude: {claude_verdict['decision']}"
-    return {"action_state": "HOLDING", "headline": f"⏳ MANTENIMENTO POSIZIONE LONG SU {open_code} ({pos['mode']})",
-            "detail": f"Entry {fmt_price(entry)} -> Attuale {fmt_price(curr_price)} ({net_pnl_pct:+.2f}% netto / {current_r:+.2f}R){extra}",
-            "pnl_pct": net_pnl_pct, "pnl_usdt": pnl_usdt_live, "current_r": current_r, "alerts_fired": alerts_fired}
+    return status("HOLDING", f"⏳ LONG {code} ({pos['setup']}, {pos['mode']})",
+                  f"Entry {fmt_price(entry)} -> {fmt_price(price)} ({pct:+.2f}% netto / {cur_r:+.2f}R) | SL {fmt_price(sl)} | TP {fmt_price(tp)} | {hours:.1f}h",
+                  pct, est, cur_r, alerts)
 
 
-def _try_open_position(state, ranked_evals, eur_usd, now_str, now_ts, fng_val=50, session_str="", macro_events=None):
-    candidates = [ev for ev in ranked_evals if entry_conditions(ev)]
-
-    if not candidates:
+def _try_open_position(state, ranked, edge, macro_events, fng_val, now_str, now_ts):
+    expire_pending(state)
+    mode, why = trading_mode(state)
+    if state.get("pending"):
+        p = state["pending"]
+        return status("WAITING", f"🕓 TICKET {p['code']} IN ATTESA DI APPROVAZIONE", f"Scade tra {(p['expires_ts'] - time.time()) / 60:.0f} min.")
+    cands = [e for e in ranked if e["verdict"]["ok"]]
+    if not cands:
         save_state(state)
-        best = ranked_evals[0]
-        rm = best["risk_manager"]
-        s1, s2, s4 = best["skills"]["s1"], best["skills"]["s2"], best["skills"]["s4"]
-        why = []
-        if best["raw_100"] < Entry_Raw_100_Min:
-            why.append(f"Score {best['code']} {best['raw_100']}/100 < {Entry_Raw_100_Min}")
-        if best["ai_prob"] < Entry_AI_Prob_Min:
-            why.append(f"AI {best['ai_prob'] * 100:.0f}% < {Entry_AI_Prob_Min * 100:.0f}%")
-        if s1["hard_block"]:
-            why.append(f"Regime {s1['regime']}")
-        if not s2["btc_ok"]:
-            why.append("BTC Dump Guard")
-        if not s4["book_ok"]:
-            why.append("Book L2/Spread sfavorevole")
-        if not best["scanner_timer"]["triggered"]:
-            why.append(f"Timer 15m ({best['scanner_timer']['triggers']}/5)")
-        if not rm["passed"]:
-            why.append(rm["status_str"])
-        return {"action_state": "WAITING", "headline": "🛡️ CAPITALE PROTETTO IN USDT (Nessun acquisto ora)",
-                "detail": f"Migliore: {best['code']} ({best['final_score']}/10 - {best['raw_100']}/100) -> {' | '.join(why) or 'In attesa di conferma'}.",
-                "pnl_pct": 0.0, "pnl_usdt": 0.0, "current_r": 0.0, "alerts_fired": []}
-
-    best = candidates[0]
-    claude_mult = 1.0
-
-    if CLAUDE_ENABLED:
-        verdict = skill_11_claude_ai_supervisor(
-            state, mode="EVALUATE_ENTRY", ranked_evals=candidates,
-            fng_val=fng_val, session_str=session_str, macro_events=macro_events
-        )
-        if verdict:
-            if verdict["decision"] in ("REJECT", "WAIT_PULLBACK"):
-                return {
-                    "action_state": "WAITING",
-                    "headline": f"🧠 CLAUDE AI VETO SU {best['code']} ({verdict['decision']})",
-                    "detail": f"Score quant {best['raw_100']}/100 ma Claude ({verdict['confidence']}%) ferma l'ingresso: {verdict['reason_it']}",
-                    "pnl_pct": 0.0, "pnl_usdt": 0.0, "current_r": 0.0, "alerts_fired": [],
-                }
-            if verdict["best_coin"] in [c["code"] for c in candidates]:
-                best = next(c for c in candidates if c["code"] == verdict["best_coin"])
-            claude_mult = verdict.get("conviction_mult", 1.0)
-            if verdict.get("sl_adjustment_pct", 0.0) != 0.0:
-                best["sl_price"] = clamp(
-                    best["sl_price"] * (1.0 + verdict["sl_adjustment_pct"] / 100.0),
-                    best["price"] * 0.962, best["price"] * 0.986
-                )
-            if verdict.get("tp_adjustment_pct", 0.0) != 0.0:
-                best["tp_price"] = clamp(
-                    best["tp_price"] * (1.0 + verdict["tp_adjustment_pct"] / 100.0),
-                    best["price"] * 1.022, best["price"] * 1.065
-                )
-
-    now_dt = datetime.fromtimestamp(now_ts, tz=timezone.utc)
-    base_usdt = best["risk_manager"]["position_usdt"]
-    max_usable = INVEST_EUR * eur_usd * (1.0 - CASH_BUFFER_PCT / 100.0)
-    usdt = round(clamp(base_usdt * claude_mult, MIN_ORDER_USDT, max_usable), 2)
-
-    if not STRATEGY.confirm_trade_entry(
-        pair=best["coin"]["pionex"], order_type="market", amount=usdt / max(best["price"], 1e-8),
-        rate=best["price"], time_in_force="GTC", current_time=now_dt,
-        entry_tag=best.get("enter_tag", ""), side="long", ev=best
-    ):
-        return {"action_state": "WAITING", "headline": f"🛡️ INGRESSO {best['code']} SOSPESO (Filtro Anti-Slippage)",
-                "detail": f"Segnale su {best['code']} presente ma spread/spike eccessivo negli ultimi secondi.",
-                "pnl_pct": 0.0, "pnl_usdt": 0.0, "current_r": 0.0, "alerts_fired": []}
-
-    return _execute_open(state, best, usdt, now_str, now_ts, label="CLAUDE-11SKILLS" if CLAUDE_ENABLED else "11-SKILLS")
-
-
-def _execute_open(state, ev, usdt, now_str, now_ts, label="11-SKILLS"):
-    pos, stats = state["position"], state["stats"]
-    coin_cfg, code, price = ev["coin"], ev["code"], ev["price"]
-    buy = live_buy(coin_cfg, usdt, price)
-    if not buy["ok"]:
-        stats["last_action"] = f"ACQUISTO {code} FALLITO ({now_str})"
+        best = ranked[0]
+        blocks = best["verdict"]["blocks"][:3]
+        return status("WAITING", "🛡️ CAPITALE IN USDT: nessun setup con edge ora",
+                      f"Migliore: {best['code']} (score {best['score']}) -> {' | '.join(blocks) or 'in attesa'} | modo {mode}")
+    best = cands[0]
+    rev = claude_review(best, edge, macro_events, fng_val)
+    if CLAUDE_REVIEW:
+        state["reviews"] = ([{"ts": now_ts, "coin": best["code"], "setup": best["setup"], **rev}] + state.get("reviews", []))[:30]
+    if rev["veto"]:
         save_state(state)
-        return {"action_state": "ENTRY_FAILED", "headline": f"🚨 ACQUISTO {code} NON ESEGUITO",
-                "detail": f"{buy['msg']} (nessuna posizione registrata)", "pnl_pct": 0.0, "pnl_usdt": 0.0,
-                "current_r": 0.0, "alerts_fired": []}
-
-    entry = buy["entry_price"]
-    k = entry / price if price > 0 else 1.0
-    sl_price, tp_price = ev["sl_price"] * k, ev["tp_price"] * k
-    one_r = max(entry - sl_price, entry * 0.014)
-    pos.update({
-        "is_open": True, "coin_code": code, "symbol": coin_cfg["pionex"], "entry_price": entry,
-        "amount_coin": buy["amount_coin"], "invested_usdt": buy["invested_usdt"], "sl_price": sl_price,
-        "tp_price": tp_price, "initial_sl": sl_price, "one_r": one_r, "highest_price": entry,
-        "atr_15m": ev.get("atr_15m", 0.0),
-        "breakeven_locked": False, "tp1_locked": False, "tp2_locked": False,
-        "partial_tp_done": False, "realized_partial_usdt": 0.0, "alerts_triggered": [],
-        "opened_at": now_str, "opened_ts": now_ts, "last_check_ts": now_ts, "close_fail_count": 0,
-        "mode": buy["mode"], "order_id": buy.get("order_id", "SIM"),
-        "enter_tag": ev.get("enter_tag") or f"freqai_{label.lower()}"})
-    stats["daily_trades"] = stats.get("daily_trades", 0) + 1
-    stats["last_action"] = f"APERTO LONG {code} a {fmt_price(entry)} il {now_str} ({label})"
-    save_state(state)
-    return {"action_state": "OPENED_NOW", "headline": f"🚀 NUOVA POSIZIONE {label} APERTA SU {code} ({buy['mode']})",
-            "detail": f"Acquistati {buy['amount_coin']} {code} ({buy['invested_usdt']:.2f} USDT) a {fmt_price(entry)} | SL {fmt_price(sl_price)} | TP {fmt_price(tp_price)} | {buy['msg']}",
-            "pnl_pct": 0.0, "pnl_usdt": 0.0, "current_r": 0.0,
-            "alerts_fired": [f"🔔 Ingresso {label}: posizione aperta su {code} a {fmt_price(entry)}"]}
+        return status("WAITING", f"🤖 VETO CLAUDE su {best['code']}", rev["reason"])
+    usdt = round(best["verdict"]["size_usdt"], 2)
+    if REQUIRE_APPROVAL and mode == "LIVE_PIONEX":
+        pid = f"{random.randint(0, 0xFFFFFF):06X}"
+        state["pending"] = {"id": pid, "code": best["code"], "usdt": usdt, "price": best["price"], "plan": best["plan"],
+                            "setup": best["setup"], "level": best["level"], "created_ts": now_ts,
+                            "expires_ts": now_ts + PENDING_TTL_MIN * 60}
+        save_state(state)
+        p = best["plan"]
+        return status("PENDING_APPROVAL", f"🎫 TICKET #{pid}: COMPRA {best['code']}?",
+                      f"{best['setup']} | {usdt:.2f} USDT a ~{fmt_price(best['price'])} | SL {fmt_price(p['stop'])} | TP {fmt_price(p['target'])} | "
+                      f"perdita max {best['verdict']['max_loss_usdt']:.2f} USDT | scade in {PENDING_TTL_MIN} min")
+    return _execute_open(state, best, usdt, now_str, now_ts, mode)
 
 
 def run_manual_command(state, all_evals, eur_usd, command, coin, usdt_req):
     pos = state["position"]
     now_dt = datetime.now(timezone.utc)
     now_str, now_ts = now_dt.strftime("%d/%m %H:%M UTC"), int(now_dt.timestamp())
-    capital_usdt = INVEST_EUR * eur_usd
+    capital = INVEST_EUR * eur_usd
+    noop = lambda m: status("MANUAL_NOOP", "ℹ️ COMANDO NON ESEGUITO", m)
 
-    def noop(msg):
-        return {"action_state": "MANUAL_NOOP", "headline": "ℹ️ COMANDO MANUALE NON ESEGUITO", "detail": msg,
-                "pnl_pct": 0.0, "pnl_usdt": 0.0, "current_r": 0.0, "alerts_fired": []}
+    def cur_price(code):
+        cfg = COIN_MAP[code]
+        return LIVE_PX.get(cfg["pionex"]) or (all_evals.get(code) or {}).get("price", 0.0)
 
     def close_registered():
         code = pos["coin_code"]
         cfg = COIN_MAP.get(code, COINS[0])
-        price = LIVE_PX.get(cfg["pionex"]) or all_evals[code]["price"]
-        close = live_sell(pos, cfg, price, fraction=1.0)
+        price = cur_price(code)
+        close = live_sell(pos, cfg, price)
         if not close["ok"]:
             pos["close_fail_count"] = pos.get("close_fail_count", 0) + 1
             save_state(state)
-            return {"action_state": "CLOSE_FAILED", "headline": f"🚨 CHIUSURA MANUALE {code} FALLITA",
-                    "detail": f"{close['msg']} | Chiudi a mano dall'app Pionex!", "pnl_pct": 0.0, "pnl_usdt": 0.0,
-                    "current_r": 0.0, "alerts_fired": []}
-        return _finalize_close(state, code, cfg, price, "🖐️ CHIUSURA MANUALE D'EMERGENZA", close, [], now_str, now_ts, capital_usdt)
+            return status("CLOSE_FAILED", f"🚨 CHIUSURA MANUALE {code} FALLITA", f"{close['msg']} | Chiudi a mano dall'app Pionex!")
+        return _finalize_close(state, code, cfg, price, "🖐️ CHIUSURA MANUALE", close, [], now_str, now_ts, capital)
 
     if command == "close":
-        if not pos["is_open"]:
-            return noop("Nessuna posizione registrata nel bot. Se hai coin sul conto usa '/sellall COIN' su Telegram o dalla Console.")
-        return close_registered()
+        return close_registered() if pos["is_open"] else noop("Nessuna posizione registrata nel bot.")
+
+    if command == "deny":
+        state["pending"] = None
+        save_state(state)
+        return status("MANUAL_DONE", "🚫 TICKET RIFIUTATO", "Nessun ordine inviato.")
+
+    if command == "approve":
+        p = state.get("pending")
+        if not p or p["id"] != coin:
+            return noop("Ticket non trovato o gia' scaduto.")
+        if p["expires_ts"] < now_ts:
+            state["pending"] = None
+            save_state(state)
+            return noop("Ticket scaduto: attendi un nuovo segnale.")
+        if pos["is_open"]:
+            return noop("C'e' gia' una posizione aperta.")
+        price = cur_price(p["code"])
+        if price <= p["plan"]["stop"] or price / p["price"] - 1.0 > 0.006:
+            state["pending"] = None
+            save_state(state)
+            return noop("Il prezzo e' cambiato troppo rispetto al ticket: annullato.")
+        stub = {"coin": COIN_MAP[p["code"]], "code": p["code"], "price": price, "plan": p["plan"],
+                "setup": p["setup"], "level": p["level"]}
+        state["pending"] = None
+        return _execute_open(state, stub, p["usdt"], now_str, now_ts, "LIVE_PIONEX", label="APPROVATO")
 
     if command == "sell_all":
         cfg = COIN_MAP.get(coin)
@@ -2812,676 +1500,58 @@ def run_manual_command(state, all_evals, eur_usd, command, coin, usdt_req):
         if pos["is_open"] and pos["coin_code"] == coin:
             return close_registered()
         if not pionex_live_enabled():
-            return noop("Vendita totale possibile solo in modalita' LIVE (AUTO_TRADE_ENABLED=true e chiavi presenti).")
-        price = LIVE_PX.get(cfg["pionex"]) or (all_evals.get(coin) or {}).get("price", 0.0)
-        close = live_sell({"mode": "LIVE_PIONEX", "amount_coin": 1e12, "invested_usdt": 0.0}, cfg, price, fraction=1.0)
+            return noop("Vendita totale possibile solo in LIVE.")
+        close = live_sell({"mode": "LIVE_PIONEX", "amount_coin": 1e12, "invested_usdt": 0.0}, cfg, cur_price(coin))
         if not close["ok"]:
-            return {"action_state": "CLOSE_FAILED", "headline": f"🚨 VENDITA TOTALE {coin} FALLITA",
-                    "detail": f"{close['msg']} | Vendi a mano dall'app Pionex!", "pnl_pct": 0.0, "pnl_usdt": 0.0,
-                    "current_r": 0.0, "alerts_fired": []}
+            return status("CLOSE_FAILED", f"🚨 VENDITA TOTALE {coin} FALLITA", f"{close['msg']} | Vendi a mano dall'app Pionex!")
         state["stats"]["last_action"] = f"VENDUTO TUTTO {coin} ({now_str}, manuale)"
         save_state(state)
-        return {"action_state": "MANUAL_DONE", "headline": f"🖐️ VENDUTO TUTTO IL SALDO {coin}",
-                "detail": f"Incassati {close['pnl_usdt']:+.2f} USDT | {close['msg']}",
-                "pnl_pct": 0.0, "pnl_usdt": close["pnl_usdt"], "current_r": 0.0, "alerts_fired": []}
+        return status("MANUAL_DONE", f"🖐️ VENDUTO TUTTO IL SALDO {coin}", f"Incassati {close['pnl_usdt']:+.2f} USDT | {close['msg']}")
 
     if command == "open":
         if pos["is_open"]:
-            return noop(f"C'e' gia' una posizione aperta su {pos['coin_code']}: chiudila prima.")
+            return noop(f"Posizione gia' aperta su {pos['coin_code']}: chiudila prima.")
         ev = all_evals.get(coin)
         if not ev or ev.get("fallback"):
-            ev = evaluate_coin(COIN_MAP[coin], {}, 50, []) if coin in COIN_MAP else None
-        if not ev:
-            return noop(f"Analisi di '{coin}' non disponibile: impossibile calcolare SL/TP. Riprova.")
-        rm = ev.get("risk_manager") or skill_09_adaptive_risk_and_sizing(INVEST_EUR, eur_usd, ev["price"], ev["sl_price"], ev["tp_price"], state, False, coin, ev)
-        usdt = usdt_req if usdt_req > 0 else rm["position_usdt"]
-        usdt = min(usdt, capital_usdt * (1 - CASH_BUFFER_PCT / 100.0))
+            return noop(f"Analisi di '{coin}' non disponibile: riprova.")
+        plan = ev["plan"]
+        if "stop" not in plan:
+            return noop("Piano non calcolabile (dati insufficienti).")
+        size, max_loss, _ = size_position(capital, plan)
+        usdt = min(usdt_req if usdt_req > 0 else size, capital * (1 - CASH_BUFFER_PCT / 100.0))
         if usdt < MIN_ORDER_USDT:
-            return noop(f"Importo {usdt:.2f} USDT sotto il minimo ordine ({MIN_ORDER_USDT}).")
-        return _execute_open(state, ev, round(usdt, 2), now_str, now_ts, label="MANUALE")
-
+            return noop(f"Importo {usdt:.2f} USDT sotto il minimo ({MIN_ORDER_USDT}).")
+        mode = "LIVE_PIONEX" if pionex_live_enabled() else "SIMULATION"   # comando esplicito: decide l'utente
+        res = _execute_open(state, ev, round(usdt, 2), now_str, now_ts, mode, label="MANUALE")
+        if not plan["ok"]:
+            res["detail"] += f" | ⚠️ piano fuori regole: {plan['reason']}"
+        return res
     return noop(f"Comando sconosciuto: '{command}'")
 
 
-def manage_autonomous_trading(state, ranked_evals, all_evals, eur_usd, fng_val=50, session_str="", macro_events=None):
-    now_dt = datetime.now(timezone.utc)
-    now_str, now_ts = now_dt.strftime("%d/%m %H:%M UTC"), int(now_dt.timestamp())
-    capital_usdt = INVEST_EUR * eur_usd
+def manage_autonomous_trading(state, ranked, all_evals, edge, eur_usd, macro_events, fng_val):
+    now = datetime.now(timezone.utc)
+    now_str, now_ts = now.strftime("%d/%m %H:%M UTC"), int(now.timestamp())
     if state["position"]["is_open"]:
-        return _manage_open_position(
-            state, all_evals, capital_usdt, now_str, now_ts,
-            fng_val=fng_val, session_str=session_str, macro_events=macro_events, allow_claude=True
-        )
-    return _try_open_position(
-        state, ranked_evals, eur_usd, now_str, now_ts,
-        fng_val=fng_val, session_str=session_str, macro_events=macro_events
-    )
+        return _manage_open_position(state, all_evals, INVEST_EUR * eur_usd, now_str, now_ts)
+    return _try_open_position(state, ranked, edge, macro_events, fng_val, now_str, now_ts)
 
 
 def trigger_self_chain_dispatch():
     if not SELF_CHAIN_WHEN_OPEN or not GITHUB_TOKEN or not GITHUB_REPO:
         return
     try:
-        r = SESSION.post(
-            f"https://api.github.com/repos/{GITHUB_REPO}/dispatches",
-            headers={"Authorization": f"Bearer {GITHUB_TOKEN}", "Accept": "application/vnd.github+json"},
-            json={"event_type": "tick"}, timeout=8
-        )
+        r = SESSION.post(f"https://api.github.com/repos/{GITHUB_REPO}/dispatches",
+                         headers={"Authorization": f"Bearer {GITHUB_TOKEN}", "Accept": "application/vnd.github+json"},
+                         json={"event_type": "tick"}, timeout=8)
         if r.status_code == 204:
-            log("INFO", "Self-Chain Dispatch inviato: il prossimo ciclo partira' automaticamente.")
+            log("INFO", "Self-chain inviato: il prossimo ciclo partira' da solo.")
     except Exception as e:
-        log("WARN", f"Self-Chain Dispatch non inviato: {e}")
+        log("WARN", f"Self-chain non inviato: {redact(e)}")
 
 
 # ==============================================================================
-# 11. WEB CONSOLE MOBILE-FIRST + CALENDARIO NEWS + MOTORE PREVISIONI REALE
-# ==============================================================================
-def get_public_webapp_url():
-    if "/" in GITHUB_REPO:
-        owner, repo = GITHUB_REPO.split("/", 1)
-        return f"https://{owner.lower()}.github.io/{repo}/"
-    return ""
-
-
-def build_manual_action_advisor(state, best_eval, all_evals, trade_status):
-    pos = state["position"]
-    cv = state["stats"].get("claude_last_verdict") or {}
-    claude_note = f" | 🧠 Claude: {cv['reason_it']}" if cv.get("reason_it") else ""
-    if pos["is_open"]:
-        code = pos["coin_code"]
-        ev = all_evals.get(code, best_eval)
-        pnl, curr_r = trade_status["pnl_pct"], trade_status["current_r"]
-        if ev["final_score"] <= 4 or ev["ai_prob"] < 0.44:
-            return {"badge": "⚠️ VALUTA DI CHIUDERE ORA", "color": "#f59e0b", "bg": "rgba(245,158,11,0.15)",
-                    "instruction": f"La spinta su {code} si sta indebolendo ({ev['final_score']}/10, AI {ev['ai_prob'] * 100:.0f}%).{claude_note}"}
-        if pnl >= SCALP_MIN_NET_PROFIT_PCT:
-            return {"badge": f"💰 {code} IN PROFITTO ({pnl:+.2f}%)", "color": "#10b981", "bg": "rgba(16,185,129,0.15)",
-                    "instruction": f"Posizione in guadagno ({curr_r:+.2f}R). Target {fmt_price(pos['tp_price'])}.{claude_note}"}
-        return {"badge": f"⏳ MANTIENI {code} (GUARDIA ATTIVA)", "color": "#38bdf8", "bg": "rgba(56,189,248,0.15)",
-                "instruction": f"Controllo prezzi ogni {GUARDIAN_TICK_SEC}s. SL {fmt_price(pos['sl_price'])} · TP {fmt_price(pos['tp_price'])}.{claude_note}"}
-
-    if trade_status.get("action_state") in ("ENTRY_FAILED", "CLOSE_FAILED"):
-        return {"badge": "🚨 ORDINE PIONEX NON RIUSCITO", "color": "#ef4444", "bg": "rgba(239,68,68,0.15)",
-                "instruction": "Verifica l'app Pionex: " + trade_status["detail"]}
-
-    score, raw_100, code = best_eval["final_score"], best_eval["raw_100"], best_eval["code"]
-    rm, tm = best_eval["risk_manager"], best_eval["scanner_timer"]
-    if entry_conditions(best_eval):
-        return {"badge": f"🟢 SEGNALE ATTIVO: COMPRA {code}", "color": "#10b981", "bg": "rgba(16,185,129,0.16)",
-                "instruction": f"Confluenza 11-Skill su {code} ({score}/10 · {raw_100}%, R:R {rm['rr_ratio']:.2f}x). Size {rm['position_usdt']:.2f} USDT.{claude_note}"}
-    if raw_100 >= 58:
-        return {"badge": f"🟡 {code} QUASI PRONTA ({raw_100}%)", "color": "#f59e0b", "bg": "rgba(245,158,11,0.14)",
-                "instruction": f"Setup in formazione su {code}: {tm['summary']}."}
-    return {"badge": "🛡️ RESTA IN USDT (ATTESA)", "color": "#94a3b8", "bg": "rgba(148,163,184,0.12)",
-            "instruction": f"Nessuna occasione sicura ora. Migliore: {code} ({raw_100}%) · {BTC_REGIME['label']}."}
-
-
-def generate_webapp_html(ranked_evals, state, trade_status, fng_val, fng_class, session_str, eur_usd=1.08, macro_events=None, news_items=None):
-    focus = next((e for e in ranked_evals if entry_conditions(e)), ranked_evals[0])
-    advisor = build_manual_action_advisor(state, focus, {e["code"]: e for e in ranked_evals}, trade_status)
-    now = datetime.now(timezone.utc)
-
-    coins_payload = []
-    for e in ranked_evals:
-        rm = e.get("risk_manager") or skill_09_adaptive_risk_and_sizing(INVEST_EUR, eur_usd, e["price"], e["sl_price"], e["tp_price"], state, e["high_soon"], e["code"], e)
-        s = e.get("skills", {})
-        tm = e.get("tm_stats", {})
-        coins_payload.append({
-            "code": e["code"], "name": e["coin"]["name"], "ws": e["coin"]["ws"], "kraken": e["coin"]["kraken"],
-            "price": e["price"], "sl_price": e["sl_price"], "tp_price": e["tp_price"],
-            "final_score": e["final_score"], "raw_100": e["raw_100"],
-            "ai_prob": round(e["ai_prob"] * 100),
-            "prob_mlp": round(e.get("prob_mlp", 0.5) * 100),
-            "prob_knn": round(e.get("prob_knn", 0.5) * 100),
-            "prob_mc": round(e.get("prob_mc", 0.5) * 100),
-            "mc_ev_r": round(e.get("mc_ev_r", 0.0), 2),
-            "tm_wr": round(tm.get("win_rate", 50.0), 1),
-            "tm_ev_r": round(tm.get("expectancy_r", 0.0), 2),
-            "tm_matches": int(tm.get("matches", 0)),
-            "rsi_1h": round(e.get("rsi_1h", 50.0), 1),
-            "rsi_15m": round(e.get("rsi_15m", 50.0), 1),
-            "adx_1h": round(e.get("adx_1h", 20.0), 1),
-            "vwap_diff": round(s.get("s3", {}).get("vwap_diff_pct", 0.0), 2),
-            "ob_imb": round(e.get("ob", {}).get("imbalance", 0.0) * 100, 1),
-            "funding_pct": round(e.get("fut", {}).get("funding_8h_pct", 0.0), 4),
-            "timer_summary": e["scanner_timer"]["summary"], "triggers": e["scanner_timer"]["triggers"],
-            "regime": s.get("s1", {}).get("regime", "NEUTRAL"),
-            "alpha_btc": round(s.get("s2", {}).get("alpha_1h", 0.0), 2),
-            "sk_scores": {
-                "trend": int(s.get("s1", {}).get("score", 0)),
-                "btc": int(s.get("s2", {}).get("score", 0)),
-                "vwap": int(s.get("s3", {}).get("score", 0)),
-                "book": int(s.get("s4", {}).get("score", 0)),
-                "deriv": int(s.get("s5", {}).get("score", 0)),
-                "macro": int(s.get("s6", {}).get("score", 0)),
-                "ai": int(e.get("score_ai", 0)),
-                "timer": int(e.get("score_mom", 0)),
-            },
-            "risk_ok": rm["passed"], "risk_status": rm["status_str"],
-            "rr_ratio": round(rm["rr_ratio"], 2), "pos_usdt": round(rm["position_usdt"], 2),
-            "entry_ok": entry_conditions(e),
-        })
-
-    macro = [{"title": ev["title"], "impact": ev["impact"], "ts": ev["ts"]} for ev in (macro_events or []) if "ts" in ev]
-    payload = {
-        "updated_ts": int(now.timestamp()), "session": session_str, "btc_regime": BTC_REGIME["label"],
-        "fng_val": fng_val, "fng_class": fng_class, "mode": "LIVE" if pionex_live_enabled() else "SIMULAZIONE",
-        "claude_enabled": CLAUDE_ENABLED, "claude_model": CLAUDE_MODEL,
-        "claude_verdict": state["stats"].get("claude_last_verdict") or {},
-        "advisor": advisor, "waiting": trade_status["detail"] if trade_status.get("action_state") == "WAITING" else "",
-        "position": state["position"], "stats": state["stats"], "history": state.get("history", []),
-        "coins": coins_payload, "macro": macro, "macro_ok": bool(MACRO_STATUS.get("ok")),
-        "news": news_items or [],
-        "repo": GITHUB_REPO, "workflow": "bot.yml", "ref": os.getenv("GITHUB_REF_NAME") or "main",
-        "limits": {"max_trades": MAX_TRADES_PER_DAY, "daily_max_loss": DAILY_MAX_LOSS_PCT, "fee_rt": PIONEX_FEE_ROUNDTRIP_PCT},
-    }
-    payload_json = json.dumps(payload, ensure_ascii=False).replace("</", "<\\/")
-
-    html = """<!DOCTYPE html>
-<html lang="it">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>Pionex AI Console</title>
-<script src="https://telegram.org/js/telegram-web-app.js"></script>
-<style>
-  :root { --bg:#080e1c; --card:#111a2e; --card2:#182440; --line:#253455; --text:#f8fafc; --muted:#94a3b8; --green:#10b981; --red:#ef4444; --amber:#f59e0b; --blue:#38bdf8; --purple:#a78bfa; }
-  * { box-sizing:border-box; margin:0; padding:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; -webkit-tap-highlight-color:transparent; }
-  body { background:var(--bg); color:var(--text); padding:12px 12px 86px; max-width:600px; margin:0 auto; line-height:1.4; }
-  .header { display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; gap:8px; }
-  .h-title { font-size:18px; font-weight:900; letter-spacing:-0.3px; }
-  .h-sub { font-size:11px; color:var(--muted); margin-top:2px; }
-  .pill { font-size:11px; font-weight:800; padding:5px 9px; border-radius:99px; background:var(--card2); border:1px solid var(--line); white-space:nowrap; }
-  .view { display:none; } .view.active { display:block; }
-  .hero { padding:15px; border-radius:16px; border:2px solid var(--line); margin-bottom:12px; }
-  .hero-t { font-size:17px; font-weight:900; margin-bottom:5px; }
-  .hero-s { font-size:13px; color:#e2e8f0; }
-  .card { background:var(--card); border:1px solid var(--line); border-radius:16px; padding:14px; margin-bottom:12px; }
-  .sec-title { font-size:11px; font-weight:800; text-transform:uppercase; color:var(--muted); letter-spacing:0.6px; margin-bottom:10px; display:flex; justify-content:space-between; align-items:center; gap:8px; }
-  .big-actions { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
-  .act-btn { border:none; border-radius:13px; padding:13px 10px; font-size:14px; font-weight:800; color:#fff; cursor:pointer; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px; text-align:center; }
-  .act-btn:active { transform:scale(0.97); }
-  .act-btn small { font-size:11px; font-weight:600; opacity:0.85; }
-  .b-green { background:linear-gradient(135deg,#059669,#10b981); }
-  .b-red { background:linear-gradient(135deg,#dc2626,#ef4444); }
-  .b-blue { background:linear-gradient(135deg,#0284c7,#38bdf8); }
-  .b-amber { background:linear-gradient(135deg,#d97706,#f59e0b); }
-  .kv-grid { display:grid; grid-template-columns:repeat(2,1fr); gap:8px; }
-  .kv { background:#0b1325; padding:10px 11px; border-radius:12px; border:1px solid #1d2c4b; }
-  .kv-l { font-size:11px; color:var(--muted); }
-  .kv-v { font-size:15px; font-weight:900; margin-top:2px; font-variant-numeric:tabular-nums; }
-  .prog-bar { height:9px; background:#0b1325; border-radius:99px; overflow:hidden; margin:8px 0; border:1px solid #1d2c4b; }
-  .prog-bar > div { height:100%; transition:width .3s; border-radius:99px; }
-  .chip-row { display:flex; gap:6px; margin-bottom:10px; flex-wrap:wrap; }
-  .chip { padding:6px 11px; border-radius:99px; font-size:12px; font-weight:800; background:var(--card2); border:1px solid var(--line); color:var(--muted); cursor:pointer; }
-  .chip.active { background:var(--blue); color:#061224; border-color:var(--blue); }
-  .coin-item { background:#0b1325; border:1px solid var(--line); border-radius:14px; padding:12px; margin-bottom:10px; }
-  .coin-item.ready { border-color:var(--green); background:rgba(16,185,129,0.07); }
-  .coin-top { display:flex; justify-content:space-between; align-items:center; }
-  .coin-name { font-size:15px; font-weight:900; }
-  .coin-px { font-size:15px; font-weight:900; font-variant-numeric:tabular-nums; }
-  .coin-meta { display:grid; grid-template-columns:repeat(3,1fr); gap:6px; font-size:12px; margin:8px 0; background:var(--card); padding:8px; border-radius:10px; }
-  .coin-meta div span { display:block; font-size:10px; color:var(--muted); }
-  .mini-btn { padding:8px 12px; border-radius:10px; font-size:12px; font-weight:800; border:none; cursor:pointer; color:#fff; white-space:nowrap; }
-  .skill-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:10px; }
-  .skill-row { background:#0b1325; border:1px solid #1d2c4b; border-radius:10px; padding:8px 10px; font-size:12px; }
-  .skill-row .top { display:flex; justify-content:space-between; font-weight:800; margin-bottom:4px; }
-  .ev-row { display:flex; justify-content:space-between; align-items:center; gap:10px; padding:10px 0; border-bottom:1px solid #1d2c4b; }
-  .ev-row:last-child { border-bottom:none; }
-  .news-link { display:block; padding:10px 0; border-bottom:1px solid #1d2c4b; color:var(--text); text-decoration:none; }
-  .news-link:last-child { border-bottom:none; }
-  .news-t { font-size:13px; font-weight:700; line-height:1.35; }
-  .news-m { font-size:11px; color:var(--muted); margin-top:3px; }
-  input, select { width:100%; background:#0b1325; color:var(--text); border:1px solid var(--line); padding:10px 12px; border-radius:11px; font-size:14px; font-weight:600; }
-  .tabbar { position:fixed; bottom:0; left:0; right:0; background:rgba(11,19,37,0.96); backdrop-filter:blur(10px); border-top:1px solid var(--line); display:grid; grid-template-columns:repeat(4,1fr); max-width:600px; margin:0 auto; z-index:90; }
-  .tab-btn { background:none; border:none; color:var(--muted); padding:9px 4px 11px; font-size:11px; font-weight:800; cursor:pointer; display:flex; flex-direction:column; align-items:center; gap:3px; }
-  .tab-btn span { font-size:17px; }
-  .tab-btn.active { color:var(--blue); }
-  .toast { position:fixed; bottom:72px; left:12px; right:12px; max-width:576px; margin:0 auto; background:#1e293b; border:2px solid var(--blue); color:#fff; padding:12px 15px; border-radius:13px; font-size:13px; font-weight:700; display:none; z-index:99; box-shadow:0 10px 25px rgba(0,0,0,.6); }
-  .pos-green { color:var(--green); } .pos-red { color:var(--red); } .pos-amber { color:var(--amber); } .pos-blue { color:var(--blue); }
-  .muted { color:var(--muted); font-size:12px; }
-</style>
-</head>
-<body>
-
-<div class="header">
-  <div>
-    <div class="h-title">⚡ Pionex AI Console</div>
-    <div class="h-sub" id="subline">Caricamento...</div>
-  </div>
-  <div style="display:flex;gap:5px;align-items:center;">
-    <span class="pill" id="ws-pill">🔴 Live</span>
-    <span class="pill" id="mode-pill">MODO</span>
-  </div>
-</div>
-
-<!-- ======================= TAB 1: HOME ======================= -->
-<section id="view-home" class="view active">
-  <div class="hero" id="advisor">
-    <div class="hero-t" id="adv-title"></div>
-    <div class="hero-s" id="adv-sub"></div>
-  </div>
-
-  <div class="card" id="pos-card"></div>
-
-  <div class="card">
-    <div class="sec-title">
-      <span>🎛️ Telecomando Rapido</span>
-      <button class="pill" onclick="toggleSetup()" id="key-btn" style="cursor:pointer;">🔑 Chiave GitHub</button>
-    </div>
-    <div id="setup-box" style="display:none; background:#0b1325; padding:12px; border-radius:12px; margin-bottom:10px; border:1px solid var(--amber);">
-      <div style="font-size:12px; font-weight:800; color:var(--amber); margin-bottom:6px;">Attiva i pulsanti remoti (solo la prima volta):</div>
-      <a href="https://github.com/settings/tokens/new?description=PionexTelegramConsole&scopes=repo,workflow" target="_blank" style="color:var(--blue);font-size:12px;font-weight:800;display:block;margin-bottom:8px;">👉 Genera Token GitHub (permesso workflow)</a>
-      <input id="gh-token" type="password" placeholder="Incolla Token ghp_... e salva" style="margin-bottom:8px;">
-      <button class="act-btn b-green" style="width:100%;padding:10px;" onclick="saveToken()">💾 Salva nel Telefono</button>
-    </div>
-    <div class="big-actions" style="margin-bottom:10px;">
-      <button class="act-btn b-blue" onclick="sendCmd('status','',0)">🔄 Aggiorna Ora<small>Ricalcola Previsioni</small></button>
-      <button class="act-btn b-red" onclick="confirmClose()">🛑 Chiudi Posizione<small>Vendi trade attivo</small></button>
-    </div>
-    <div style="background:#0b1325; padding:10px; border-radius:12px; border:1px solid #1d2c4b;">
-      <div class="muted" style="margin-bottom:6px; font-weight:700;">Operazione manuale rapida:</div>
-      <div style="display:grid; grid-template-columns:1.2fr 1fr; gap:8px; margin-bottom:8px;">
-        <select id="man-coin"></select>
-        <input id="man-usdt" type="number" inputmode="decimal" placeholder="USDT (0 = Auto)">
-      </div>
-      <div class="big-actions">
-        <button class="act-btn b-green" style="padding:10px;" onclick="manualOpen()">🚀 Compra Long</button>
-        <button class="act-btn b-amber" style="padding:10px;" onclick="manualSellAll()">🧹 Vendi Tutto</button>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- ======================= TAB 2: PREVISIONI AI ======================= -->
-<section id="view-pred" class="view">
-  <div class="card" id="claude-card"></div>
-
-  <div class="card">
-    <div class="sec-title">
-      <span>🔮 Motore Previsioni Reale (12h)</span>
-      <span class="pill" id="fng-pill">F&G</span>
-    </div>
-    <select id="pred-coin-sel" onchange="renderPrediction()" style="margin-bottom:10px;"></select>
-    <div id="pred-box"></div>
-  </div>
-</section>
-
-<!-- ======================= TAB 3: MERCATO 10 COIN ======================= -->
-<section id="view-market" class="view">
-  <div class="card">
-    <div class="sec-title">
-      <span>🏆 Classifica 10 Coin</span>
-      <span id="btc-pill" class="muted"></span>
-    </div>
-    <div class="chip-row">
-      <button class="chip active" onclick="setFilter('all',this)">Tutte (10)</button>
-      <button class="chip" onclick="setFilter('ready',this)">🟢 Pronte</button>
-      <button class="chip" onclick="setFilter('hot',this)">🟡 Quasi Pronte</button>
-    </div>
-    <div id="coin-list"></div>
-  </div>
-</section>
-
-<!-- ======================= TAB 4: CALENDARIO, NEWS & STORICO ======================= -->
-<section id="view-cal" class="view">
-  <div class="card">
-    <div class="sec-title">
-      <span>📅 Calendario Economico USD</span>
-      <span id="macro-pill" class="muted"></span>
-    </div>
-    <div id="macro-list"></div>
-  </div>
-
-  <div class="card">
-    <div class="sec-title"><span>📰 Ultime Notizie Crypto</span><span class="muted">Feed Reale</span></div>
-    <div id="news-list"></div>
-  </div>
-
-  <div class="card">
-    <div class="sec-title"><span>📊 Rendimento & Storico</span><span id="daily-tag" class="muted"></span></div>
-    <div class="kv-grid" id="stats-grid"></div>
-    <div id="hist-box" style="margin-top:10px;"></div>
-  </div>
-</section>
-
-<nav class="tabbar">
-  <button class="tab-btn active" onclick="switchTab('home',this)"><span>🏠</span>Home</button>
-  <button class="tab-btn" onclick="switchTab('pred',this)"><span>🔮</span>Previsioni</button>
-  <button class="tab-btn" onclick="switchTab('market',this)"><span>🏆</span>Mercato</button>
-  <button class="tab-btn" onclick="switchTab('cal',this)"><span>📅</span>News & Cal</button>
-</nav>
-
-<div class="toast" id="toast"></div>
-
-<script>
-const D = __PAYLOAD_JSON__;
-const livePx = {};
-let marketFilter = 'all';
-
-try { if (window.Telegram && window.Telegram.WebApp) { window.Telegram.WebApp.ready(); window.Telegram.WebApp.expand(); } } catch(e){}
-
-function switchTab(name, btn){
-  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
-  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-  document.getElementById('view-' + name).classList.add('active');
-  btn.classList.add('active');
-  window.scrollTo({top: 0, behavior: 'smooth'});
-}
-
-function showToast(msg, border='#38bdf8'){
-  const t = document.getElementById('toast');
-  t.style.borderColor = border; t.innerHTML = msg; t.style.display = 'block';
-  clearTimeout(window._toastTimer);
-  window._toastTimer = setTimeout(()=>{ t.style.display='none'; }, 5500);
-}
-
-function fmtPx(p){
-  p = Number(p||0);
-  if(p<=0) return '$0.00';
-  if(p>=1000) return '$'+p.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
-  if(p>=10) return '$'+p.toFixed(2);
-  if(p>=1) return '$'+p.toFixed(3);
-  return '$'+p.toFixed(4);
-}
-function ageStr(ts){
-  const s = Math.max(0, Math.floor(Date.now()/1000 - ts));
-  if(s<60) return s+'s fa';
-  if(s<3600) return Math.floor(s/60)+'m fa';
-  return (s/3600).toFixed(1)+'h fa';
-}
-function fmtLocalDT(ts){
-  return new Date(ts * 1000).toLocaleString('it-IT',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
-}
-function countdownStr(ts){
-  const diff = ts - Math.floor(Date.now()/1000);
-  if(diff <= 0){
-    const ago = Math.abs(diff);
-    return ago < 3600 ? `${Math.floor(ago/60)}m fa` : `${(ago/3600).toFixed(1)}h fa`;
-  }
-  const h = Math.floor(diff/3600), m = Math.floor((diff%3600)/60);
-  return h > 0 ? `tra ${h}h ${m}m` : `tra ${m}m`;
-}
-
-function renderHeader(){
-  document.getElementById('subline').textContent = `${ageStr(D.updated_ts)} · ${D.session}`;
-  const mp = document.getElementById('mode-pill');
-  mp.textContent = D.mode === 'LIVE' ? '🟢 LIVE' : '🧪 SIM';
-  mp.style.borderColor = D.mode === 'LIVE' ? '#10b981' : '#f59e0b';
-  document.getElementById('btc-pill').textContent = D.btc_regime || '';
-  document.getElementById('fng-pill').textContent = `F&G ${D.fng_val} (${D.fng_class})`;
-
-  const adv = document.getElementById('advisor');
-  adv.style.background = D.advisor.bg; adv.style.borderColor = D.advisor.color;
-  const t = document.getElementById('adv-title'); t.style.color = D.advisor.color; t.textContent = D.advisor.badge;
-  document.getElementById('adv-sub').textContent = D.advisor.instruction;
-
-  const hasKey = Boolean(localStorage.getItem('gh_pat'));
-  const kb = document.getElementById('key-btn');
-  kb.textContent = hasKey ? '🟢 Telecomando OK' : '🔑 Chiave GitHub';
-  kb.style.borderColor = hasKey ? '#10b981' : '#f59e0b';
-}
-
-function renderPosition(){
-  const box = document.getElementById('pos-card');
-  const p = D.position;
-  if(!p || !p.is_open){
-    box.innerHTML = `<div class="sec-title"><span>💼 Portafoglio</span><span>100% USDT</span></div>
-      <div class="muted">${D.waiting || 'Nessun trade aperto: il capitale è protetto in USDT.'}</div>`;
-    return;
-  }
-  const coin = D.coins.find(c=>c.code===p.coin_code) || {};
-  const cur = livePx[p.coin_code] || coin.price || p.entry_price;
-  const fee = (D.limits.fee_rt || 0.10) / 100;
-  const partialPnl = Number(p.realized_partial_usdt || 0);
-  const netPct = (((cur - p.entry_price) / p.entry_price) - fee) * 100;
-  const netUsdt = p.invested_usdt * (netPct / 100) + partialPnl;
-  const span = Math.max(p.tp_price - p.sl_price, 1e-9);
-  const prog = Math.max(0, Math.min(100, ((cur - p.sl_price) / span) * 100));
-  const col = netUsdt >= 0 ? 'pos-green' : 'pos-red';
-
-  box.innerHTML = `<div class="sec-title"><span>🔥 TRADE APERTO: ${p.coin_code}</span><span>${p.opened_at}</span></div>
-    <div class="kv-grid">
-      <div class="kv"><div class="kv-l">Ingresso</div><div class="kv-v">${fmtPx(p.entry_price)}</div></div>
-      <div class="kv"><div class="kv-l">Prezzo Attuale</div><div class="kv-v">${fmtPx(cur)}</div></div>
-      <div class="kv"><div class="kv-l">Risultato Netto</div><div class="kv-v ${col}">${netPct>=0?'+':''}${netPct.toFixed(2)}% (${netUsdt>=0?'+':''}${netUsdt.toFixed(2)}$)</div></div>
-      <div class="kv"><div class="kv-l">Investito</div><div class="kv-v">${Number(p.invested_usdt).toFixed(2)} USDT</div></div>
-      <div class="kv"><div class="kv-l">Stop-Loss ${p.breakeven_locked?'🔒':''}</div><div class="kv-v pos-red">${fmtPx(p.sl_price)}</div></div>
-      <div class="kv"><div class="kv-l">Take-Profit 🎯</div><div class="kv-v pos-green">${fmtPx(p.tp_price)}</div></div>
-    </div>
-    <div class="prog-bar"><div style="width:${prog}%; background:${netUsdt>=0?'#10b981':'#ef4444'}"></div></div>
-    <button class="act-btn b-red" style="width:100%; margin-top:6px; padding:11px;" onclick="confirmClose()">🛑 CHIUDI SUBITO ${p.coin_code}</button>`;
-}
-
-function renderPrediction(){
-  const clBox = document.getElementById('claude-card');
-  const cv = D.claude_verdict || {};
-  if(D.claude_enabled && cv.reason_it){
-    const dCol = cv.decision==='APPROVE'||cv.decision==='HOLD' ? 'pos-green' : (cv.decision==='WAIT_PULLBACK'||cv.decision==='TIGHTEN_SL' ? 'pos-amber' : 'pos-red');
-    clBox.innerHTML = `<div class="sec-title"><span>🧠 Supervisore Claude 5.5</span><span class="pill">${cv.model_used || D.claude_model}</span></div>
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
-        <b class="${dCol}" style="font-size:15px;">${cv.decision} ${cv.best_coin || ''}</b>
-        <span class="pill">Confidenza: ${cv.confidence || 0}%</span>
-      </div>
-      <div style="font-size:13px;color:#e2e8f0;">${cv.reason_it}</div>
-      <div class="muted" style="margin-top:5px;">Regime: ${cv.market_regime_note || D.btc_regime}</div>`;
-  } else {
-    clBox.innerHTML = `<div class="sec-title"><span>🧠 Supervisore Claude 5.5</span><span class="pill">${D.claude_enabled ? 'In attesa setup' : 'Solo Quant'}</span></div>
-      <div class="muted">${D.claude_enabled ? 'Claude interviene automaticamente appena una coin supera i filtri o su posizione aperta.' : 'Aggiungi ANTHROPIC_API_KEY nei Secrets GitHub per attivare anche il giudizio di Claude 5.5.'}</div>`;
-  }
-
-  const sel = document.getElementById('pred-coin-sel').value;
-  const c = D.coins.find(x => x.code === sel) || D.coins[0];
-  if(!c) return;
-  const px = livePx[c.code] || c.price;
-  const slPct = ((c.sl_price - px)/px*100).toFixed(2);
-  const tpPct = ((c.tp_price - px)/px*100).toFixed(2);
-  const dirLabel = c.ai_prob >= 58 && c.raw_100 >= 65 ? '📈 RIALZISTA FORTE'
-                 : (c.ai_prob >= 53 ? '↗️ RIALZISTA MODERATO' : (c.ai_prob <= 45 ? '📉 DEBOLE / PRUDENZA' : '↔️ LATERALE'));
-  const dirCol = c.ai_prob >= 56 ? 'pos-green' : (c.ai_prob <= 45 ? 'pos-red' : 'pos-amber');
-
-  const sk = c.sk_scores || {};
-  const bar = (val, max, col='#38bdf8') => `<div class="prog-bar" style="height:6px;margin:4px 0 0;"><div style="width:${Math.min(100,Math.round(val/max*100))}%;background:${col}"></div></div>`;
-
-  document.getElementById('pred-box').innerHTML = `
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;background:#0b1325;padding:11px;border-radius:12px;border:1px solid #1d2c4b;">
-      <div>
-        <div style="font-size:11px;color:var(--muted);">Previsione Direzionale 12h</div>
-        <div class="${dirCol}" style="font-size:16px;font-weight:900;">${dirLabel}</div>
-      </div>
-      <div style="text-align:right;">
-        <div style="font-size:11px;color:var(--muted);">Probabilità AI</div>
-        <div style="font-size:18px;font-weight:900;">${c.ai_prob}%</div>
-      </div>
-    </div>
-
-    <div class="kv-grid" style="margin-bottom:10px;">
-      <div class="kv"><div class="kv-l">Target Atteso (TP)</div><div class="kv-v pos-green">${fmtPx(c.tp_price)} <small>(+${tpPct}%)</small></div></div>
-      <div class="kv"><div class="kv-l">Protezione (SL)</div><div class="kv-v pos-red">${fmtPx(c.sl_price)} <small>(${slPct}%)</small></div></div>
-      <div class="kv"><div class="kv-l">Rendimento / Rischio</div><div class="kv-v pos-blue">${c.rr_ratio}x netto</div></div>
-      <div class="kv"><div class="kv-l">Monte Carlo (12h)</div><div class="kv-v ${c.mc_ev_r>=0?'pos-green':'pos-red'}">${c.mc_ev_r>=0?'+':''}${c.mc_ev_r}R atteso</div></div>
-    </div>
-
-    <div class="sec-title" style="margin-top:8px;"><span>⚙️ I 4 Motori Predittivi</span><span>${c.regime}</span></div>
-    <div class="skill-grid">
-      <div class="skill-row"><div class="top"><span>Rete Neurale</span><span>${c.prob_mlp}%</span></div>${bar(c.prob_mlp,100,'#a78bfa')}</div>
-      <div class="skill-row"><div class="top"><span>k-NN Lorentziano</span><span>${c.prob_knn}%</span></div>${bar(c.prob_knn,100,'#38bdf8')}</div>
-      <div class="skill-row"><div class="top"><span>Monte Carlo 400</span><span>${c.prob_mc}%</span></div>${bar(c.prob_mc,100,'#10b981')}</div>
-      <div class="skill-row"><div class="top"><span>Time Machine (${c.tm_matches})</span><span>${c.tm_wr}% WR</span></div>${bar(c.tm_wr,100,'#f59e0b')}</div>
-    </div>
-
-    <div class="sec-title" style="margin-top:12px;"><span>🧩 Semaforo 11 Skill (${c.raw_100}/100)</span><span>Alpha BTC: ${c.alpha_btc>=0?'+':''}${c.alpha_btc}%</span></div>
-    <div class="skill-grid">
-      <div class="skill-row"><div class="top"><span>Trend 4H/1H</span><span>${sk.trend||0}/20</span></div>${bar(sk.trend||0,20)}</div>
-      <div class="skill-row"><div class="top"><span>Forza vs BTC</span><span>${sk.btc||0}/10</span></div>${bar(sk.btc||0,10)}</div>
-      <div class="skill-row"><div class="top"><span>VWAP & Volumi</span><span>${sk.vwap||0}/15</span></div>${bar(sk.vwap||0,15)}</div>
-      <div class="skill-row"><div class="top"><span>Book L2 (${c.ob_imb>=0?'+':''}${c.ob_imb}%)</span><span>${sk.book||0}/10</span></div>${bar(sk.book||0,10)}</div>
-      <div class="skill-row"><div class="top"><span>Derivati/F&G</span><span>${sk.deriv||0}/8</span></div>${bar(sk.deriv||0,8)}</div>
-      <div class="skill-row"><div class="top"><span>Timer 15m</span><span>${c.triggers||0}/5</span></div>${bar(c.triggers||0,5,'#10b981')}</div>
-    </div>`;
-}
-
-function setFilter(f, btn){
-  marketFilter = f;
-  document.querySelectorAll('.chip').forEach(c=>c.classList.remove('active'));
-  btn.classList.add('active');
-  renderCoins();
-}
-
-function renderCoins(){
-  const box = document.getElementById('coin-list');
-  const list = D.coins.filter(c => {
-    if(marketFilter === 'ready') return c.entry_ok;
-    if(marketFilter === 'hot') return c.raw_100 >= 58;
-    return true;
-  });
-  if(!list.length){
-    box.innerHTML = `<div class="muted" style="padding:12px 0;">Nessuna coin corrisponde a questo filtro al momento.</div>`;
-    return;
-  }
-  box.innerHTML = list.map((c, idx) => {
-    const px = livePx[c.code] || c.price;
-    const icon = c.entry_ok ? '🟢' : (c.raw_100 >= 58 ? '🟡' : '⚪');
-    const barCol = c.entry_ok ? '#10b981' : (c.raw_100 >= 58 ? '#f59e0b' : '#38bdf8');
-    return `<div class="coin-item ${c.entry_ok?'ready':''}">
-      <div class="coin-top"><div class="coin-name">${icon} #${idx+1} ${c.name} (${c.code})</div><div class="coin-px" id="px-${c.code}">${fmtPx(px)}</div></div>
-      <div class="prog-bar" style="height:6px;"><div style="width:${c.raw_100}%;background:${barCol}"></div></div>
-      <div class="coin-meta">
-        <div><span>Punteggio</span><b>${c.final_score}/10 (${c.raw_100}%)</b></div>
-        <div><span>Previsione AI</span><b>${c.ai_prob}%</b></div>
-        <div><span>R:R Netto</span><b>${c.rr_ratio}x</b></div>
-        <div><span>Stop-Loss</span><b class="pos-red">${fmtPx(c.sl_price)}</b></div>
-        <div><span>Take-Profit</span><b class="pos-green">${fmtPx(c.tp_price)}</b></div>
-        <div><span>Trigger 15m</span><b>${c.triggers || 0}/5</b></div>
-      </div>
-      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
-        <span class="muted" style="font-size:11px;">${c.risk_ok ? '✅ Rischio OK' : c.risk_status}</span>
-        <button class="mini-btn b-green" onclick="quickBuy('${c.code}', ${c.pos_usdt.toFixed(2)})">🚀 Compra ${c.code}</button>
-      </div>
-    </div>`;
-  }).join('');
-}
-
-function renderCalendarAndNews(){
-  document.getElementById('macro-pill').textContent = D.macro_ok ? '🟢 Live USD' : '⚠️ Feed Offline';
-  const mBox = document.getElementById('macro-list');
-  const mList = (D.macro || []).slice(0, 10);
-  mBox.innerHTML = mList.length
-    ? mList.map(ev => {
-        const badge = ev.impact === 'High' ? '🔴 ALTO' : '🟡 MEDIO';
-        const isFuture = ev.ts > Math.floor(Date.now()/1000);
-        return `<div class="ev-row">
-          <div>
-            <div style="font-size:13px;font-weight:800;">${ev.title}</div>
-            <div class="muted">${fmtLocalDT(ev.ts)} · ${badge}</div>
-          </div>
-          <span class="pill" style="border-color:${isFuture && ev.impact==='High'?'#ef4444':'#253455'}">${countdownStr(ev.ts)}</span>
-        </div>`;
-      }).join('')
-    : `<div class="muted">Nessun evento USD ad alto/medio impatto nelle prossime 36 ore.</div>`;
-
-  const nBox = document.getElementById('news-list');
-  const news = D.news || [];
-  nBox.innerHTML = news.length
-    ? news.map(n => `<a class="news-link" href="${n.url}" target="_blank" rel="noopener">
-        <div class="news-t">${n.title}</div>
-        <div class="news-m">${n.source} · ${ageStr(n.ts)} (${fmtLocalDT(n.ts)}) ↗</div>
-      </a>`).join('')
-    : `<div class="muted">Notizie momentaneamente non disponibili. Riprova con 'Aggiorna Ora'.</div>`;
-}
-
-function renderStats(){
-  const s = D.stats || {};
-  const wr = s.total_trades ? ((s.wins/s.total_trades)*100).toFixed(0)+'%' : '—';
-  document.getElementById('daily-tag').textContent = `Oggi: ${s.daily_trades||0}/${D.limits.max_trades} trade`;
-  document.getElementById('stats-grid').innerHTML = `
-    <div class="kv"><div class="kv-l">Operazioni Totali</div><div class="kv-v">${s.total_trades||0} (${s.wins||0}V / ${s.losses||0}P)</div></div>
-    <div class="kv"><div class="kv-l">Win Rate</div><div class="kv-v">${wr}</div></div>
-    <div class="kv"><div class="kv-l">Profitto Totale</div><div class="kv-v ${(s.total_pnl_usdt||0)>=0?'pos-green':'pos-red'}">${(s.total_pnl_usdt||0)>=0?'+':''}${(s.total_pnl_usdt||0).toFixed(2)} $</div></div>
-    <div class="kv"><div class="kv-l">Oggi</div><div class="kv-v ${(s.daily_pnl_pct||0)>=0?'pos-green':'pos-red'}">${(s.daily_pnl_pct||0)>=0?'+':''}${(s.daily_pnl_pct||0).toFixed(2)}%</div></div>`;
-  const h = D.history || [];
-  document.getElementById('hist-box').innerHTML = h.length
-    ? `<div class="muted" style="margin-bottom:6px;font-weight:700;">Ultime chiusure:</div>` +
-      h.slice(0,8).map(r=>`<div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid #1d2c4b;font-size:12px;">
-        <span><b>${r.coin}</b> · ${r.closed_at}</span>
-        <span class="${r.pnl_usdt>=0?'pos-green':'pos-red'}"><b>${r.pnl_pct>=0?'+':''}${r.pnl_pct}% (${r.pnl_usdt>=0?'+':''}${r.pnl_usdt}$)</b></span>
-      </div>`).join('')
-    : `<div class="muted">Nessuna operazione chiusa finora.</div>`;
-}
-
-function toggleSetup(){ const b=document.getElementById('setup-box'); b.style.display=b.style.display==='none'?'block':'none'; }
-function saveToken(){
-  const v=document.getElementById('gh-token').value.trim();
-  if(!v){ showToast('⚠️ Incolla prima il Token GitHub', '#f59e0b'); return; }
-  localStorage.setItem('gh_pat', v); document.getElementById('setup-box').style.display='none'; renderHeader();
-  showToast('✅ Telecomando attivato!', '#10b981');
-}
-async function sendCmd(command, coin, amount_usdt){
-  const tok = localStorage.getItem('gh_pat') || document.getElementById('gh-token').value.trim();
-  if(!tok){ document.getElementById('setup-box').style.display='block'; showToast('🔑 Inserisci prima il Token GitHub.', '#f59e0b'); return; }
-  showToast(`⏳ Invio comando <b>${command.toUpperCase()} ${coin}</b>...`, '#38bdf8');
-  try{
-    const r = await fetch(`https://api.github.com/repos/${D.repo}/actions/workflows/${D.workflow}/dispatches`, {
-      method:'POST', headers:{'Authorization':`Bearer ${tok}`,'Accept':'application/vnd.github+json','Content-Type':'application/json'},
-      body: JSON.stringify({ref: D.ref || 'main', inputs:{command, coin: String(coin||''), amount_usdt: String(amount_usdt||0)}})
-    });
-    if(r.status === 204) showToast(`✅ Comando avviato! Risposta su Telegram tra ~35s.`, '#10b981');
-    else showToast(`❌ Errore GitHub HTTP ${r.status}`, '#ef4444');
-  }catch(e){ showToast('❌ Errore: '+e, '#ef4444'); }
-}
-function confirmClose(){ if(confirm('Chiudere subito la posizione aperta?')) sendCmd('close','',0); }
-function quickBuy(code, usdt){ if(confirm(`Aprire LONG su ${code} (~${usdt} USDT)?`)) sendCmd('open', code, usdt); }
-function manualOpen(){ const c=document.getElementById('man-coin').value, u=document.getElementById('man-usdt').value||0; if(confirm(`LONG su ${c}?`)) sendCmd('open', c, u); }
-function manualSellAll(){ const c=document.getElementById('man-coin').value; if(confirm(`Vendere TUTTO ${c}?`)) sendCmd('sell_all', c, 0); }
-
-function connectWS(){
-  try{
-    const ws = new WebSocket('wss://ws.kraken.com');
-    const pairToCode = {}; D.coins.forEach(c => { pairToCode[c.ws] = c.code; });
-    ws.onopen = () => {
-      document.getElementById('ws-pill').textContent = '🟢 Live';
-      ws.send(JSON.stringify({event:'subscribe', pair: D.coins.map(c=>c.ws), subscription:{name:'ticker'}}));
-    };
-    ws.onmessage = (ev) => {
-      const m = JSON.parse(ev.data);
-      if(Array.isArray(m) && m[1] && m[1].c){
-        const code = pairToCode[m[3]], px = parseFloat(m[1].c[0]);
-        if(code && px>0){
-          livePx[code] = px;
-          const el = document.getElementById('px-'+code);
-          if(el) el.textContent = fmtPx(px);
-          if(D.position && D.position.is_open && D.position.coin_code===code) renderPosition();
-        }
-      }
-    };
-    ws.onclose = () => { document.getElementById('ws-pill').textContent = '🟡 Riconnessione...'; setTimeout(connectWS, 4000); };
-  }catch(e){}
-}
-
-(function init(){
-  document.getElementById('gh-token').value = localStorage.getItem('gh_pat') || '';
-  const opts = D.coins.map(c=>`<option value="${c.code}">${c.name} (${c.code}) — ${c.raw_100}%</option>`).join('');
-  document.getElementById('man-coin').innerHTML = D.coins.map(c=>`<option value="${c.code}">${c.name} (${c.code})</option>`).join('');
-  document.getElementById('pred-coin-sel').innerHTML = opts;
-  renderHeader(); renderPosition(); renderPrediction(); renderCoins(); renderCalendarAndNews(); renderStats();
-  setInterval(() => { renderHeader(); renderCalendarAndNews(); }, 15000);
-  connectWS();
-})();
-</script>
-</body>
-</html>"""
-
-    html = html.replace("__PAYLOAD_JSON__", payload_json)
-    try:
-        with open(WEBAPP_FILE, "w", encoding="utf-8") as f:
-            f.write(html)
-        log("INFO", f"Web Console {WEBAPP_FILE} aggiornata con successo.")
-    except Exception as e:
-        log("ERROR", f"Impossibile scrivere {WEBAPP_FILE}: {e}")
-
-
-# ==============================================================================
-# 12. REPORTISTICA + PULSANTI INTERATTIVI NATIVI TELEGRAM
+# 12. TELEGRAM
 # ==============================================================================
 _TG_MENU_SET = [False]
 
@@ -3490,321 +1560,334 @@ def ensure_telegram_commands_menu():
     if _TG_MENU_SET[0] or not TELEGRAM_TOKEN:
         return
     _TG_MENU_SET[0] = True
-    commands = [
-        {"command": "status", "description": "🔄 Aggiorna stato, 11 Skill e Claude AI"},
-        {"command": "close", "description": "🛑 Chiudi subito la posizione aperta"},
-        {"command": "open_sol", "description": "🚀 Apri Long su SOL"},
-        {"command": "open_btc", "description": "🚀 Apri Long su BTC"},
-        {"command": "open_eth", "description": "🚀 Apri Long su ETH"},
-        {"command": "open_sui", "description": "🚀 Apri Long su SUI"},
-        {"command": "open_xrp", "description": "🚀 Apri Long su XRP"},
-    ]
+    cmds = [{"command": "status", "description": "🔄 Stato e classifica"},
+            {"command": "close", "description": "🛑 Chiudi la posizione"}] + \
+           [{"command": f"open_{c.lower()}", "description": f"🚀 Apri Long {c}"} for c in ("sol", "btc", "eth")]
     try:
-        SESSION.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/setMyCommands", json={"commands": commands}, timeout=5)
+        SESSION.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/setMyCommands", json={"commands": cmds}, timeout=5)
     except Exception:
         pass
 
 
-def build_telegram_inline_keyboard(ranked_evals, state):
-    pos = state["position"]
-    rows = []
+def poll_telegram_commands(state):
+    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
+        return None
+    offset = int(state["stats"].get("last_tg_update_id", 0)) + 1
+    try:
+        r = SESSION.get(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates",
+                        params={"offset": offset, "limit": 15, "timeout": 1}, timeout=5)
+        j = r.json() if r.status_code == 200 else {}
+        if not j.get("ok"):
+            return None
+    except Exception:
+        return None
+    found = None
+    for upd in j.get("result", []):
+        state["stats"]["last_tg_update_id"] = max(int(upd.get("update_id", 0)), state["stats"].get("last_tg_update_id", 0))
+        cb = upd.get("callback_query")
+        if cb:
+            if str(((cb.get("message") or {}).get("chat") or {}).get("id", "")) == str(TELEGRAM_CHAT_ID):
+                parts = (cb.get("data") or "").strip().split(":")
+                if parts[0] == "cmd" and len(parts) >= 2:
+                    found = {"command": parts[1].lower(), "coin": parts[2].upper() if len(parts) >= 3 else "",
+                             "usdt": float(parts[3]) if len(parts) >= 4 and _isnum(parts[3]) else 0.0}
+                    try:
+                        SESSION.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/answerCallbackQuery",
+                                     json={"callback_query_id": cb["id"], "text": f"✅ {found['command'].upper()} {found['coin']} preso in carico"}, timeout=4)
+                    except Exception:
+                        pass
+            continue
+        msg = upd.get("message") or upd.get("edited_message") or {}
+        if str((msg.get("chat") or {}).get("id", "")) != str(TELEGRAM_CHAT_ID) or time.time() - int(msg.get("date", 0)) > 900:
+            continue
+        text = (msg.get("text") or "").strip()
+        if not text.startswith("/"):
+            continue
+        parts = text.split()
+        cmd = parts[0].lstrip("/").split("@")[0].lower()
+        arg = parts[1].upper() if len(parts) >= 2 else ""
+        amt = float(parts[2]) if len(parts) >= 3 and _isnum(parts[2]) else 0.0
+        if cmd.startswith("open_"):
+            cmd, arg = "open", cmd.split("_", 1)[1].upper()
+        if cmd in ("close", "chiudi", "panic", "stop"):
+            found = {"command": "close", "coin": arg, "usdt": 0.0}
+        elif cmd in ("sellall", "sell_all", "venditutto"):
+            found = {"command": "sell_all", "coin": arg, "usdt": 0.0}
+        elif cmd in ("open", "buy", "apri", "long"):
+            found = {"command": "open", "coin": arg, "usdt": amt}
+        elif cmd in ("approve", "approva"):
+            found = {"command": "approve", "coin": arg, "usdt": 0.0}
+        elif cmd in ("deny", "rifiuta"):
+            found = {"command": "deny", "coin": arg, "usdt": 0.0}
+        elif cmd in ("status", "stato", "report", "start"):
+            found = {"command": "status", "coin": "", "usdt": 0.0}
+    if found:
+        save_state(state)
+    return found
 
-    webapp_url = get_public_webapp_url()
-    top_row = []
-    if webapp_url:
-        top_row.append({"text": "📱 Apri Web Console Interattiva", "url": webapp_url})
-    if GITHUB_REPO:
-        top_row.append({"text": "⚡ Avvia Workflow GitHub", "url": f"https://github.com/{GITHUB_REPO}/actions/workflows/bot.yml"})
-    if top_row:
-        rows.append(top_row)
 
+def get_public_webapp_url():
+    if "/" in GITHUB_REPO:
+        owner, repo = GITHUB_REPO.split("/", 1)
+        return f"https://{owner.lower()}.github.io/{repo}/"
+    return ""
+
+
+def build_telegram_inline_keyboard(ranked, state):
+    pos, rows, top = state["position"], [], []
+    url = get_public_webapp_url()
+    if url:
+        top.append({"text": "📱 Web Console", "url": url})
+    if top:
+        rows.append(top)
+    if state.get("pending"):
+        pid = state["pending"]["id"]
+        rows.append([{"text": "✅ APPROVA ACQUISTO", "callback_data": f"cmd:approve:{pid}"},
+                     {"text": "🚫 Rifiuta", "callback_data": f"cmd:deny:{pid}"}])
     if pos["is_open"]:
         c = pos["coin_code"]
-        rows.append([
-            {"text": f"🛑 CHIUDI ORA {c}", "callback_data": f"cmd:close:{c}"},
-            {"text": "🔄 Aggiorna Stato", "callback_data": "cmd:status"},
-        ])
-        rows.append([
-            {"text": f"🧹 Vendi Tutto Saldo {c}", "callback_data": f"cmd:sell_all:{c}"},
-        ])
+        rows.append([{"text": f"🛑 CHIUDI {c}", "callback_data": f"cmd:close:{c}"},
+                     {"text": "🔄 Stato", "callback_data": "cmd:status"}])
     else:
-        top3 = ranked_evals[:3]
-        if top3:
-            rows.append([
-                {"text": f"🚀 Compra {e['code']} ({e['raw_100']}%)", "callback_data": f"cmd:open:{e['code']}"}
-                for e in top3
-            ])
-        rows.append([
-            {"text": "🔄 Aggiorna Stato", "callback_data": "cmd:status"},
-            {"text": "🛑 Chiudi Posizione", "callback_data": "cmd:close"},
-        ])
-
+        rows.append([{"text": "🔄 Aggiorna", "callback_data": "cmd:status"}])
+        if ranked:
+            rows.append([{"text": f"🚀 Manuale {e['code']}", "callback_data": f"cmd:open:{e['code']}"} for e in ranked[:3]])
     return {"inline_keyboard": rows}
 
 
 def send_telegram_message(text, reply_markup=None):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-        log("WARN", "Credenziali Telegram non configurate: salto invio messaggio.")
         return
     ensure_telegram_commands_menu()
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML", "disable_web_page_preview": True}
+    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": text[:4000], "parse_mode": "HTML", "disable_web_page_preview": True}
     if reply_markup:
         payload["reply_markup"] = reply_markup
     try:
         r = SESSION.post(url, json=payload, timeout=HTTP_TIMEOUT)
         if r.status_code != 200:
-            plain = re.sub(r"<[^>]+>", "", text)
-            fallback = {"chat_id": TELEGRAM_CHAT_ID, "text": plain, "disable_web_page_preview": True}
-            if reply_markup:
-                fallback["reply_markup"] = reply_markup
-            SESSION.post(url, json=fallback, timeout=HTTP_TIMEOUT)
-        else:
-            log("INFO", "Messaggio Telegram con pulsanti inviato con successo.")
+            payload.pop("parse_mode")
+            payload["text"] = re.sub(r"<[^>]+>", "", text)[:4000]
+            SESSION.post(url, json=payload, timeout=HTTP_TIMEOUT)
     except Exception as e:
-        log("WARN", f"Errore invio Telegram: {e}")
+        log("WARN", f"Errore invio Telegram: {redact(e)}")
 
 
-def build_telegram_report(ranked_evals, state, trade_status, fng_val, fng_class, session_str, eur_usd):
-    pos, stats = state["position"], state["stats"]
-    mode_str = "🟢 LIVE PIONEX" if pionex_live_enabled() else "🧪 SIMULAZIONE"
-    claude_badge = f"🧠 {CLAUDE_MODEL}" if CLAUDE_ENABLED else "⚙️ Quant-Only"
-    lines = [
-        f"🤖 <b>PIONEX CLAUDE 11-SKILLS v11.1</b> ({mode_str} | {html_lib.escape(claude_badge)})",
-        f"🌍 {html_lib.escape(session_str)} | {html_lib.escape(BTC_REGIME['label'])} | F&G: <b>{fng_val}</b>",
-        "",
-        f"<b>{html_lib.escape(trade_status['headline'])}</b>",
-        f"{html_lib.escape(trade_status['detail'])}",
-    ]
-
-    cv = stats.get("claude_last_verdict") or {}
-    if CLAUDE_ENABLED and cv.get("reason_it"):
-        lines.append(f"🧠 <i>Claude Supervisor ({cv.get('decision', '')}, {cv.get('confidence', 0)}%): {html_lib.escape(cv['reason_it'])}</i>")
-
-    for al in trade_status.get("alerts_fired", []):
-        lines.append(f"• {html_lib.escape(al)}")
-
+def build_telegram_report(ranked, state, ts, ctx):
+    pos, stats, edge = state["position"], state["stats"], ctx["edge"]
+    mode, why = trading_mode(state)
+    pr = strategy_proof(state)
+    esc = html_lib.escape
+    lines = [f"🤖 <b>PIONEX EDGE BOT {STRAT_VER}</b> ({'🟢 LIVE' if mode == 'LIVE_PIONEX' else '🧪 SIMULAZIONE'})",
+             f"🌍 {esc(ctx['session'])} | {esc(BTC_REGIME['label'])} | F&G {ctx['fng']}", "",
+             f"<b>{esc(ts['headline'])}</b>", esc(ts["detail"])]
+    lines += [f"• {esc(a)}" for a in ts.get("alerts_fired", [])]
     if pos["is_open"]:
-        scale_info = f" | Scale-Out 50%: +{pos.get('realized_partial_usdt', 0.0):.2f}$" if pos.get("partial_tp_done") else ""
-        lines.extend([
-            "",
-            f"📌 <b>POSIZIONE ATTIVA: {pos['coin_code']}</b> ({pos['mode']}{scale_info})",
-            f"• Ingresso: <code>{fmt_price(pos['entry_price'])}</code> | SL: <code>{fmt_price(pos['sl_price'])}</code> | TP: <code>{fmt_price(pos['tp_price'])}</code>",
-            f"• Quantità: <code>{pos['amount_coin']} {pos['coin_code']}</code> ({pos['invested_usdt']:.2f} USDT)",
-        ])
-
-    lines.extend([
-        "",
-        "🏆 <b>TOP 5 COIN (11-SKILL SCORE):</b>",
-    ])
-    for i, ev in enumerate(ranked_evals[:5], 1):
-        flag = "🟢" if entry_conditions(ev) else ("🟡" if ev["raw_100"] >= 58 else "⚪")
-        rr = ev["risk_manager"]["rr_ratio"]
-        lines.append(
-            f"{i}. {flag} <b>{ev['code']}</b> ({fmt_price(ev['price'])}) — "
-            f"<b>{ev['raw_100']}%</b> ({ev['final_score']}/10) | "
-            f"AI: <b>{ev['ai_prob']*100:.0f}%</b> | R:R <b>{rr:.2f}x</b> | 15m: {ev['scanner_timer']['triggers']}/5"
-        )
-
-    wr = (stats["wins"] / stats["total_trades"] * 100.0) if stats["total_trades"] > 0 else 0.0
-    lines.extend([
-        "",
-        f"📊 <b>Bilancio:</b> {stats['total_trades']} trade ({stats['wins']}V/{stats['losses']}P, WR {wr:.0f}%) | "
-        f"Tot: <b>{stats['total_pnl_usdt']:+.2f} $</b> | Oggi: <b>{stats.get('daily_pnl_pct', 0.0):+.2f}%</b>",
-        "👇 <i>Usa i pulsanti qui sotto o apri la Web Console:</i>",
-    ])
+        lines += ["", f"📌 <b>{pos['coin_code']}</b> ({esc(pos['setup'])}) entry <code>{fmt_price(pos['entry_price'])}</code> "
+                      f"SL <code>{fmt_price(pos['sl_price'])}</code> TP <code>{fmt_price(pos['tp_price'])}</code>"]
+    lines += ["", "🏆 <b>TOP 5</b>"]
+    for i, e in enumerate(ranked[:5], 1):
+        flag = "🟢" if e["verdict"]["ok"] else ("🟡" if e["setup"] else "⚪")
+        what = e["setup"] or f"a {e['dist_atr']:.1f} ATR dal max 24h"
+        lines.append(f"{i}. {flag} <b>{e['code']}</b> {fmt_price(e['price'])} · score {e['score']} · {esc(what)}")
+    if ranked and ranked[0]["setup"] and not ranked[0]["verdict"]["ok"]:
+        lines.append("   ↳ " + esc("; ".join(ranked[0]["verdict"]["blocks"][:3])))
+    ml = edge["ml"]
+    lines += ["", f"🧪 <b>Edge storico</b> ({edge['n']} eventi, {edge['all']['exp_r']:+.2f}R medio) · ML: " +
+              ("attivo" if ml.get("active") else "spento")]
+    for k, v in edge["by_setup"].items():
+        lines.append(f"   {k}: {v['exp_r']:+.2f}R · WR {v['wr']:.0f}% · n={v['n']}")
+    wr = stats["wins"] / stats["total_trades"] * 100.0 if stats["total_trades"] else 0.0
+    lines += ["", f"📊 {stats['total_trades']} trade ({stats['wins']}V/{stats['losses']}P, WR {wr:.0f}%) · tot {stats['total_pnl_usdt']:+.2f}$ · oggi {stats['daily_pnl_pct']:+.2f}%",
+              f"🎓 Prova {STRAT_VER}: {pr['n']}/{PROOF_MIN_TRADES} trade · {pr['exp_r']:+.2f}R · PF {pr['pf']:.2f}"
+              + (f" · {esc(why)}" if mode != "LIVE_PIONEX" else " · live consentito")]
     return "\n".join(lines)
 
 
+def should_send_telegram_now(state, ts, ranked, force=False):
+    if force or ts.get("action_state") in ("OPENED_NOW", "CLOSED_NOW", "ENTRY_FAILED", "CLOSE_FAILED", "MANUAL_DONE",
+                                            "MANUAL_NOOP", "PENDING_APPROVAL") or ts.get("alerts_fired"):
+        return True
+    if ranked and ranked[0]["verdict"]["ok"]:
+        return True
+    return time.time() - int(state["stats"].get("last_report_ts", 0)) >= TELEGRAM_ROUTINE_MIN * 60
+
+
 # ==============================================================================
-# 13. ESECUZIONE CICLO COMPLETO + MODALITA' CONTINUA 24/7 (TICK GUARDIAN)
+# 13. SNAPSHOT PER LA WEB CONSOLE (la pagina verra' rifatta nel passo successivo)
 # ==============================================================================
+def write_snapshot(ranked, state, ts, ctx):
+    mode, why = trading_mode(state)
+    edge = ctx["edge"]
+    snap = {"version": STRAT_VER, "updated_ts": int(time.time()), "session": ctx["session"], "mode": mode, "mode_reason": why,
+            "btc_regime": BTC_REGIME, "fng": ctx["fng"], "status": ts, "proof": strategy_proof(state),
+            "position": state["position"], "stats": state["stats"], "history": state["history"][:40],
+            "pending": state.get("pending"), "macro": [{k: m[k] for k in ("title", "impact", "ts")} for m in ctx["macro"]],
+            "edge": {"n": edge["n"], "all": edge["all"], "by_setup": edge["by_setup"],
+                     "by_coin": {f"{k[0]}|{k[1]}": v for k, v in edge["by_coin"].items()},
+                     "ml": {k: v for k, v in edge["ml"].items() if k in ("active", "auc", "top_r", "all_r", "n_test", "why")}},
+            "limits": {"risk_per_trade_pct": RISK_PER_TRADE_PCT, "daily_max_loss_pct": DAILY_MAX_LOSS_PCT,
+                       "max_trades": MAX_TRADES_PER_DAY, "target_r": TARGET_R, "max_hold_h": MAX_HOLD_H, "cost_rt_pct": COST_RT},
+            "coins": [{"code": e["code"], "name": e["coin"]["name"], "price": e["price"], "score": e["score"], "setup": e["setup"],
+                       "level": e["level"], "near_level": e["near_level"], "dist_atr": round(e["dist_atr"], 2),
+                       "rsi_1h": round(e["rsi_1h"], 1), "adx": round(e["adx"], 1), "ret24_pct": round(e["ret24"] * 100, 2),
+                       "plan": {k: v for k, v in e["plan"].items()}, "ok": e["verdict"]["ok"], "blocks": e["verdict"]["blocks"],
+                       "size_usdt": round(e["verdict"].get("size_usdt", 0.0), 2), "tm": e.get("tm")} for e in ranked]}
+    try:
+        with open(SNAPSHOT_FILE, "w", encoding="utf-8") as f:
+            json.dump(snap, f, ensure_ascii=False, default=str)
+    except Exception as e:
+        log("ERROR", f"Snapshot non scritto: {e}")
+
+
 def sync_live_files_to_github():
     if not os.getenv("GITHUB_ACTIONS"):
         return
     try:
-        os.system(
-            'git add bot_state.json index.html >/dev/null 2>&1 && '
-            'if ! git diff --cached --quiet; then '
-            'git commit -m "Live update state & console [skip ci]" >/dev/null 2>&1 && '
-            'git pull --rebase -X theirs origin "${GITHUB_REF_NAME:-main}" >/dev/null 2>&1 || true; '
-            'git push >/dev/null 2>&1 || true; '
-            'fi'
-        )
+        os.system('git add bot_state.json bot_snapshot.json index.html >/dev/null 2>&1 && '
+                  'if ! git diff --cached --quiet; then '
+                  'git commit -m "Live update state [skip ci]" >/dev/null 2>&1 && '
+                  'git pull --rebase -X theirs origin "${GITHUB_REF_NAME:-main}" >/dev/null 2>&1 || true; '
+                  'git push >/dev/null 2>&1 || true; fi')
     except Exception:
         pass
 
 
-def should_send_telegram_now(state, trade_status, ranked_evals, force=False):
-    if force:
-        return True
-    act = trade_status.get("action_state", "")
-    if act in ("OPENED_NOW", "CLOSED_NOW", "ENTRY_FAILED", "CLOSE_FAILED", "MANUAL_DONE", "MANUAL_NOOP"):
-        return True
-    if trade_status.get("alerts_fired"):
-        return True
-    if ranked_evals and entry_conditions(ranked_evals[0]):
-        return True
-    last_rep = int(state["stats"].get("last_report_ts", 0))
-    return (time.time() - last_rep) >= (TELEGRAM_ROUTINE_MIN * 60)
-
-
+# ==============================================================================
+# 14. CICLO COMPLETO, GUARDIAN, BACKTEST CLI
+# ==============================================================================
 def run_full_cycle(state, manual_override=None, force_telegram=False):
     LIVE_PX.clear()
     LIVE_PX.update(fetch_pionex_prices())
     eur_usd = fetch_eur_usd_rate()
     futures_map = fetch_all_kraken_futures()
-    fng_val, fng_class = fetch_fear_and_greed()
-    macro_events = fetch_macro_calendar()
-    news_items = fetch_crypto_news(limit=8)
-    s6_global = skill_06_macro_and_session(macro_events)
-    session_str = s6_global["session_str"]
-
-    all_evals = scan_all_coins(COINS, futures_map, fng_val, macro_events)
+    fng_val, _ = fetch_fear_and_greed()
+    macro = fetch_macro_calendar()
+    all_evals = scan_all_coins(COINS, futures_map)
     pos = state["position"]
     if pos["is_open"] and pos["coin_code"] not in all_evals:
-        oc = pos["coin_code"]
-        all_evals[oc] = make_fallback_eval(COIN_MAP.get(oc, COINS[0]), pos)
-
+        cfg = COIN_MAP.get(pos["coin_code"], COINS[0])
+        all_evals[cfg["code"]] = blank_eval(cfg, LIVE_PX.get(cfg["pionex"]) or pos["entry_price"])
     if not all_evals:
-        log("ERROR", "Nessuna coin analizzata con successo (API Kraken non raggiungibili).")
+        log("ERROR", "Nessuna coin analizzata (API Kraken non raggiungibili).")
         return None
-
-    for code, ev in all_evals.items():
-        ev["risk_manager"] = skill_09_adaptive_risk_and_sizing(
-            INVEST_EUR, eur_usd, ev["price"], ev["sl_price"], ev["tp_price"], state, ev["high_soon"], code, ev
-        )
-        ev["exit_plan"] = skill_10_exit_planner(ev["price"], ev["sl_price"], ev["tp_price"])
-
-    ranked_evals = sorted(all_evals.values(), key=lambda x: (x["raw_100"], x["ai_prob"]), reverse=True)
-
-    tg_cmd = poll_telegram_commands(state)
-    cmd_obj = manual_override or tg_cmd
-
-    if cmd_obj and cmd_obj.get("command") in ("close", "sell_all", "open"):
-        trade_status = run_manual_command(
-            state, all_evals, eur_usd, cmd_obj["command"], cmd_obj.get("coin", ""), cmd_obj.get("usdt", 0.0)
-        )
+    ranked, edge, high_soon = finalize_signals(all_evals, state, eur_usd, macro, fng_val)
+    expire_pending(state)
+    cmd = manual_override or poll_telegram_commands(state)
+    if cmd and cmd.get("command") in ("close", "sell_all", "open", "approve", "deny"):
+        ts = run_manual_command(state, all_evals, eur_usd, cmd["command"], cmd.get("coin", ""), cmd.get("usdt", 0.0))
         force_telegram = True
     else:
-        if cmd_obj and cmd_obj.get("command") == "status":
-            force_telegram = True
-        trade_status = manage_autonomous_trading(
-            state, ranked_evals, all_evals, eur_usd,
-            fng_val=fng_val, session_str=session_str, macro_events=macro_events
-        )
-
-    generate_webapp_html(ranked_evals, state, trade_status, fng_val, fng_class, session_str, eur_usd, macro_events, news_items)
-
-    if should_send_telegram_now(state, trade_status, ranked_evals, force=force_telegram):
-        report = build_telegram_report(ranked_evals, state, trade_status, fng_val, fng_class, session_str, eur_usd)
-        kb = build_telegram_inline_keyboard(ranked_evals, state)
-        send_telegram_message(report, reply_markup=kb)
+        force_telegram = force_telegram or bool(cmd and cmd.get("command") == "status")
+        ts = manage_autonomous_trading(state, ranked, all_evals, edge, eur_usd, macro, fng_val)
+    ctx = {"ranked": ranked, "all_evals": all_evals, "eur_usd": eur_usd, "ts": ts, "fng": fng_val,
+           "session": session_label(), "macro": macro, "edge": edge}
+    write_snapshot(ranked, state, ts, ctx)
+    if should_send_telegram_now(state, ts, ranked, force_telegram):
+        send_telegram_message(build_telegram_report(ranked, state, ts, ctx), build_telegram_inline_keyboard(ranked, state))
         state["stats"]["last_report_ts"] = int(time.time())
         save_state(state)
-
     sync_live_files_to_github()
-
-    return {
-        "ranked_evals": ranked_evals,
-        "all_evals": all_evals,
-        "eur_usd": eur_usd,
-        "trade_status": trade_status,
-        "fng_val": fng_val,
-        "fng_class": fng_class,
-        "session_str": session_str,
-        "macro_events": macro_events,
-        "news_items": news_items,
-    }
+    return ctx
 
 
 def run_continuous_guardian(state, ctx):
     pos = state["position"]
-    best = ctx["ranked_evals"][0] if ctx["ranked_evals"] else None
-    is_hot = bool(best and best["raw_100"] >= 60 and best["risk_manager"]["passed"])
-
     if DAEMON_MODE:
         max_seconds = 10 ** 9
-        log("INFO", f"DAEMON_MODE=true: loop infinito 24/7 (tick {GUARDIAN_TICK_SEC}s, rescan AI {GUARDIAN_RESCAN_SEC}s).")
-    elif ALWAYS_ON_24_7 or pos["is_open"]:
-        max_seconds = int(GUARDIAN_MINUTES_OPEN * 60)
-        log("INFO", f"Modalita' Continua 24/7 attiva per {GUARDIAN_MINUTES_OPEN:.1f} min (tick {GUARDIAN_TICK_SEC}s, rescan AI {GUARDIAN_RESCAN_SEC}s).")
-    elif is_hot:
-        max_seconds = int(GUARDIAN_MINUTES_HOT * 60)
-        log("INFO", f"Setup quasi pronto su {best['code']} ({best['raw_100']}/100): Tick Guardian per {GUARDIAN_MINUTES_HOT:.1f} min.")
+    elif ALWAYS_ON_24_7 or pos["is_open"] or state.get("pending"):
+        max_seconds = int(GUARDIAN_MINUTES * 60)
     else:
         return
-
-    start_mon = time.monotonic()
-    last_rescan = time.monotonic()
-
-    while time.monotonic() - start_mon < max_seconds:
+    log("INFO", f"Guardian attivo (tick {GUARDIAN_TICK_SEC}s, rescan {GUARDIAN_RESCAN_SEC}s).")
+    start = last_rescan = time.monotonic()
+    while time.monotonic() - start < max_seconds:
         time.sleep(max(5, GUARDIAN_TICK_SEC))
-        now_dt = datetime.now(timezone.utc)
-        now_str, now_ts = now_dt.strftime("%d/%m %H:%M UTC"), int(now_dt.timestamp())
-
-        px_now = fetch_pionex_prices()
-        if px_now:
-            LIVE_PX.update(px_now)
-
-        tg_cmd = poll_telegram_commands(state)
-        if tg_cmd:
-            c_type = tg_cmd["command"]
-            log("INFO", f"Pulsante/Comando Telegram ricevuto in tempo reale: {tg_cmd}")
-            if c_type == "status":
-                rep = build_telegram_report(ctx["ranked_evals"], state, ctx["trade_status"], ctx["fng_val"], ctx["fng_class"], ctx["session_str"], ctx["eur_usd"])
-                kb = build_telegram_inline_keyboard(ctx["ranked_evals"], state)
-                send_telegram_message(rep, reply_markup=kb)
+        now = datetime.now(timezone.utc)
+        now_str, now_ts = now.strftime("%d/%m %H:%M UTC"), int(now.timestamp())
+        px = fetch_pionex_prices()
+        if px:
+            LIVE_PX.update(px)
+        expire_pending(state)
+        cmd = poll_telegram_commands(state)
+        if cmd:
+            log("INFO", f"Comando Telegram: {cmd}")
+            if cmd["command"] == "status":
+                send_telegram_message(build_telegram_report(ctx["ranked"], state, ctx["ts"], ctx),
+                                      build_telegram_inline_keyboard(ctx["ranked"], state))
             else:
-                st = run_manual_command(state, ctx["all_evals"], ctx["eur_usd"], c_type, tg_cmd.get("coin", ""), tg_cmd.get("usdt", 0.0))
-                ctx["trade_status"] = st
-                kb = build_telegram_inline_keyboard(ctx["ranked_evals"], state)
-                send_telegram_message(f"<b>{html_lib.escape(st['headline'])}</b>\n{html_lib.escape(st['detail'])}", reply_markup=kb)
-                generate_webapp_html(ctx["ranked_evals"], state, st, ctx["fng_val"], ctx["fng_class"], ctx["session_str"], ctx["eur_usd"], ctx["macro_events"], ctx.get("news_items"))
+                st = run_manual_command(state, ctx["all_evals"], ctx["eur_usd"], cmd["command"], cmd.get("coin", ""), cmd.get("usdt", 0.0))
+                ctx["ts"] = st
+                send_telegram_message(f"<b>{html_lib.escape(st['headline'])}</b>\n{html_lib.escape(st['detail'])}",
+                                      build_telegram_inline_keyboard(ctx["ranked"], state))
+                write_snapshot(ctx["ranked"], state, st, ctx)
                 sync_live_files_to_github()
-
         if state["position"]["is_open"]:
-            capital_usdt = INVEST_EUR * ctx["eur_usd"]
-            st = _manage_open_position(state, ctx["all_evals"], capital_usdt, now_str, now_ts, allow_claude=False)
-            ctx["trade_status"] = st
-
-            if st.get("alerts_fired"):
-                kb = build_telegram_inline_keyboard(ctx["ranked_evals"], state)
-                for al in st["alerts_fired"]:
-                    send_telegram_message(f"⚡ <b>TICK GUARDIAN ({state['position']['coin_code']})</b>\n{html_lib.escape(al)}", reply_markup=kb)
-                generate_webapp_html(ctx["ranked_evals"], state, st, ctx["fng_val"], ctx["fng_class"], ctx["session_str"], ctx["eur_usd"], ctx["macro_events"], ctx.get("news_items"))
+            st = _manage_open_position(state, ctx["all_evals"], INVEST_EUR * ctx["eur_usd"], now_str, now_ts)
+            ctx["ts"] = st
+            if st.get("alerts_fired") or st["action_state"] in ("CLOSED_NOW", "CLOSE_FAILED"):
+                for al in st.get("alerts_fired", []):
+                    send_telegram_message(f"⚡ <b>{html_lib.escape(state['position']['coin_code'])}</b> {html_lib.escape(al)}")
+                if st["action_state"] in ("CLOSED_NOW", "CLOSE_FAILED"):
+                    send_telegram_message(f"<b>{html_lib.escape(st['headline'])}</b>\n{html_lib.escape(st['detail'])}",
+                                          build_telegram_inline_keyboard(ctx["ranked"], state))
+                write_snapshot(ctx["ranked"], state, st, ctx)
                 sync_live_files_to_github()
-
-            if st["action_state"] in ("CLOSED_NOW", "CLOSE_FAILED"):
-                kb = build_telegram_inline_keyboard(ctx["ranked_evals"], state)
-                send_telegram_message(f"<b>{html_lib.escape(st['headline'])}</b>\n{html_lib.escape(st['detail'])}", reply_markup=kb)
-                generate_webapp_html(ctx["ranked_evals"], state, st, ctx["fng_val"], ctx["fng_class"], ctx["session_str"], ctx["eur_usd"], ctx["macro_events"], ctx.get("news_items"))
-                sync_live_files_to_github()
-
         if time.monotonic() - last_rescan >= GUARDIAN_RESCAN_SEC:
             last_rescan = time.monotonic()
-            log("INFO", "Tick Guardian 24/7: rianalisi completa 11 Skill + FreqAI + Claude...")
-            new_ctx = run_full_cycle(state, force_telegram=False)
+            new_ctx = run_full_cycle(state)
             if new_ctx:
                 ctx = new_ctx
 
 
+def run_backtest_cli():
+    """python bot.py backtest : storico pooled sulle ultime ~4 settimane (limite dei dati Kraken 1h = 720 barre)."""
+    series = {}
+    for cfg in COINS:
+        c = drop_unfinished(fetch_kraken_ohlc(cfg["kraken"], 60), 3600)
+        if len(c) >= 150:
+            series[cfg["code"]] = prep_series(c)
+    if not series:
+        print("Nessun dato scaricato (Kraken non raggiungibile).")
+        return
+    print(f"\nBACKTEST {STRAT_VER}: {len(series)} coin, ~{min(len(s['c']) for s in series.values()) / 24:.0f} giorni di candele 1h")
+    print(f"Costi inclusi: fee {FEE_SIDE}%/lato + slippage {SLIP_SIDE}%/lato | time-stop {MAX_HOLD_H}h | R = perdita massima pianificata\n")
+    for tr in (1.5, 2.0, 2.5, 3.0):
+        ev = [e for code, S in series.items() for e in backtest_coin(code, S, tr)]
+        tot = summarize([e["R"] for e in ev])
+        print(f"TARGET {tr:.1f}R -> {tot['n']:3d} trade | expectancy {tot['exp_r']:+.3f}R (±{tot['se']:.2f}) | WR {tot['wr']:4.1f}% | PF {tot['pf']:.2f}")
+        for s in SETUPS:
+            x = summarize([e["R"] for e in ev if e["setup"] == s])
+            if x["n"]:
+                print(f"     {s:13s} n={x['n']:3d}  {x['exp_r']:+.3f}R  WR {x['wr']:4.1f}%  PF {x['pf']:.2f}")
+    ev = [e for code, S in series.items() for e in backtest_coin(code, S)]
+    print(f"\nPer coin (TARGET {TARGET_R}R):")
+    for code in series:
+        x = summarize([e["R"] for e in ev if e["code"] == code])
+        print(f"   {code:5s} n={x['n']:3d}  {x['exp_r']:+.3f}R  WR {x['wr']:4.1f}%")
+    ml = train_edge_model(ev)
+    print(f"\nFiltro ML walk-forward: {'ATTIVO' if ml.get('active') else 'NON validato'} "
+          f"(AUC {ml.get('auc', 0):.2f}, metà migliore {ml.get('top_r', 0):+.2f}R vs tutti {ml.get('all_r', 0):+.2f}R, n_test {ml.get('n_test', 0)})")
+    print("\nATTENZIONE: ~30 giorni = un solo regime di mercato. Un expectancy positivo qui NON e' una garanzia: "
+          "usa la simulazione live (prova) prima di rischiare capitale.")
+
+
 def main():
-    log("INFO", f"Avvio Pionex Claude 11-Skills Engine v11.1 (Claude={CLAUDE_ENABLED}/{CLAUDE_MODEL}, 24/7={ALWAYS_ON_24_7}, Live={pionex_live_enabled()})")
+    if len(sys.argv) > 1 and sys.argv[1].lower() == "backtest":
+        run_backtest_cli()
+        return
     state = load_state()
-
-    manual_override = None
-    force_tg = (GITHUB_EVENT_NAME == "workflow_dispatch")
-    if MANUAL_COMMAND in ("close", "sell_all", "open", "status"):
-        manual_override = {"command": MANUAL_COMMAND, "coin": MANUAL_COIN, "usdt": MANUAL_USDT}
-        force_tg = True
-
-    ctx = run_full_cycle(state, manual_override=manual_override, force_telegram=force_tg)
+    mode, why = trading_mode(state)
+    log("INFO", f"Avvio Pionex Edge Bot {STRAT_VER} | evento {GITHUB_EVENT_NAME} | modo {mode} ({why}) | approvazione {REQUIRE_APPROVAL} | Claude review {CLAUDE_REVIEW}")
+    manual = None
+    force = GITHUB_EVENT_NAME == "workflow_dispatch"
+    if MANUAL_COMMAND in ("close", "sell_all", "open", "status", "approve", "deny"):
+        manual = {"command": MANUAL_COMMAND, "coin": MANUAL_COIN, "usdt": MANUAL_USDT}
+        force = True
+    ctx = run_full_cycle(state, manual_override=manual, force_telegram=force)
     if not ctx:
         return
-
     run_continuous_guardian(state, ctx)
-
     if (ALWAYS_ON_24_7 or state["position"]["is_open"]) and not DAEMON_MODE:
         trigger_self_chain_dispatch()
 
