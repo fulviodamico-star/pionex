@@ -303,8 +303,8 @@
     "daily_risk_usdt": 0.0,
     "paused_until_ts": 0,
     "funnel": {
-      "valutazioni": 180,
-      "nessun_setup": 180
+      "valutazioni": 190,
+      "nessun_setup": 190
     },
     "funnel_yesterday": {}
   },
