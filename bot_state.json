@@ -303,11 +303,11 @@
     "daily_risk_usdt": 0.0,
     "paused_until_ts": 0,
     "funnel": {
-      "valutazioni": 600,
-      "nessun_setup": 594,
-      "setup_attivo": 6,
-      "BLOCCO: edge storico insufficiente (breakout_#h: #R s": 6,
-      "BLOCCO: target poco raggiungibile in #h (MC # < #)": 6
+      "valutazioni": 610,
+      "nessun_setup": 603,
+      "setup_attivo": 7,
+      "BLOCCO: edge storico insufficiente (breakout_#h: #R s": 7,
+      "BLOCCO: target poco raggiungibile in #h (MC # < #)": 7
     },
     "funnel_yesterday": {}
   },
