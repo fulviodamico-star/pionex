@@ -297,14 +297,14 @@
       "XRP": 1794917999
     },
     "last_tg_update_id": 990621661,
-    "last_report_ts": 1795100368,
+    "last_report_ts": 1795102351,
     "claude_last_call_ts": 0,
     "claude_last_verdict": {},
     "daily_risk_usdt": 0.0,
     "paused_until_ts": 0,
     "funnel": {
-      "valutazioni": 820,
-      "nessun_setup": 810,
+      "valutazioni": 830,
+      "nessun_setup": 820,
       "setup_attivo": 10,
       "BLOCCO: edge storico insufficiente (breakout_#h: #R s": 10,
       "BLOCCO: target poco raggiungibile in #h (MC # < #)": 10
