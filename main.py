@@ -2,11 +2,13 @@ import os
 import re
 import sys
 import json
+import gzip
 import time
 import math
 import hmac
 import hashlib
 import random
+import warnings
 import statistics
 import threading
 import html as html_lib
@@ -19,6 +21,20 @@ from urllib.parse import urlencode
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+
+# --- ML opzionale: se scikit-learn manca il bot funziona lo stesso, con il filtro ML spento ---
+try:
+    import numpy as np
+    from sklearn.ensemble import HistGradientBoostingClassifier
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.neural_network import MLPClassifier
+    from sklearn.pipeline import make_pipeline
+    from sklearn.preprocessing import StandardScaler
+    from sklearn.metrics import roc_auc_score
+    ML_OK = True
+    warnings.filterwarnings("ignore")
+except Exception:  # pragma: no cover
+    ML_OK = False
 
 STRAT_VER = "v12"
 
@@ -70,57 +86,75 @@ GUARDIAN_RESCAN_SEC = _envi("GUARDIAN_RESCAN_SEC", 300)
 SELF_CHAIN_WHEN_OPEN = _envb("SELF_CHAIN_WHEN_OPEN", "true")
 TELEGRAM_ROUTINE_MIN = _envi("TELEGRAM_ROUTINE_MIN", 30)
 
+# --- dati storici (365g da Binance vision + cache incrementale compressa) ---
+HIST_DAYS = _envi("HIST_DAYS", 365)
+HIST_CACHE = _env("HIST_CACHE", "hist_cache.json.gz")
+
 # --- costi (percentuali per lato) ---
 FEE_SIDE = _envf("FEE_PCT_PER_SIDE", 0.05)
 SLIP_SIDE = _envf("SLIPPAGE_PCT_PER_SIDE", 0.05)
 COST_RT = 2.0 * (FEE_SIDE + SLIP_SIDE)
 
-# --- piano di uscita (calibrato per eliminare stop prematuri) ---
+# --- piano di uscita (calibrato per evitare stop a zero sui retest) ---
 ATR_STOP_K = _envf("ATR_STOP_K", 1.6)
-MIN_STOP_PCT = _envf("MIN_STOP_PCT", 0.7)
-MAX_STOP_PCT = _envf("MAX_STOP_PCT", 3.2)
+MIN_STOP_PCT = _envf("MIN_STOP_PCT", 1.0)
+MAX_STOP_PCT = _envf("MAX_STOP_PCT", 3.0)
 TARGET_R = _envf("TARGET_R", 2.0)
-MIN_RR_NET = _envf("MIN_RR_NET", 1.45)
-BE_AT_R = _envf("BE_AT_R", 1.25)                      # +1.25R evita stop a zero sui normali retest
+MIN_RR_NET = _envf("MIN_RR_NET", 1.4)
+BE_AT_R = _envf("BE_AT_R", 1.20)
 TRAIL_START_R = _envf("TRAIL_START_R", 1.55)
 TRAIL_R = _envf("TRAIL_R", 0.85)
-MAX_HOLD_H = _envi("MAX_HOLD_HOURS", 18)              # 18h consente al 2R di svilupparsi
+MAX_HOLD_H = _envi("MAX_HOLD_HOURS", 16)
 
 # --- setup / filtri ---
-MAX_EXT_ATR = _envf("MAX_EXTENSION_ATR", 0.75)
-MAX_PUMP_24H_PCT = _envf("MAX_PUMP_24H_PCT", 13.0)
-MAX_SPREAD_BPS = _envf("MAX_SPREAD_BPS", 22.0)
-FUNDING_MAX_PCT = _envf("FUNDING_MAX_8H_PCT", 0.05)
+MAX_EXT_ATR = _envf("MAX_EXTENSION_ATR", 0.65)
+MAX_PUMP_24H_PCT = _envf("MAX_PUMP_24H_PCT", 12.0)
+MAX_SPREAD_BPS = _envf("MAX_SPREAD_BPS", 20.0)
+FUNDING_MAX_PCT = _envf("FUNDING_MAX_8H_PCT", 0.04)
+SETUP_VR_MIN = _envf("SETUP_VR_MIN", 1.0)
+SETUP_ADX_MIN = _envf("SETUP_ADX_MIN", 16.0)
 
-# --- edge & Monte Carlo (rimossi i colli di bottiglia su 30gg) ---
-MIN_POOL_N = _envi("MIN_POOL_N", 12)
-MIN_EXP_R = _envf("MIN_EXP_R", 0.00)
+# --- edge (Time Machine) ---
+MIN_POOL_N = _envi("MIN_POOL_N", 25)
+MIN_SETUP_N = _envi("MIN_SETUP_N", 15)
+MIN_EXP_R = _envf("MIN_EXP_R", 0.06)
+SHRINK_K = _envf("SHRINK_K", 20.0)
+RECENT_DAYS = _envi("RECENT_DAYS", 90)
+RECENT_MIN_N = _envi("RECENT_MIN_N", 15)
+RECENT_MIN_EXP_R = _envf("RECENT_MIN_EXP_R", -0.15)
 MC_PATHS = _envi("MC_PATHS", 1500)
-MC_MIN_P_TARGET = _envf("MC_MIN_P_TARGET", 0.20)
+MC_MIN_P_TARGET = _envf("MC_MIN_P_TARGET", 0.18)
 
-# --- rischio & orari ---
+# --- ML (meta-labeling con ensemble LogReg + HistGradientBoosting + MLP, walk-forward purged) ---
+ML_ENABLED = _envb("ML_ENABLED", "true")
+ML_MIN_EVENTS = _envi("ML_MIN_EVENTS", 150)
+ML_SKIP_QUANTILE = _envf("ML_SKIP_QUANTILE", 0.40)
+ML_MIN_AUC = _envf("ML_MIN_AUC", 0.54)
+RISK_SCALE_BY_ML = _envb("RISK_SCALE_BY_ML", "true")
+
+# --- rischio ---
 RISK_PER_TRADE_PCT = _envf("RISK_PER_TRADE_PCT", 1.0)
 DAILY_MAX_LOSS_PCT = _envf("DAILY_MAX_LOSS_PCT", 3.0)
 MAX_TRADES_PER_DAY = _envi("MAX_TRADES_PER_DAY", 4)
 MAX_CONSEC_LOSSES = _envi("MAX_CONSEC_LOSSES", 3)
 CASH_BUFFER_PCT = _envf("CASH_BUFFER_PCT", 5.0)
 MIN_ORDER_USDT = _envf("MIN_ORDER_USDT", 10.5)
-ENTRY_START_UTC = _envi("ENTRY_START_UTC", 0)         # 0-24: crypto non dorme mai
-ENTRY_END_UTC = _envi("ENTRY_END_UTC", 24)
-MIN_MINUTES_BETWEEN_TRADES = _envi("MIN_MINUTES_BETWEEN_TRADES", 45)
-COOLDOWN_AFTER_LOSS_MIN = _envi("COOLDOWN_AFTER_LOSS_MIN", 150)
-SAME_COIN_COOLDOWN_H = _envf("SAME_COIN_COOLDOWN_H", 4.0)
-ENTRY_SCORE_MIN = _envi("ENTRY_SCORE_MIN", 44)
+ENTRY_START_UTC = _envi("ENTRY_START_UTC", 6)
+ENTRY_END_UTC = _envi("ENTRY_END_UTC", 23)
+MIN_MINUTES_BETWEEN_TRADES = _envi("MIN_MINUTES_BETWEEN_TRADES", 60)
+COOLDOWN_AFTER_LOSS_MIN = _envi("COOLDOWN_AFTER_LOSS_MIN", 180)
+SAME_COIN_COOLDOWN_H = _envf("SAME_COIN_COOLDOWN_H", 6.0)
+ENTRY_SCORE_MIN = _envi("ENTRY_SCORE_MIN", 35)
 MIN_ORDER_FLOOR = MIN_ORDER_USDT
 
 # --- passaggio al live ---
 LIVE_PROOF_REQUIRED = _envb("LIVE_PROOF_REQUIRED", "true")
 PROOF_MIN_TRADES = _envi("PROOF_MIN_TRADES", 20)
-PROOF_MIN_EXP_R = _envf("PROOF_MIN_EXP_R", 0.08)
+PROOF_MIN_EXP_R = _envf("PROOF_MIN_EXP_R", 0.10)
 REQUIRE_APPROVAL = _envb("REQUIRE_APPROVAL", "false")
 PENDING_TTL_MIN = _envi("PENDING_TTL_MIN", 10)
 
-# --- AI Supervisor Claude (opzionale: veto + risk multiplier) ---
+# --- revisore Claude (opzionale: veto + risk_mult) ---
 CLAUDE_REVIEW = _envb("CLAUDE_REVIEW_ENABLED", "false")
 CLAUDE_MODEL = _env("CLAUDE_MODEL", "claude-haiku-5-5")
 
@@ -128,26 +162,24 @@ STATE_FILE = "bot_state.json"
 SNAPSHOT_FILE = "bot_snapshot.json"
 HTTP_TIMEOUT = 12
 PIONEX_BASE = "https://api.pionex.com"
-HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; PionexNeuralBot/12.0)"}
+BINANCE_HOSTS = ("https://data-api.binance.vision", "https://api.binance.com")
+HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; PionexEdgeBot/12.0)"}
 
 COINS = [
-    {"code": "SOL",  "name": "Solana",    "kraken": "SOLUSD",  "futures": "PF_SOLUSD",  "pionex": "SOL_USDT",  "prec": 3},
-    {"code": "BTC",  "name": "Bitcoin",   "kraken": "XBTUSD",  "futures": "PF_XBTUSD",  "pionex": "BTC_USDT",  "prec": 5},
-    {"code": "ETH",  "name": "Ethereum",  "kraken": "ETHUSD",  "futures": "PF_ETHUSD",  "pionex": "ETH_USDT",  "prec": 4},
-    {"code": "XRP",  "name": "Ripple",    "kraken": "XRPUSD",  "futures": "PF_XRPUSD",  "pionex": "XRP_USDT",  "prec": 1},
-    {"code": "SUI",  "name": "Sui",       "kraken": "SUIUSD",  "futures": "PF_SUIUSD",  "pionex": "SUI_USDT",  "prec": 2},
-    {"code": "DOGE", "name": "Dogecoin",  "kraken": "XDGUSD",  "futures": "PF_DOGEUSD", "pionex": "DOGE_USDT", "prec": 0},
-    {"code": "ADA",  "name": "Cardano",   "kraken": "ADAUSD",  "futures": "PF_ADAUSD",  "pionex": "ADA_USDT",  "prec": 1},
-    {"code": "AVAX", "name": "Avalanche", "kraken": "AVAXUSD", "futures": "PF_AVAXUSD", "pionex": "AVAX_USDT", "prec": 2},
-    {"code": "LINK", "name": "Chainlink", "kraken": "LINKUSD", "futures": "PF_LINKUSD", "pionex": "LINK_USDT", "prec": 2},
-    {"code": "DOT",  "name": "Polkadot",  "kraken": "DOTUSD",  "futures": "PF_DOTUSD",  "pionex": "DOT_USDT",  "prec": 2},
+    {"code": "SOL",  "name": "Solana",    "kraken": "SOLUSD",  "binance": "SOLUSDT",  "futures": "PF_SOLUSD",  "pionex": "SOL_USDT",  "prec": 3},
+    {"code": "BTC",  "name": "Bitcoin",   "kraken": "XBTUSD",  "binance": "BTCUSDT",  "futures": "PF_XBTUSD",  "pionex": "BTC_USDT",  "prec": 5},
+    {"code": "ETH",  "name": "Ethereum",  "kraken": "ETHUSD",  "binance": "ETHUSDT",  "futures": "PF_ETHUSD",  "pionex": "ETH_USDT",  "prec": 4},
+    {"code": "XRP",  "name": "Ripple",    "kraken": "XRPUSD",  "binance": "XRPUSDT",  "futures": "PF_XRPUSD",  "pionex": "XRP_USDT",  "prec": 1},
+    {"code": "SUI",  "name": "Sui",       "kraken": "SUIUSD",  "binance": "SUIUSDT",  "futures": "PF_SUIUSD",  "pionex": "SUI_USDT",  "prec": 2},
+    {"code": "DOGE", "name": "Dogecoin",  "kraken": "XDGUSD",  "binance": "DOGEUSDT", "futures": "PF_DOGEUSD", "pionex": "DOGE_USDT", "prec": 0},
+    {"code": "ADA",  "name": "Cardano",   "kraken": "ADAUSD",  "binance": "ADAUSDT",  "futures": "PF_ADAUSD",  "pionex": "ADA_USDT",  "prec": 1},
+    {"code": "AVAX", "name": "Avalanche", "kraken": "AVAXUSD", "binance": "AVAXUSDT", "futures": "PF_AVAXUSD", "pionex": "AVAX_USDT", "prec": 2},
+    {"code": "LINK", "name": "Chainlink", "kraken": "LINKUSD", "binance": "LINKUSDT", "futures": "PF_LINKUSD", "pionex": "LINK_USDT", "prec": 2},
+    {"code": "DOT",  "name": "Polkadot",  "kraken": "DOTUSD",  "binance": "DOTUSDT",  "futures": "PF_DOTUSD",  "pionex": "DOT_USDT",  "prec": 2},
 ]
 COIN_MAP = {c["code"]: c for c in COINS}
 LIVE_PX = {}
-BTC_REGIME = {
-    "state": "NEUTRAL", "regime_tag": "RANGE_CHOP", "allow_alts": True,
-    "allow_strong_alts_only": False, "target_mult": 1.0, "label": "⚪ BTC neutrale"
-}
+BTC_REGIME = {"state": "NEUTRAL", "allow_alts": True, "label": "⚪ BTC neutrale"}
 MACRO_STATUS = {"ok": False}
 
 
@@ -180,6 +212,7 @@ def _build_session():
 SESSION = _build_session()
 _KRAKEN_LOCK = threading.Lock()
 _KRAKEN_LAST = [0.0]
+_HIST_LOCK = threading.Lock()
 
 
 def kraken_throttle(min_gap=0.40):
@@ -219,11 +252,6 @@ def sigmoid(x):
     return 1.0 / (1.0 + math.exp(-clamp(x, -20.0, 20.0)))
 
 
-def silu(x):
-    s = sigmoid(x)
-    return x * s, s + x * s * (1.0 - s)
-
-
 def fmt_price(p):
     if p <= 0:
         return "$0.00"
@@ -255,6 +283,7 @@ def _isnum(s):
 
 
 def summarize(rs):
+    """Statistiche di una lista di R-multipli netti (1R = perdita massima pianificata)."""
     n = len(rs)
     if n == 0:
         return {"n": 0, "exp_r": 0.0, "se": 0.0, "wr": 0.0, "pf": 0.0}
@@ -300,7 +329,7 @@ def default_state():
             "daily_date": "", "daily_pnl_pct": 0.0, "daily_pnl_usdt": 0.0, "daily_trades": 0,
             "daily_risk_usdt": 0.0, "consec_losses": 0, "last_close_ts": 0, "last_loss_ts": 0,
             "coin_last_close": {}, "last_tg_update_id": 0, "last_action": "Nessuna operazione recente",
-            "paused_until_ts": 0, "last_report_ts": 0,
+            "paused_until_ts": 0, "last_report_ts": 0, "funnel": {}, "funnel_yesterday": {},
         },
         "history": [], "pending": None, "reviews": [],
     }
@@ -337,8 +366,9 @@ def save_state(state):
 def roll_daily(stats):
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     if stats.get("daily_date") != today:
+        stats["funnel_yesterday"] = stats.get("funnel", {})
         stats.update({"daily_date": today, "daily_pnl_pct": 0.0, "daily_pnl_usdt": 0.0,
-                      "daily_trades": 0, "daily_risk_usdt": 0.0, "consec_losses": 0})
+                      "daily_trades": 0, "daily_risk_usdt": 0.0, "consec_losses": 0, "funnel": {}})
 
 
 # ==============================================================================
@@ -509,7 +539,7 @@ def live_sell(pos, coin_cfg, price):
 
 
 # ==============================================================================
-# 4. DATI DI MERCATO
+# 4. DATI DI MERCATO (storico lungo Binance + cache incrementale compressa)
 # ==============================================================================
 def fetch_eur_usd_rate():
     data = safe_get_json("https://api.kraken.com/0/public/Ticker", params={"pair": "EURUSD"})
@@ -541,10 +571,106 @@ def fetch_kraken_ohlc(pair, interval=60):
     return out
 
 
+def fetch_binance_klines(symbol, interval, start_sec=None, limit=1000):
+    for host in BINANCE_HOSTS:
+        params = {"symbol": symbol, "interval": interval, "limit": limit}
+        if start_sec:
+            params["startTime"] = int(start_sec) * 1000
+        j = safe_get_json(f"{host}/api/v3/klines", params=params, retries=1)
+        if isinstance(j, list):
+            out = []
+            for r in j:
+                try:
+                    out.append({"time": int(r[0]) // 1000, "open": float(r[1]), "high": float(r[2]),
+                                "low": float(r[3]), "close": float(r[4]), "volume": float(r[5])})
+                except Exception:
+                    continue
+            return out
+    return None
+
+
 def drop_unfinished(candles, interval_sec):
     if candles and candles[-1]["time"] + interval_sec > time.time():
         return candles[:-1]
     return candles
+
+
+_HIST = {}
+_HIST_DIRTY = [False]
+
+
+def load_hist_cache():
+    if not os.path.exists(HIST_CACHE):
+        return
+    try:
+        with gzip.open(HIST_CACHE, "rt", encoding="utf-8") as f:
+            raw = json.load(f)
+        with _HIST_LOCK:
+            for code, rows in raw.items():
+                _HIST[code] = [{"time": r[0], "open": r[1], "high": r[2], "low": r[3], "close": r[4], "volume": r[5]} for r in rows]
+        log("INFO", f"Cache storico caricata: {', '.join(f'{k}:{len(v)}' for k, v in _HIST.items())}")
+    except Exception as e:
+        log("WARN", f"Cache storico illeggibile ({e}): verra' riscaricato")
+        with _HIST_LOCK:
+            _HIST.clear()
+
+
+def save_hist_cache():
+    with _HIST_LOCK:
+        if not _HIST_DIRTY[0]:
+            return
+        snap = {code: [[c["time"], c["open"], c["high"], c["low"], c["close"], c["volume"]] for c in rows]
+                for code, rows in _HIST.items()}
+        _HIST_DIRTY[0] = False
+    try:
+        tmp = HIST_CACHE + ".tmp"
+        with gzip.open(tmp, "wt", encoding="utf-8") as f:
+            json.dump(snap, f, separators=(",", ":"))
+        os.replace(tmp, HIST_CACHE)
+    except Exception as e:
+        log("WARN", f"Salvataggio cache storico fallito: {e}")
+
+
+def get_hourly_history(cfg):
+    code, now = cfg["code"], time.time()
+    with _HIST_LOCK:
+        cd = list(_HIST.get(code, []))
+    if (not cd) or (now - cd[-1]["time"] > 20 * 86400):
+        cd, since = [], int(now - HIST_DAYS * 86400)
+    else:
+        since = cd[-1]["time"] + 3600
+    new = []
+    for _ in range(25):
+        if since + 3600 > now:
+            break
+        page = fetch_binance_klines(cfg["binance"], "1h", since, 1000)
+        if not page:
+            break
+        new += page
+        since = page[-1]["time"] + 3600
+        if len(page) < 1000:
+            break
+    if new:
+        have = {x["time"] for x in cd}
+        cd += [x for x in new if x["time"] not in have and x["time"] + 3600 <= now]
+        cd.sort(key=lambda x: x["time"])
+        cd = cd[-(HIST_DAYS * 24 + 50):]
+        with _HIST_LOCK:
+            _HIST[code] = cd
+            _HIST_DIRTY[0] = True
+    if len(cd) < 150:
+        k = drop_unfinished(fetch_kraken_ohlc(cfg["kraken"], 60), 3600)
+        if len(k) > len(cd):
+            log("WARN", f"{code}: storico Binance non disponibile, uso Kraken ({len(k)} barre): edge/ML limitati")
+            return k
+    return cd
+
+
+def get_15m(cfg):
+    c = fetch_binance_klines(cfg["binance"], "15m", None, 400)
+    if not c:
+        c = fetch_kraken_ohlc(cfg["kraken"], 15)
+    return drop_unfinished(c or [], 900)
 
 
 def fetch_kraken_orderbook(pair, count=50):
@@ -566,19 +692,29 @@ def fetch_kraken_orderbook(pair, count=50):
         return default
 
 
+_FUND_CACHE = {"ts": 0.0, "data": {}}
+
+
 def fetch_all_kraken_futures():
-    data = safe_get_json("https://futures.kraken.com/derivatives/api/v3/tickers")
+    if time.time() - _FUND_CACHE["ts"] < 1800 and _FUND_CACHE["data"]:
+        return _FUND_CACHE["data"]
     out = {}
-    if not data or "tickers" not in data:
-        return out
-    for t in data["tickers"]:
+    for c in COINS:
+        j = safe_get_json("https://futures.kraken.com/derivatives/api/v4/historicalfundingrates",
+                          params={"symbol": c["futures"]}, retries=1)
         try:
-            fr = float(t.get("fundingRate", 0.0) or 0.0)
-            mark = float(t.get("markPrice", 0.0) or 0.0)
-            pct = fr * 8.0 * 100.0 if (abs(fr) < 0.0005 and mark > 0) else fr * 100.0
-            out[str(t.get("symbol", "")).upper()] = {"funding_8h_pct": clamp(pct, -0.5, 0.5), "available": True}
+            rates = sorted(j.get("rates") or [], key=lambda r: str(r.get("timestamp", "")))
+            rel_hourly = float(rates[-1]["relativeFundingRate"])
+            pct8 = rel_hourly * 8.0 * 100.0
+            if abs(pct8) <= 0.5:
+                out[c["futures"]] = {"funding_8h_pct": pct8, "available": True}
         except Exception:
             continue
+    _FUND_CACHE.update(ts=time.time(), data=out)
+    if out:
+        log("INFO", "Funding 8h: " + ", ".join(f"{k.replace('PF_', '').replace('USD', '')} {v['funding_8h_pct']:+.4f}%" for k, v in out.items()))
+    else:
+        log("WARN", "Funding non disponibile: filtro funding saltato")
     return out
 
 
@@ -637,7 +773,7 @@ def fetch_macro_calendar():
 
 
 # ==============================================================================
-# 5. INDICATORI QUANTITATIVI E MICROSTRUTTURA
+# 5. INDICATORI QUANTITATIVI
 # ==============================================================================
 def calc_ema_series(values, period):
     if not values:
@@ -697,6 +833,19 @@ def calc_adx_series(candles, period=14):
     return calc_ema_series(dx, period)
 
 
+def calc_bbw_series(closes, period=20):
+    n = len(closes)
+    out = [0.0] * n
+    for k in range(period - 1, n):
+        w = closes[k - period + 1:k + 1]
+        m = sum(w) / period
+        sd = math.sqrt(sum((x - m) ** 2 for x in w) / period)
+        out[k] = 4.0 * sd / m if m > 0 else 0.0
+    for k in range(min(period - 1, n)):
+        out[k] = out[period - 1] if n >= period else 0.0
+    return out
+
+
 def calc_vwap_series(candles, window=24):
     out = []
     for i in range(len(candles)):
@@ -712,7 +861,7 @@ def calc_vwap_series(candles, window=24):
 
 
 def calc_efficiency_ratio(closes, period=10):
-    """Kaufman Efficiency Ratio (0 = rumore/chop, 1 = trend pulito)."""
+    """Kaufman Efficiency Ratio (0 = rumore/chop, 1 = trend direzionale pulito)."""
     out = [0.3] * len(closes)
     for i in range(period, len(closes)):
         change = abs(closes[i] - closes[i - period])
@@ -723,28 +872,23 @@ def calc_efficiency_ratio(closes, period=10):
 
 def prep_series(candles):
     c = [x["close"] for x in candles]
-    atr7 = calc_atr_series(candles, 7)
-    atr28 = calc_atr_series(candles, 28)
-    vol_ratio = [a7 / a28 if a28 > 0 else 1.0 for a7, a28 in zip(atr7, atr28)]
-    return {
-        "t": [x["time"] for x in candles], "o": [x["open"] for x in candles],
-        "c": c, "h": [x["high"] for x in candles], "l": [x["low"] for x in candles],
-        "v": [x["volume"] for x in candles],
-        "ema20": calc_ema_series(c, 20), "ema50": calc_ema_series(c, 50), "ema100": calc_ema_series(c, 100),
-        "atr": calc_atr_series(candles, 14), "rsi": calc_rsi_series(c, 14), "adx": calc_adx_series(candles, 14),
-        "vwap24": calc_vwap_series(candles, 24), "er": calc_efficiency_ratio(c, 10), "vol_ratio": vol_ratio,
-    }
+    t = [x["time"] for x in candles]
+    return {"t": t, "idx": {tt: k for k, tt in enumerate(t)}, "c": c, "h": [x["high"] for x in candles],
+            "l": [x["low"] for x in candles], "v": [x["volume"] for x in candles],
+            "ema20": calc_ema_series(c, 20), "ema50": calc_ema_series(c, 50), "ema100": calc_ema_series(c, 100),
+            "atr": calc_atr_series(candles, 14), "rsi": calc_rsi_series(c, 14), "adx": calc_adx_series(candles, 14),
+            "bbw": calc_bbw_series(c, 20), "vwap24": calc_vwap_series(candles, 24), "er": calc_efficiency_ratio(c, 10)}
 
 
 # ==============================================================================
-# 6. SETUP (4 pattern coerenti tra live e backtest) + 16 FEATURE NEURALI
+# 6. SETUP (5 pattern coerenti tra live e backtest) + 23 FEATURE ML
 # ==============================================================================
-SETUPS = ("breakout_24h", "flag_break", "reclaim_ma20", "squeeze_break")
+SETUPS = ("breakout_24h", "squeeze_break", "flag_break", "dip_bounce", "reclaim_ma20")
 
 
 def detect_setup(S, i, bt, price=None, vr=1.0, fresh=None):
     c, h, l = S["c"], S["h"], S["l"]
-    if i < 120 or (bt and i >= len(c)):
+    if i < 130 or (bt and i >= len(c)):
         return []
     j = i if bt else i - 1
     px = c[i] if bt else price
@@ -752,7 +896,7 @@ def detect_setup(S, i, bt, price=None, vr=1.0, fresh=None):
     if not px or atr <= 0:
         return []
     e20, e50, e100 = S["ema20"][j], S["ema50"][j], S["ema100"][j]
-    if not (e20 > e50 and px >= e100 * 0.995):      # filtro trend: niente long contro bear trend
+    if not (e20 > e50 and px > e100):
         return []
     if px / c[i - 25] - 1.0 > MAX_PUMP_24H_PCT / 100.0:
         return []
@@ -761,59 +905,74 @@ def detect_setup(S, i, bt, price=None, vr=1.0, fresh=None):
     def crossed(level):
         return (c[i - 1] <= level) if bt else bool(fresh and fresh(level))
 
+    def ext_ok(level, k=MAX_EXT_ATR):
+        return (px - level) / atr <= k
+
     out = []
-    # 1. Breakout 24h
     lvl = max(h[i - 24:i])
-    if px > lvl and crossed(lvl) and adx >= 16 and 48 <= rsi <= 76 and vr >= 1.1 and (px - lvl) / atr <= MAX_EXT_ATR:
+    if px > lvl and crossed(lvl) and adx >= SETUP_ADX_MIN and 50 <= rsi <= 75 and vr >= SETUP_VR_MIN and ext_ok(lvl):
         out.append(("breakout_24h", lvl))
 
-    # 2. Bull Flag Breakout
+    bbw = S["bbw"]
+    ref = sorted(bbw[i - 120:i])
+    if min(bbw[i - 6:i]) <= ref[len(ref) // 5]:
+        lv2 = max(h[i - 12:i])
+        if px > lv2 and crossed(lv2) and 48 <= rsi <= 78 and vr >= SETUP_VR_MIN and ext_ok(lv2):
+            out.append(("squeeze_break", lv2))
+
     pole = c[i - 7] / c[i - 17] - 1.0
     f_hi, f_lo = max(h[i - 6:i]), min(l[i - 6:i])
     if (pole >= 0.03 and (f_hi - f_lo) / c[i - 1] <= 0.03 and px > f_hi and crossed(f_hi)
-            and vr >= 1.1 and rsi <= 76 and (px - f_hi) / atr <= MAX_EXT_ATR):
+            and vr >= SETUP_VR_MIN and rsi <= 75 and ext_ok(f_hi)):
         out.append(("flag_break", f_hi))
 
-    # 3. Reclaim EMA20 dopo pullback
+    if min(S["rsi"][i - 6:i]) <= 38:
+        lv3 = max(h[i - 3:i])
+        if px > lv3 and crossed(lv3) and 40 <= rsi <= 62 and vr >= 0.8 * SETUP_VR_MIN and ext_ok(lv3, MAX_EXT_ATR + 0.2):
+            out.append(("dip_bounce", lv3))
+
     pulled = any(c[k] < S["ema20"][k] for k in range(i - 4, i))
-    if pulled and px > e20 and crossed(e20) and 40 <= rsi <= 68 and vr >= 0.95 and (px - e20) / atr <= 1.0:
+    if pulled and px > e20 and crossed(e20) and 40 <= rsi <= 65 and vr >= SETUP_VR_MIN and (px - e20) / atr <= 1.0:
         out.append(("reclaim_ma20", e20))
-
-    # 4. Volatility Squeeze Breakout (compressione ATR_7/ATR_28 + rottura box 12h)
-    sq_hi, sq_lo = max(h[i - 12:i]), min(l[i - 12:i])
-    compressed = S["vol_ratio"][j] <= 0.88 or (sq_hi - sq_lo) / c[i - 1] <= 0.032
-    if compressed and px > sq_hi and crossed(sq_hi) and vr >= 1.15 and 48 <= rsi <= 75 and (px - sq_hi) / atr <= MAX_EXT_ATR:
-        out.append(("squeeze_break", sq_hi))
-
     return out
 
 
-def make_features(S, i, bt, px, vr, setup, level):
+def btc_context(btc, t):
+    if not btc:
+        return 0.0, 0.5, 0.0
+    k = btc["idx"].get(t)
+    if k is None or k < 30:
+        return 0.0, 0.5, 0.0
+    return (btc["c"][k] / btc["c"][k - 24] - 1.0, 1.0 if btc["c"][k] > btc["ema50"][k] else 0.0,
+            btc["atr"][k] / btc["c"][k] * 100.0)
+
+
+def make_features(S, i, bt, px, vr, setup, level, btc=None):
+    """23 feature: momentum, volatilita', VWAP Z-score, Kaufman ER, BB rank, stagionalita', BTC, RS, setup one-hot."""
     j = i if bt else i - 1
     atr = max(S["atr"][j], 1e-12)
-    rng = max(S["h"][j] - S["l"][j], 1e-12)
-    return [
-        S["rsi"][j] / 100.0 - 0.5,
-        S["adx"][j] / 50.0,
-        min(vr, 4.0) / 4.0,
-        clamp((px - level) / atr, -2.0, 3.0),
-        atr / px * 100.0,
-        clamp(px / S["c"][i - 25] - 1.0, -0.3, 0.3) * 10.0,
-        clamp((S["ema20"][j] - S["ema50"][j]) / atr, -5.0, 5.0) / 5.0,
-        clamp((px - S["ema100"][j]) / atr, -5.0, 8.0) / 8.0,
-        clamp((px - S["vwap24"][j]) / atr, -5.0, 5.0) / 5.0,
-        S["er"][j],
-        clamp(S["vol_ratio"][j], 0.3, 2.5),
-        clamp((S["c"][j] - S["o"][j]) / rng, -1.0, 1.0),
-        1.0 if setup == SETUPS[0] else 0.0,
-        1.0 if setup == SETUPS[1] else 0.0,
-        1.0 if setup == SETUPS[2] else 0.0,
-        1.0 if setup == SETUPS[3] else 0.0,
-    ]
+    t = S["t"][j]
+    ang = 2.0 * math.pi * ((t // 3600) % 24) / 24.0
+    win = S["bbw"][max(0, j - 120):j + 1]
+    bb_rank = sum(1 for x in win if x <= S["bbw"][j]) / max(1, len(win))
+    atr_ratio = clamp(atr / max(sum(S["atr"][j - 120:j]) / 120.0, 1e-12), 0.0, 3.0) / 3.0
+    ret24 = px / S["c"][i - 25] - 1.0
+    b_ret, b_above, b_vol = btc_context(btc, t)
+    vwap_z = clamp((px - S["vwap24"][j]) / atr, -5.0, 5.0) / 5.0
+    f = [S["rsi"][j] / 100.0 - 0.5, S["adx"][j] / 50.0, min(vr, 4.0) / 4.0, (px - level) / atr,
+         atr / px * 100.0, clamp(ret24, -0.3, 0.3) * 10.0,
+         clamp((S["ema20"][j] - S["ema50"][j]) / atr, -5.0, 5.0) / 5.0,
+         clamp(px / S["c"][i - 120] - 1.0, -0.4, 0.4) * 5.0, bb_rank, atr_ratio,
+         vwap_z, S["er"][j],
+         math.sin(ang), math.cos(ang),
+         clamp(b_ret, -0.15, 0.15) * 10.0, b_above, b_vol,
+         clamp(ret24 - b_ret, -0.2, 0.2) * 10.0]
+    f += [1.0 if setup == s else 0.0 for s in SETUPS]
+    return f
 
 
 # ==============================================================================
-# 7. PIANO DI USCITA E SIZE (incluso Neural Confidence Sizing)
+# 7. PIANO DI USCITA E SIZE
 # ==============================================================================
 def build_plan(entry, atr, swing_low, target_r=None):
     tr = TARGET_R if target_r is None else target_r
@@ -828,7 +987,7 @@ def build_plan(entry, atr, swing_low, target_r=None):
     if risk_pct > MAX_STOP_PCT:
         plan.update(ok=False, reason=f"stop troppo lontano ({risk_pct:.2f}% > {MAX_STOP_PCT:.1f}%)")
     elif plan["rr_net"] < MIN_RR_NET:
-        plan.update(ok=False, reason=f"R:R netto {plan['rr_net']:.2f} < {MIN_RR_NET}")
+        plan.update(ok=False, reason=f"R:R netto {plan['rr_net']:.2f} < {MIN_RR_NET} (stop troppo stretto per i costi)")
     return plan
 
 
@@ -849,8 +1008,7 @@ def net_r(entry, exit_px, risk_pct):
 
 
 def size_position(capital_usdt, plan, risk_mult=1.0):
-    eff_risk_pct = clamp(RISK_PER_TRADE_PCT * risk_mult, 0.5 * RISK_PER_TRADE_PCT, 1.35 * RISK_PER_TRADE_PCT)
-    max_loss = capital_usdt * eff_risk_pct / 100.0
+    max_loss = capital_usdt * RISK_PER_TRADE_PCT * risk_mult / 100.0
     pos = max_loss / ((plan["risk_pct"] + COST_RT) / 100.0)
     usable = capital_usdt * (1.0 - CASH_BUFFER_PCT / 100.0)
     limit = "perdita massima"
@@ -860,7 +1018,7 @@ def size_position(capital_usdt, plan, risk_mult=1.0):
 
 
 # ==============================================================================
-# 8. TIME MACHINE + MONTE CARLO + QUANT NEURAL ENSEMBLE (MLP AdamW + Logit)
+# 8. TIME MACHINE: backtest + Monte Carlo + ML Ensemble (LogReg + HistGB + MLP)
 # ==============================================================================
 def simulate_trade(S, i, plan, H):
     c, h, l = S["c"], S["h"], S["l"]
@@ -881,10 +1039,10 @@ def simulate_trade(S, i, plan, H):
     return net_r(entry, exit_px, plan["risk_pct"])
 
 
-def backtest_coin(code, S, target_r=None):
+def backtest_coin(code, S, target_r=None, btc=None):
     n, H = len(S["c"]), MAX_HOLD_H
     events, last = [], -10 ** 9
-    for i in range(120, n - H - 1):
+    for i in range(130, n - H - 1):
         if i - last < H:
             continue
         base = sum(S["v"][i - 24:i]) / 24.0
@@ -897,163 +1055,93 @@ def backtest_coin(code, S, target_r=None):
         if not plan["ok"]:
             continue
         events.append({"code": code, "setup": setup, "t": S["t"][i], "R": simulate_trade(S, i, plan, H),
-                       "feat": make_features(S, i, True, S["c"][i], vr, setup, level)})
+                       "feat": make_features(S, i, True, S["c"][i], vr, setup, level, btc)})
         last = i
     return events
 
 
-def _auc(scores, labels):
-    pos = [s for s, y in zip(scores, labels) if y]
-    neg = [s for s, y in zip(scores, labels) if not y]
-    if not pos or not neg:
-        return 0.5
-    return sum((p > q) + 0.5 * (p == q) for p in pos for q in neg) / (len(pos) * len(neg))
+def _models():
+    return [make_pipeline(StandardScaler(), LogisticRegression(C=0.3, max_iter=500)),
+            HistGradientBoostingClassifier(max_depth=3, learning_rate=0.05, max_iter=120, l2_regularization=1.0,
+                                           min_samples_leaf=20, random_state=7),
+            make_pipeline(StandardScaler(), MLPClassifier(hidden_layer_sizes=(16, 8), alpha=0.01, max_iter=400,
+                                                          early_stopping=True, validation_fraction=0.15, random_state=7))]
 
 
-def _norm_stats(X):
-    d = len(X[0])
-    mu = [sum(r[k] for r in X) / len(X) for k in range(d)]
-    sd = [(statistics.pstdev([r[k] for r in X]) or 1.0) for k in range(d)]
-    return mu, sd
+def _fit_ens(X, y):
+    if len(set(y.tolist())) < 2:
+        return []
+    ms = []
+    for m in _models():
+        try:
+            m.fit(X, y)
+            ms.append(m)
+        except Exception as e:
+            log("WARN", f"Modello ML non addestrato: {e}")
+    return ms
 
 
-def _fit_logit(X, y, l2=0.15, epochs=220, lr=0.15):
-    d, n = len(X[0]), len(X)
-    w, b = [0.0] * d, 0.0
-    for _ in range(epochs):
-        gw, gb = [0.0] * d, 0.0
-        for xi, yi in zip(X, y):
-            e = sigmoid(sum(wj * xj for wj, xj in zip(w, xi)) + b) - yi
-            for k in range(d):
-                gw[k] += e * xi[k]
-            gb += e
-        for k in range(d):
-            w[k] -= lr * (gw[k] / n + l2 * w[k])
-        b -= lr * gb / n
-    return w, b
+def _predict_ens(ms, X):
+    return np.mean([m.predict_proba(X)[:, 1] for m in ms], axis=0)
 
 
-def _fit_mlp_adamw(X, y, hidden=10, epochs=130, lr=0.02, wd=0.06, seed=42):
-    """Rete Neurale MLP compatta (Input -> Hidden SiLU -> Output Sigmoid) addestrata con AdamW."""
-    rng = random.Random(seed)
-    d, n = len(X[0]), len(X)
-    scale1 = math.sqrt(2.0 / d)
-    scale2 = math.sqrt(1.0 / hidden)
-    W1 = [[rng.gauss(0.0, scale1) for _ in range(d)] for _ in range(hidden)]
-    b1 = [0.0] * hidden
-    W2 = [rng.gauss(0.0, scale2) for _ in range(hidden)]
-    b2 = 0.0
-
-    mW1, vW1 = [[0.0] * d for _ in range(hidden)], [[0.0] * d for _ in range(hidden)]
-    mb1, vb1 = [0.0] * hidden, [0.0] * hidden
-    mW2, vW2 = [0.0] * hidden, [0.0] * hidden
-    mb2, vb2 = 0.0, 0.0
-    beta1, beta2, eps = 0.9, 0.999, 1e-8
-
-    for t in range(1, epochs + 1):
-        gW1 = [[0.0] * d for _ in range(hidden)]
-        gb1 = [0.0] * hidden
-        gW2 = [0.0] * hidden
-        gb2 = 0.0
-        for xi, yi in zip(X, y):
-            h_act, h_grad = [0.0] * hidden, [0.0] * hidden
-            for h in range(hidden):
-                z = sum(W1[h][k] * xi[k] for k in range(d)) + b1[h]
-                h_act[h], h_grad[h] = silu(z)
-            pred = sigmoid(sum(W2[h] * h_act[h] for h in range(hidden)) + b2)
-            err = pred - yi
-            gb2 += err
-            for h in range(hidden):
-                gW2[h] += err * h_act[h]
-                dh = err * W2[h] * h_grad[h]
-                gb1[h] += dh
-                for k in range(d):
-                    gW1[h][k] += dh * xi[k]
-
-        b1_corr = 1.0 - beta1 ** t
-        b2_corr = 1.0 - beta2 ** t
-        mb2 = beta1 * mb2 + (1 - beta1) * (gb2 / n)
-        vb2 = beta2 * vb2 + (1 - beta2) * ((gb2 / n) ** 2)
-        b2 -= lr * (mb2 / b1_corr) / (math.sqrt(vb2 / b2_corr) + eps)
-
-        for h in range(hidden):
-            g2 = gW2[h] / n
-            mW2[h] = beta1 * mW2[h] + (1 - beta1) * g2
-            vW2[h] = beta2 * vW2[h] + (1 - beta2) * (g2 * g2)
-            W2[h] = W2[h] * (1.0 - lr * wd) - lr * (mW2[h] / b1_corr) / (math.sqrt(vW2[h] / b2_corr) + eps)
-
-            gb = gb1[h] / n
-            mb1[h] = beta1 * mb1[h] + (1 - beta1) * gb
-            vb1[h] = beta2 * vb1[h] + (1 - beta2) * (gb * gb)
-            b1[h] -= lr * (mb1[h] / b1_corr) / (math.sqrt(vb1[h] / b2_corr) + eps)
-
-            for k in range(d):
-                g1 = gW1[h][k] / n
-                mW1[h][k] = beta1 * mW1[h][k] + (1 - beta1) * g1
-                vW1[h][k] = beta2 * vW1[h][k] + (1 - beta2) * (g1 * g1)
-                W1[h][k] = W1[h][k] * (1.0 - lr * wd) - lr * (mW1[h][k] / b1_corr) / (math.sqrt(vW1[h][k] / b2_corr) + eps)
-
-    return {"W1": W1, "b1": b1, "W2": W2, "b2": b2}
-
-
-def _score_ensemble(model, feat):
-    z = [(f - m) / s for f, m, s in zip(feat, model["mu"], model["sd"])]
-    p_logit = sigmoid(sum(w * x for w, x in zip(model["w"], z)) + model["b"])
-    mlp = model["mlp"]
-    h_act = [silu(sum(w * x for w, x in zip(row, z)) + b)[0] for row, b in zip(mlp["W1"], mlp["b1"])]
-    p_mlp = sigmoid(sum(w * h for w, h in zip(mlp["W2"], h_act)) + mlp["b2"])
-    return 0.65 * p_mlp + 0.35 * p_logit
+def _score(ml, feat):
+    return float(_predict_ens(ml["models"], np.array([feat], dtype=float))[0])
 
 
 def train_edge_model(events):
-    """
-    Ensemble Neurale (MLP AdamW + Logit) validato walk-forward con embargo:
-    addestra sul 65% piu' vecchio, testa sul 35% piu' recente.
-    Si attiva SOLO se fuori campione migliora l'ordinamento dei trade.
-    """
+    res = {"active": False, "why": "", "n": len(events)}
+    if not ML_ENABLED:
+        res["why"] = "disattivato (ML_ENABLED=false)"
+        return res
+    if not ML_OK:
+        res["why"] = "scikit-learn/numpy non installati"
+        return res
     ev = sorted(events, key=lambda e: e["t"])
     n = len(ev)
-    if n < 50:
-        return {"active": False, "why": f"eventi insufficienti ({n} < 50)"}
-    split = int(n * 0.65)
-    t_split = ev[split]["t"]
-    train = [e for e in ev[:split] if e["t"] < t_split - MAX_HOLD_H * 3600]
-    test = ev[split:]
-    if len(train) < 25 or len(test) < 15:
-        return {"active": False, "why": "campione train/test insufficiente"}
-
-    mu, sd = _norm_stats([e["feat"] for e in train])
-    Xtr = [[(f - m) / s for f, m, s in zip(e["feat"], mu, sd)] for e in train]
-    ytr = [1.0 if e["R"] > 0 else 0.0 for e in train]
-    w, b = _fit_logit(Xtr, ytr)
-    mlp = _fit_mlp_adamw(Xtr, ytr)
-    m1 = {"w": w, "b": b, "mlp": mlp, "mu": mu, "sd": sd}
-
-    sc = [_score_ensemble(m1, e["feat"]) for e in test]
-    rs = [e["R"] for e in test]
-    auc = _auc(sc, [r > 0 for r in rs])
-    order = sorted(range(len(test)), key=lambda k: sc[k], reverse=True)
-    top_r = sum(rs[k] for k in order[:len(order) // 2]) / max(1, len(order) // 2)
-    all_r = sum(rs) / len(rs)
-
-    res = {"active": False, "auc": auc, "top_r": top_r, "all_r": all_r, "n_test": len(test), "n": n}
-    if auc >= 0.54 and top_r >= all_r + 0.03:
-        mu, sd = _norm_stats([e["feat"] for e in ev])
-        Xa = [[(f - m) / s for f, m, s in zip(e["feat"], mu, sd)] for e in ev]
-        ya = [1.0 if e["R"] > 0 else 0.0 for e in ev]
-        w, b = _fit_logit(Xa, ya)
-        mlp = _fit_mlp_adamw(Xa, ya)
-        m2 = {"w": w, "b": b, "mlp": mlp, "mu": mu, "sd": sd}
-        scores_all = sorted(_score_ensemble(m2, e["feat"]) for e in ev)
-        thr = scores_all[int(len(scores_all) * 0.45)]   # filtra il 45% peggiore senza strozzare i segnali
-        res.update(active=True, thr=thr, **m2)
-    else:
-        res["why"] = f"non validato OOS (AUC {auc:.2f}, top {top_r:+.2f}R vs tutti {all_r:+.2f}R)"
+    if n < ML_MIN_EVENTS:
+        res["why"] = f"eventi insufficienti ({n} < {ML_MIN_EVENTS})"
+        return res
+    X = np.array([e["feat"] for e in ev], dtype=float)
+    R = np.array([e["R"] for e in ev], dtype=float)
+    T = np.array([e["t"] for e in ev], dtype=float)
+    y = (R > 0).astype(int)
+    bounds = [int(n * 0.4), int(n * 0.6), int(n * 0.8), n]
+    oos_s, oos_r, folds_ok = [], [], 0
+    for f in range(3):
+        a, b = bounds[f], bounds[f + 1]
+        tr = np.where(T[:a] < T[a] - MAX_HOLD_H * 3600)[0]
+        if len(tr) < 60 or b - a < 15:
+            continue
+        ms = _fit_ens(X[tr], y[tr])
+        if not ms:
+            continue
+        sc = _predict_ens(ms, X[a:b])
+        if len(set(y[a:b].tolist())) == 2 and roc_auc_score(y[a:b], sc) > 0.5:
+            folds_ok += 1
+        oos_s += sc.tolist()
+        oos_r += R[a:b].tolist()
+    if len(oos_s) < 60:
+        res["why"] = "campione fuori campione insufficiente"
+        return res
+    oos_s, oos_r = np.array(oos_s), np.array(oos_r)
+    auc = float(roc_auc_score(oos_r > 0, oos_s)) if len(set((oos_r > 0).tolist())) == 2 else 0.5
+    thr = float(np.quantile(oos_s, ML_SKIP_QUANTILE))
+    kept = oos_r[oos_s >= thr]
+    all_r = float(oos_r.mean())
+    kept_r = float(kept.mean()) if len(kept) else all_r
+    res.update(auc=auc, kept_r=kept_r, all_r=all_r, n_oos=len(oos_r), folds_ok=folds_ok, thr=thr)
+    if auc >= ML_MIN_AUC and kept_r >= all_r + 0.05 and folds_ok >= 2:
+        ms = _fit_ens(X, y)
+        if ms:
+            res.update(active=True, models=ms)
+            return res
+    res["why"] = f"non validato fuori campione (AUC {auc:.2f}, tenuti {kept_r:+.2f}R vs tutti {all_r:+.2f}R, {folds_ok}/3 blocchi)"
     return res
 
 
 def monte_carlo_plan(c15, plan, paths=None, seed=19):
-    """Bootstrap a blocchi (drift zero) su MAX_HOLD_H con gestione reale di BE e trailing."""
+    """Bootstrap a blocchi dei rendimenti 15m (senza drift) con gestione realistica di BE e trailing."""
     paths = paths or MC_PATHS
     closes = [x["close"] for x in c15[-600:]]
     rets = [math.log(closes[k] / closes[k - 1]) for k in range(1, len(closes)) if closes[k - 1] > 0]
@@ -1092,8 +1180,8 @@ def monte_carlo_plan(c15, plan, paths=None, seed=19):
             "avg_r": rsum / paths, "seed": seed, "paths": paths}
 
 
-_EDGE = {"key": None, "codes": 0, "n": 0, "by_setup": {}, "by_coin": {}, "all": summarize([]),
-         "ml": {"active": False, "why": "n/d"}}
+_EDGE = {"key": None, "codes": 0, "n": 0, "by_setup": {}, "by_coin": {}, "recent_by_setup": {}, "all": summarize([]),
+         "days": 0, "ml": {"active": False, "why": "n/d"}}
 
 
 def refresh_edge(series_by_code):
@@ -1101,24 +1189,30 @@ def refresh_edge(series_by_code):
     key = max(S["t"][-1] for S in series_by_code.values())
     if _EDGE["key"] == key and _EDGE["codes"] == len(series_by_code):
         return _EDGE
+    btc = series_by_code.get("BTC")
     events = []
     for code, S in series_by_code.items():
-        events += backtest_coin(code, S)
-    by_setup, by_coin = {}, {}
+        events += backtest_coin(code, S, btc=btc)
+    by_setup, by_coin, rec = {}, {}, {}
+    cut = time.time() - RECENT_DAYS * 86400
     for e in events:
         by_setup.setdefault(e["setup"], []).append(e["R"])
         by_coin.setdefault((e["code"], e["setup"]), []).append(e["R"])
-    _EDGE = {"key": key, "codes": len(series_by_code), "n": len(events),
+        if e["t"] >= cut:
+            rec.setdefault(e["setup"], []).append(e["R"])
+    days = int(min(len(S["c"]) for S in series_by_code.values()) / 24)
+    _EDGE = {"key": key, "codes": len(series_by_code), "n": len(events), "days": days,
              "by_setup": {k: summarize(v) for k, v in by_setup.items()},
              "by_coin": {k: summarize(v) for k, v in by_coin.items()},
+             "recent_by_setup": {k: summarize(v) for k, v in rec.items()},
              "all": summarize([e["R"] for e in events]), "ml": train_edge_model(events)}
-    log("INFO", f"Time Machine aggiornata: {len(events)} eventi, expectancy {_EDGE['all']['exp_r']:+.2f}R, "
-                f"Neural Ensemble {'ATTIVO' if _EDGE['ml'].get('active') else 'spento'}")
+    log("INFO", f"Time Machine aggiornata: {len(events)} eventi su ~{days}g, expectancy {_EDGE['all']['exp_r']:+.2f}R, "
+                f"ML {'ATTIVO' if _EDGE['ml'].get('active') else 'spento (' + str(_EDGE['ml'].get('why', ''))[:60] + ')'}")
     return _EDGE
 
 
 # ==============================================================================
-# 9. VALUTAZIONE COIN + REGIME + GATE DI RISCHIO
+# 9. VALUTAZIONE COIN + GATE DI RISCHIO
 # ==============================================================================
 def blank_eval(cfg, price, **kw):
     ev = {"coin": cfg, "code": cfg["code"], "price": price, "ref_close_15m": price, "setup": None, "level": 0.0,
@@ -1126,82 +1220,57 @@ def blank_eval(cfg, price, **kw):
           "adx": 20.0, "vr": 1.0, "er": 0.3, "vwap_z": 0.0, "ret24": 0.0, "ret_1h": 0.0, "ret_4h": 0.0,
           "ema50_1h": price, "trend_ok": False, "near_level": 0.0, "dist_atr": 0.0,
           "ob": {"imbalance": 0.0, "spread_bps": 5.0, "fetched": False},
-          "fut": {"funding_8h_pct": 0.0, "available": False}, "c15_recent": [], "score": 0, "tm": None,
-          "neural_p": None, "verdict": {"ok": False, "blocks": ["dati non disponibili"]}, "fallback": True}
+          "fut": {"funding_8h_pct": 0.0, "available": False}, "c15_recent": [], "score": 0, "tm": None, "ml_p": None,
+          "verdict": {"ok": False, "blocks": ["dati non disponibili"]}, "fallback": True}
     ev.update(kw)
     return ev
 
 
 def evaluate_coin(coin_cfg, futures_map):
     code, pair = coin_cfg["code"], coin_cfg["kraken"]
-    c1h = drop_unfinished(fetch_kraken_ohlc(pair, 60), 3600)
-    c15 = drop_unfinished(fetch_kraken_ohlc(pair, 15), 900)
-    if len(c1h) < 150 or len(c15) < 40:
+    c1h = get_hourly_history(coin_cfg)
+    c15 = get_15m(coin_cfg)
+    if len(c1h) < 150 or len(c15) < 100:
         return None
     S, n = prep_series(c1h), len(c1h)
     cl15 = [x["close"] for x in c15]
     ref = cl15[-1]
     px = LIVE_PX.get(coin_cfg["pionex"])
     price = px if (px and abs(px / ref - 1.0) < 0.03) else ref
+    v15 = [x["volume"] for x in c15]
+    base = sum(v15[-100:-4]) / 24.0
+    vr = sum(v15[-4:]) / base if base > 0 else 1.0
 
-    # Volume Ratio allineato 1h/1h: ultimi 4 blocchi 15m chiusi (= 1h) vs media oraria 24h
-    v_curr_1h = sum(x["volume"] for x in c15[-4:]) if len(c15) >= 4 else S["v"][n - 1]
-    base_1h = sum(S["v"][n - 25:n - 1]) / 24.0
-    vr = v_curr_1h / base_1h if base_1h > 0 else 1.0
-
-    # Finestra 3 barre 15m (45m) cosi' i cron/rescan non perdono il segnale al volo
+    # Finestra 3 barre 15m (45 min): protegge da ritardi di cron/rescan senza inseguire (filtrato da MAX_EXT_ATR)
     def fresh(lv):
         return cl15[-1] > lv and any(x <= lv for x in cl15[-4:-1])
 
     cands = detect_setup(S, n, False, price=price, vr=vr, fresh=fresh)
     setup, level = cands[0] if cands else (None, 0.0)
     atr = S["atr"][n - 1]
-    plan = build_plan(price, atr, min(S["l"][n - 3:n]), TARGET_R * BTC_REGIME.get("target_mult", 1.0))
+    plan = build_plan(price, atr, min(S["l"][n - 3:n]))
     near = max(S["h"][n - 24:n])
-    ev = blank_eval(
-        coin_cfg, price, ref_close_15m=ref, setup=setup, level=level, plan=plan, atr=atr,
-        rsi_1h=S["rsi"][n - 1], rsi_15m=calc_rsi_series(cl15, 14)[-1], adx=S["adx"][n - 1], vr=vr,
-        er=S["er"][n - 1], vwap_z=(price - S["vwap24"][n - 1]) / atr if atr > 0 else 0.0,
-        ret24=price / S["c"][n - 25] - 1.0, ret_1h=price / cl15[-5] - 1.0, ret_4h=price / cl15[-17] - 1.0,
-        ema50_1h=S["ema50"][n - 1], near_level=near, dist_atr=(near - price) / atr if atr > 0 else 0.0,
-        trend_ok=bool(S["ema20"][n - 1] > S["ema50"][n - 1] and price >= S["ema100"][n - 1] * 0.995),
-        fut=futures_map.get(coin_cfg["futures"], {"funding_8h_pct": 0.0, "available": False}),
-        c15_recent=[{"time": x["time"], "high": x["high"], "low": x["low"]} for x in c15[-48:]],
-        fallback=False,
-    )
-    ev["_S"], ev["_c15"] = S, c15
+    ev = blank_eval(coin_cfg, price, ref_close_15m=ref, setup=setup, level=level, plan=plan, atr=atr,
+                    rsi_1h=S["rsi"][n - 1], rsi_15m=calc_rsi_series(cl15, 14)[-1], adx=S["adx"][n - 1], vr=vr,
+                    er=S["er"][n - 1], vwap_z=(price - S["vwap24"][n - 1]) / atr if atr > 0 else 0.0,
+                    ret24=price / S["c"][n - 25] - 1.0, ret_1h=price / cl15[-5] - 1.0, ret_4h=price / cl15[-17] - 1.0,
+                    ema50_1h=S["ema50"][n - 1], near_level=near, dist_atr=(near - price) / atr if atr > 0 else 0.0,
+                    trend_ok=bool(S["ema20"][n - 1] > S["ema50"][n - 1] and price > S["ema100"][n - 1]),
+                    fut=futures_map.get(coin_cfg["futures"], {"funding_8h_pct": 0.0, "available": False}),
+                    c15_recent=[{"time": x["time"], "high": x["high"], "low": x["low"]} for x in c15[-48:]],
+                    fallback=False)
+    ev["_S"], ev["_c15"], ev["_n"] = S, c15, n
     if setup:
-        ev["feat"] = make_features(S, n, False, price, vr, setup, level)
         ev["ob"] = fetch_kraken_orderbook(pair)
     return ev
 
 
 def update_btc_regime(ev):
-    """Classificatore multi-regime adattivo."""
-    dump = (ev["rsi_15m"] < 30 and ev["ret_1h"] < -0.012) or ev["ret_4h"] < -0.032
-    weak = ev["price"] < ev["ema50_1h"] and ev["ret24"] < -0.022
-    bull = ev["trend_ok"] and ev["adx"] >= 20 and ev["er"] >= 0.30
-    chop = ev["adx"] < 17 or ev["er"] < 0.22
-    if dump:
-        BTC_REGIME.update({"state": "DUMP", "regime_tag": "CRASH_DUMP", "allow_alts": False,
-                           "allow_strong_alts_only": False, "target_mult": 0.85,
-                           "label": "🚨 CRASH_DUMP: altcoin bloccate"})
-    elif weak:
-        BTC_REGIME.update({"state": "WEAK", "regime_tag": "RISK_OFF_WEAK", "allow_alts": False,
-                           "allow_strong_alts_only": True, "target_mult": 0.90,
-                           "label": "🟠 RISK_OFF: solo BTC o alt RS >= +3%"})
-    elif bull:
-        BTC_REGIME.update({"state": "OK", "regime_tag": "TREND_BULL", "allow_alts": True,
-                           "allow_strong_alts_only": False, "target_mult": 1.05,
-                           "label": "🟢 TREND_BULL: piena operativita'"})
-    elif chop:
-        BTC_REGIME.update({"state": "OK", "regime_tag": "RANGE_CHOP", "allow_alts": True,
-                           "allow_strong_alts_only": False, "target_mult": 0.90,
-                           "label": "🟡 RANGE_CHOP: target leggermente prudente"})
-    else:
-        BTC_REGIME.update({"state": "OK", "regime_tag": "RECOVERY", "allow_alts": True,
-                           "allow_strong_alts_only": False, "target_mult": 1.0,
-                           "label": "🔵 RECOVERY: mercato in stabilizzazione"})
+    dump = (ev["rsi_15m"] < 32 and ev["ret_1h"] < -0.011) or ev["ret_4h"] < -0.03
+    weak = ev["price"] < ev["ema50_1h"] and ev["ret24"] < -0.02
+    BTC_REGIME.update({"state": "DUMP" if dump else ("WEAK" if weak else "OK"), "allow_alts": not (dump or weak),
+                       "label": "🚨 BTC in dump: altcoin bloccate" if dump else
+                                ("🟠 BTC debole: altcoin bloccate" if weak else "🟢 BTC stabile")})
 
 
 def scan_all_coins(coins, futures_map):
@@ -1225,18 +1294,19 @@ def scan_all_coins(coins, futures_map):
                     results[fut[f]] = r
             except Exception as e:
                 log("WARN", f"Errore analisi {fut[f]}: {e}")
+    save_hist_cache()
     return results
 
 
 def compute_score(ev, edge):
-    trend = (10.0 if ev["trend_ok"] else 0.0) + min(ev["adx"], 40.0) / 40.0 * 12.0 + clamp(ev["er"], 0.0, 0.7) / 0.7 * 8.0
+    trend = (10.0 if ev["trend_ok"] else 0.0) + min(ev["adx"], 40.0) / 40.0 * 12.0 + clamp(ev.get("er", 0.3), 0.0, 0.7) / 0.7 * 5.0
     rs = clamp(ev.get("rs_vs_btc", 0.0) / 0.03, -1.0, 1.0) * 10.0 + 10.0
     mom = rs + (5.0 if 45 <= ev["rsi_1h"] <= 68 else 0.0)
     vol = min(ev["vr"], 3.0) / 3.0 * 14.0
     ob = ev["ob"]
     micro = clamp((ob["imbalance"] + 0.2) / 0.4, 0.0, 1.0) * 7.0 + (3.0 if ob["spread_bps"] <= 10 else 0.0)
     st = edge["by_setup"].get(ev["setup"] or "", None)
-    e = clamp(st["exp_r"] / 0.35, 0.0, 1.0) * 21.0 if st and st["n"] >= 6 else 0.0
+    e = clamp(st["exp_r"] / 0.4, 0.0, 1.0) * 24.0 if st and st["n"] >= MIN_SETUP_N else 0.0
     return int(round(trend + mom + vol + micro + e))
 
 
@@ -1264,40 +1334,41 @@ def trading_mode(state):
 def evaluate_gates(ev, edge, state, capital_usdt, fng_val, high_soon):
     b = []
     code, setup, plan, now = ev["code"], ev["setup"], ev["plan"], datetime.now(timezone.utc)
-    out = {"ok": False, "blocks": b, "size_usdt": 0.0, "max_loss_usdt": 0.0, "limit": "", "risk_mult": 1.0}
+    usable_usdt = capital_usdt * (1.0 - CASH_BUFFER_PCT / 100.0)
+    out = {"ok": False, "blocks": b, "size_usdt": 0.0, "usable_usdt": usable_usdt,
+           "max_loss_usdt": 0.0, "limit": "", "risk_mult": 1.0}
     if not setup:
         b.append("nessun setup attivo")
         return out
     stats, now_ts = state["stats"], int(now.timestamp())
 
-    # --- edge (Time Machine con fallback intelligente per setup rari) ---
-    st = edge["by_setup"].get(setup)
-    pool_all = edge["all"]
-    if st and st["n"] >= MIN_POOL_N:
-        if st["exp_r"] < MIN_EXP_R or st["exp_r"] - 0.35 * st["se"] < -0.10:
-            b.append(f"edge storico insufficiente ({setup}: {st['exp_r']:+.2f}R su {st['n']} casi)")
-    elif st and st["n"] >= 6 and pool_all["n"] >= MIN_POOL_N:
-        if st["exp_r"] < -0.05 or pool_all["exp_r"] < MIN_EXP_R:
-            b.append(f"edge aggregato/parziale negativo ({setup}: {st['exp_r']:+.2f}R, pool {pool_all['exp_r']:+.2f}R)")
+    # --- edge (Time Machine): pool + shrinkage bayesiano + regime recente ---
+    pool, st = edge["all"], edge["by_setup"].get(setup)
+    if pool["n"] < MIN_POOL_N:
+        b.append(f"edge non verificabile (pool {pool['n']} casi < {MIN_POOL_N}, storico ~{edge.get('days', 0)}g)")
+    elif not st or st["n"] < MIN_SETUP_N:
+        b.append(f"edge non verificabile ({setup}: {st['n'] if st else 0} casi < {MIN_SETUP_N})")
     else:
-        b.append(f"edge non verificabile ({setup}: {st['n'] if st else 0} casi)")
+        shrunk = (st["n"] * st["exp_r"] + SHRINK_K * pool["exp_r"]) / (st["n"] + SHRINK_K)
+        if shrunk < MIN_EXP_R:
+            b.append(f"edge storico insufficiente ({setup}: {st['exp_r']:+.2f}R su {st['n']} casi, stima {shrunk:+.2f}R)")
+        rc = edge["recent_by_setup"].get(setup)
+        if rc and rc["n"] >= RECENT_MIN_N and rc["exp_r"] < RECENT_MIN_EXP_R:
+            b.append(f"regime recente sfavorevole ({setup}: {rc['exp_r']:+.2f}R su {rc['n']} casi negli ultimi {RECENT_DAYS}g)")
 
     own = edge["by_coin"].get((code, setup))
-    if own and own["n"] >= 6 and own["exp_r"] < -0.35:
+    if own and own["n"] >= 8 and own["exp_r"] < -0.30:
         b.append(f"{code} storicamente negativa su {setup} ({own['exp_r']:+.2f}R su {own['n']})")
-
-    # --- Neural Ensemble Walk-Forward + Confidence Sizing ---
     ml = edge["ml"]
-    risk_mult = 1.0
-    if ml.get("active") and ev["feat"]:
-        p = _score_ensemble(ml, ev["feat"])
-        ev["neural_p"] = p
+    if ml.get("active") and ev.get("feat"):
+        p = _score(ml, ev["feat"])
+        ev["ml_p"] = p
         if p < ml["thr"]:
-            b.append(f"filtro Neurale sfavorevole ({p:.2f} < {ml['thr']:.2f})")
-        else:
-            risk_mult = clamp(0.85 + (p - ml["thr"]) * 1.4, 0.80, 1.30)
+            b.append(f"filtro ML sfavorevole ({p:.2f} < {ml['thr']:.2f})")
+        elif RISK_SCALE_BY_ML:
+            out["risk_mult"] = clamp(0.8 + (p - ml["thr"]) * 2.0, 0.8, 1.2)
 
-    # --- piano + Monte Carlo ---
+    # --- piano + simulazione Monte Carlo ---
     if not plan["ok"]:
         b.append(plan["reason"])
     else:
@@ -1306,51 +1377,66 @@ def evaluate_gates(ev, edge, state, capital_usdt, fng_val, high_soon):
         if tm and tm["p_target"] < MC_MIN_P_TARGET:
             b.append(f"target poco raggiungibile in {MAX_HOLD_H}h (MC {tm['p_target'] * 100:.0f}% < {MC_MIN_P_TARGET * 100:.0f}%)")
 
-    # --- contesto e regime ---
+    # --- contesto ---
     if code != "BTC" and not BTC_REGIME["allow_alts"]:
-        if BTC_REGIME.get("allow_strong_alts_only") and ev.get("rs_vs_btc", 0.0) >= 0.03:
-            risk_mult *= 0.80
-        else:
-            b.append(f"BTC regime {BTC_REGIME['regime_tag']}")
+        b.append("BTC debole/in dump")
     if high_soon:
         b.append("evento macro USD High-impact (-30m/+2h)")
-    if ev["fut"]["funding_8h_pct"] > FUNDING_MAX_PCT:
-        b.append(f"funding troppo alto ({ev['fut']['funding_8h_pct']:+.3f}%)")
+    if ev["fut"].get("available") and ev["fut"]["funding_8h_pct"] > FUNDING_MAX_PCT:
+        b.append(f"funding troppo alto ({ev['fut']['funding_8h_pct']:+.3f}%): mercato affollato")
     if ev["ob"].get("fetched") and ev["ob"]["spread_bps"] > MAX_SPREAD_BPS:
         b.append(f"spread alto ({ev['ob']['spread_bps']:.1f} bps)")
-    if ev["ref_close_15m"] > 0 and ev["price"] / ev["ref_close_15m"] - 1.0 > 0.015:
-        b.append("spike improvviso sopra chiusura 15m")
+    if ev["ref_close_15m"] > 0 and ev["price"] / ev["ref_close_15m"] - 1.0 > 0.012:
+        b.append("spike improvviso sopra la chiusura 15m")
     if ev["score"] < ENTRY_SCORE_MIN:
         b.append(f"punteggio {ev['score']} < {ENTRY_SCORE_MIN}")
 
-    # --- limiti di rischio ---
+    # --- limiti ---
     if not (ENTRY_START_UTC <= now.hour < ENTRY_END_UTC):
         b.append(f"fuori finestra {ENTRY_START_UTC:02d}-{ENTRY_END_UTC:02d} UTC")
     if stats.get("paused_until_ts", 0) > now_ts:
-        b.append("pausa per edge in calo")
+        b.append("pausa per edge in calo (ultimi trade negativi)")
     if stats["daily_trades"] >= MAX_TRADES_PER_DAY:
         b.append(f"max {MAX_TRADES_PER_DAY} trade/giorno")
     if stats["consec_losses"] >= MAX_CONSEC_LOSSES:
         b.append(f"{MAX_CONSEC_LOSSES} stop consecutivi")
     if stats["daily_pnl_pct"] <= -DAILY_MAX_LOSS_PCT:
-        b.append(f"circuit breaker ({stats['daily_pnl_pct']:+.2f}%)")
+        b.append(f"circuit breaker giornaliero ({stats['daily_pnl_pct']:+.2f}%)")
     if stats["last_close_ts"] and now_ts - stats["last_close_ts"] < MIN_MINUTES_BETWEEN_TRADES * 60:
-        b.append("cooldown dopo chiusura")
+        b.append("cooldown dopo ultima chiusura")
     if stats["last_loss_ts"] and now_ts - stats["last_loss_ts"] < COOLDOWN_AFTER_LOSS_MIN * 60:
         b.append("cooldown dopo perdita")
     cl = stats.get("coin_last_close", {}).get(code, 0)
     if cl and now_ts - cl < SAME_COIN_COOLDOWN_H * 3600:
-        b.append(f"{code} in cooldown ({SAME_COIN_COOLDOWN_H:.0f}h)")
+        b.append(f"{code} chiusa da meno di {SAME_COIN_COOLDOWN_H:.0f}h")
 
+    # --- size ---
     if plan["ok"]:
-        pos, max_loss, limit = size_position(capital_usdt, plan, risk_mult)
-        out.update(size_usdt=pos, max_loss_usdt=max_loss, limit=limit, risk_mult=risk_mult)
+        pos, max_loss, limit = size_position(capital_usdt, plan, out["risk_mult"])
+        out.update(size_usdt=pos, max_loss_usdt=max_loss, limit=limit)
         if pos < MIN_ORDER_USDT:
-            b.append(f"ordine {pos:.2f} USDT < minimo {MIN_ORDER_USDT}")
+            b.append(f"ordine {pos:.2f} USDT sotto il minimo {MIN_ORDER_USDT}")
         if stats["daily_risk_usdt"] + max_loss > capital_usdt * DAILY_MAX_LOSS_PCT / 100.0:
-            b.append("rischio giornaliero cumulato oltre limite")
+            b.append("rischio giornaliero cumulato oltre il limite")
     out["ok"] = not b
     return out
+
+
+def _funnel(stats, ev):
+    fun = stats.setdefault("funnel", {})
+
+    def bump(k):
+        fun[k] = fun.get(k, 0) + 1
+
+    bump("valutazioni")
+    if not ev["setup"]:
+        bump("nessun_setup")
+        return
+    bump("setup_attivo")
+    for blk in ev["verdict"]["blocks"]:
+        bump("BLOCCO: " + re.sub(r"[-+]?\d+(\.\d+)?%?", "#", blk)[:45])
+    if ev["verdict"]["ok"]:
+        bump("passati")
 
 
 def finalize_signals(all_evals, state, eur_usd, macro_events, fng_val):
@@ -1360,62 +1446,56 @@ def finalize_signals(all_evals, state, eur_usd, macro_events, fng_val):
     roll_daily(state["stats"])
     high_soon = any(e["impact"] == "High" and -0.5 <= e["diff_hours"] <= 2.0 for e in macro_events)
     btc_ret = all_evals["BTC"]["ret24"] if "BTC" in all_evals else 0.0
+    btc_S = all_evals["BTC"].get("_S") if "BTC" in all_evals else None
     for code, ev in all_evals.items():
         if ev.get("fallback"):
             continue
         ev["rs_vs_btc"] = 0.0 if code == "BTC" else ev["ret24"] - btc_ret
         ev["score"] = compute_score(ev, edge)
+        if ev["setup"]:
+            ev["feat"] = make_features(ev["_S"], ev["_n"], False, ev["price"], ev["vr"], ev["setup"], ev["level"], btc_S)
         ev["verdict"] = evaluate_gates(ev, edge, state, capital, fng_val, high_soon)
+        _funnel(state["stats"], ev)
     ranked = sorted(all_evals.values(), key=lambda e: (e["verdict"]["ok"], bool(e["setup"]), e["score"]), reverse=True)
     return ranked, edge, high_soon
 
 
 # ==============================================================================
-# 10. AI SUPERVISOR CLAUDE (Veto + Risk Multiplier + Tesi)
+# 10. REVISORE CLAUDE (opzionale: veto + risk_mult) + APPROVAZIONE
 # ==============================================================================
 def claude_review(ev, edge, macro_events, fng_val):
     if not (CLAUDE_REVIEW and ANTHROPIC_KEY):
         return {"veto": False, "risk_mult": 1.0, "reason": "revisore disattivato"}
     p = ev["plan"]
-    facts = {
-        "coin": ev["code"], "setup": ev["setup"], "prezzo": ev["price"], "livello": ev["level"],
-        "stop": round(p["stop"], 4), "target": round(p["target"], 4), "rischio_pct": round(p["risk_pct"], 2),
-        "rr_netto": round(p["rr_net"], 2), "rsi_1h": round(ev["rsi_1h"], 1), "adx_1h": round(ev["adx"], 1),
-        "efficiency_ratio": round(ev["er"], 2), "vwap_z_atr": round(ev["vwap_z"], 2),
-        "prob_neurale": round(ev["neural_p"], 3) if ev.get("neural_p") is not None else None,
-        "mc_p_target": round((ev.get("tm") or {}).get("p_target", 0), 3),
-        "ritorno_24h_pct": round(ev["ret24"] * 100, 2), "rs_vs_btc_pct": round(ev.get("rs_vs_btc", 0) * 100, 2),
-        "funding_8h_pct": ev["fut"]["funding_8h_pct"], "fear_greed": fng_val,
-        "regime_btc": BTC_REGIME["regime_tag"],
-        "storico_setup": {k: round(v, 3) if isinstance(v, float) else v
-                          for k, v in (edge["by_setup"].get(ev["setup"]) or {}).items()},
-        "eventi_macro": [{"titolo": m["title"], "ore": round(m["diff_hours"], 1)} for m in macro_events[:6]],
-    }
-    system = (
-        "Sei un Chief Risk Officer AI per un bot crypto spot long-only. Ricevi un ticket gia' approvato dai filtri quant "
-        "e neurali. Puoi mettere veto=true solo per rischi concreti (macro imminente, spike esteso, VWAP estremo, "
-        "divergenza di regime). Puoi anche modulare la size con risk_mult tra 0.6 e 1.15. Nel dubbio veto=false, risk_mult=1.0. "
-        "Rispondi SOLO con JSON: {\"veto\": true|false, \"risk_mult\": 1.0, \"reason\": \"max 25 parole\"}."
-    )
+    facts = {"coin": ev["code"], "setup": ev["setup"], "prezzo": ev["price"], "livello": ev["level"],
+             "stop": p["stop"], "target": p["target"], "rischio_pct": round(p["risk_pct"], 2),
+             "rr_netto": round(p["rr_net"], 2), "rsi_1h": round(ev["rsi_1h"], 1), "adx_1h": round(ev["adx"], 1),
+             "efficiency_ratio": round(ev.get("er", 0.3), 2), "vwap_z_atr": round(ev.get("vwap_z", 0.0), 2),
+             "ritorno_24h_pct": round(ev["ret24"] * 100, 2), "forza_vs_btc_pct": round(ev.get("rs_vs_btc", 0) * 100, 2),
+             "funding_8h_pct": ev["fut"]["funding_8h_pct"], "fear_greed": fng_val, "regime_btc": BTC_REGIME["state"],
+             "ml_probabilita": None if ev.get("ml_p") is None else round(ev["ml_p"], 3),
+             "storico_setup": {k: round(v, 3) if isinstance(v, float) else v
+                               for k, v in (edge["by_setup"].get(ev["setup"]) or {}).items()},
+             "eventi_macro": [{"titolo": m["title"], "ore": round(m["diff_hours"], 1)} for m in macro_events[:6]]}
+    system = ("Sei un risk reviewer per un bot di trading crypto spot long-only. Ricevi i numeri di UN ticket gia' "
+              "approvato dalle regole. Puoi mettere veto=true solo per rischi concreti visibili nei dati (evento macro "
+              "imminente, setup gia' esteso rispetto al VWAP, chop estremo, incoerenza tra stop e volatilita', regime sfavorevole). "
+              "Puoi anche modulare leggermente la size con risk_mult tra 0.6 e 1.15. Nel dubbio veto=false, risk_mult=1.0. "
+              "Rispondi SOLO con JSON: {\"veto\": true|false, \"risk_mult\": 1.0, \"reason\": \"max 25 parole\"}.")
     try:
-        r = SESSION.post(
-            "https://api.anthropic.com/v1/messages",
-            headers={"x-api-key": ANTHROPIC_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json"},
-            json={"model": CLAUDE_MODEL, "max_tokens": 220, "system": system,
-                  "messages": [{"role": "user", "content": json.dumps(facts, ensure_ascii=False)}]},
-            timeout=20,
-        )
+        r = SESSION.post("https://api.anthropic.com/v1/messages",
+                         headers={"x-api-key": ANTHROPIC_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json"},
+                         json={"model": CLAUDE_MODEL, "max_tokens": 220, "system": system,
+                               "messages": [{"role": "user", "content": json.dumps(facts, ensure_ascii=False)}]}, timeout=20)
         r.raise_for_status()
         txt = "".join(b.get("text", "") for b in r.json().get("content", []) if b.get("type") == "text")
         m = re.search(r"\{.*\}", txt, re.DOTALL)
         j = json.loads(m.group(0) if m else txt)
-        return {
-            "veto": bool(j.get("veto")),
-            "risk_mult": clamp(float(j.get("risk_mult", 1.0) or 1.0), 0.6, 1.15),
-            "reason": str(j.get("reason", ""))[:200],
-        }
+        return {"veto": bool(j.get("veto")),
+                "risk_mult": clamp(float(j.get("risk_mult", 1.0) or 1.0), 0.6, 1.15),
+                "reason": str(j.get("reason", ""))[:200]}
     except Exception as e:
-        log("WARN", f"AI Supervisor non disponibile (proseguo con regole quant): {redact(e)}")
+        log("WARN", f"Revisore Claude non disponibile (si prosegue con le sole regole): {redact(e)}")
         return {"veto": False, "risk_mult": 1.0, "reason": "revisore non raggiungibile"}
 
 
@@ -1448,25 +1528,22 @@ def _execute_open(state, ev, usdt, now_str, now_ts, mode, label="EDGE"):
         stop = entry * (1 - MIN_STOP_PCT / 100.0)
     one_r = entry - stop
     max_loss = buy["invested_usdt"] * (one_r / entry * 100.0 + COST_RT) / 100.0
-    pos.update({
-        "is_open": True, "coin_code": code, "symbol": cfg["pionex"], "setup": ev.get("setup") or label.lower(),
-        "level": ev.get("level", 0.0), "entry_price": entry, "amount_coin": buy["amount_coin"],
-        "invested_usdt": buy["invested_usdt"], "max_loss_usdt": max_loss, "sl_price": stop, "tp_price": tgt,
-        "initial_sl": stop, "one_r": one_r, "highest_price": entry, "lowest_price": entry,
-        "be_locked": False, "trail_on": False, "time_warned": False, "opened_at": now_str, "opened_ts": now_ts,
-        "last_check_ts": now_ts, "close_fail_count": 0, "mode": buy["mode"], "order_id": buy.get("order_id", "SIM"),
-        "enter_tag": f"{STRAT_VER}_{ev.get('setup') or label.lower()}",
-    })
+    pos.update({"is_open": True, "coin_code": code, "symbol": cfg["pionex"], "setup": ev.get("setup") or label.lower(),
+                "level": ev.get("level", 0.0), "entry_price": entry, "amount_coin": buy["amount_coin"],
+                "invested_usdt": buy["invested_usdt"], "max_loss_usdt": max_loss, "sl_price": stop, "tp_price": tgt,
+                "initial_sl": stop, "one_r": one_r, "highest_price": entry, "lowest_price": entry,
+                "be_locked": False, "trail_on": False, "time_warned": False, "opened_at": now_str, "opened_ts": now_ts,
+                "last_check_ts": now_ts, "close_fail_count": 0, "mode": buy["mode"], "order_id": buy.get("order_id", "SIM"),
+                "enter_tag": f"{STRAT_VER}_{ev.get('setup') or label.lower()}"})
     stats["daily_trades"] += 1
     stats["daily_risk_usdt"] = stats.get("daily_risk_usdt", 0.0) + max_loss
     stats["last_action"] = f"APERTO LONG {code} a {fmt_price(entry)} il {now_str} ({label})"
     save_state(state)
-    return status(
-        "OPENED_NOW", f"🚀 NUOVA POSIZIONE {label} SU {code} ({buy['mode']})",
-        f"{ev.get('setup') or label}: {buy['amount_coin']} {code} ({buy['invested_usdt']:.2f} USDT) a {fmt_price(entry)} | "
-        f"SL {fmt_price(stop)} | TP {fmt_price(tgt)} ({plan['target_r']:.1f}R) | perdita max {max_loss:.2f} USDT | {buy['msg']}",
-        alerts=[f"🔔 Piano fissato: SL {fmt_price(stop)} · TP {fmt_price(tgt)} · time-stop {MAX_HOLD_H}h"],
-    )
+    mlp = f" | ML {ev['ml_p']:.2f}" if ev.get("ml_p") is not None else ""
+    return status("OPENED_NOW", f"🚀 NUOVA POSIZIONE {label} SU {code} ({buy['mode']})",
+                  f"{ev.get('setup') or label}: {buy['amount_coin']} {code} ({buy['invested_usdt']:.2f} USDT) a {fmt_price(entry)} | "
+                  f"SL {fmt_price(stop)} | TP {fmt_price(tgt)} ({plan['target_r']:.1f}R) | perdita max {max_loss:.2f} USDT{mlp} | {buy['msg']}",
+                  alerts=[f"🔔 Piano fissato prima dell'ingresso: SL {fmt_price(stop)} · TP {fmt_price(tgt)} · time-stop {MAX_HOLD_H}h"])
 
 
 def _finalize_close(state, code, cfg, price, reason, close, alerts, now_str, now_ts, capital_usdt):
@@ -1492,12 +1569,10 @@ def _finalize_close(state, code, cfg, price, reason, close, alerts, now_str, now
     stats["last_close_ts"] = now_ts
     stats.setdefault("coin_last_close", {})[code] = now_ts
     stats["last_action"] = f"CHIUSO {code} ({r_mult:+.2f}R) il {now_str}"
-    state["history"].insert(0, {
-        "coin": code, "setup": pos.get("setup", ""), "entry": entry, "exit": close.get("exit_price", price),
-        "pnl_pct": round(pct, 2), "pnl_usdt": round(pnl, 2), "r_mult": round(r_mult, 3),
-        "mfe_r": round(mfe, 2), "mae_r": round(mae, 2), "reason": reason, "closed_at": now_str,
-        "closed_ts": now_ts, "mode": pos.get("mode", "SIMULATION"), "ver": STRAT_VER,
-    })
+    state["history"].insert(0, {"coin": code, "setup": pos.get("setup", ""), "entry": entry, "exit": close.get("exit_price", price),
+                                "pnl_pct": round(pct, 2), "pnl_usdt": round(pnl, 2), "r_mult": round(r_mult, 3),
+                                "mfe_r": round(mfe, 2), "mae_r": round(mae, 2), "reason": reason, "closed_at": now_str,
+                                "closed_ts": now_ts, "mode": pos.get("mode", "SIMULATION"), "ver": STRAT_VER})
     state["history"] = state["history"][:200]
     recent = [h["r_mult"] for h in state["history"] if h.get("ver") == STRAT_VER and "r_mult" in h][:10]
     extra = []
@@ -1549,7 +1624,7 @@ def _manage_open_position(state, all_evals, capital_usdt, now_str, now_ts):
     hours = max(0.0, (now_ts - opened_ts) / 3600.0)
 
     new_sl = manage_stop(entry, sl, one_r, highest)
-    if code != "BTC" and BTC_REGIME["regime_tag"] == "CRASH_DUMP" and cur_r >= 0.25:
+    if code != "BTC" and not BTC_REGIME["allow_alts"] and cur_r >= 0.35:
         new_sl = max(new_sl, entry * (1.0 + COST_RT / 100.0))
     if new_sl > sl:
         if (highest - entry) / one_r >= BE_AT_R and not pos["be_locked"]:
@@ -1601,8 +1676,7 @@ def _try_open_position(state, ranked, edge, macro_events, fng_val, now_str, now_
     mode, why = trading_mode(state)
     if state.get("pending"):
         p = state["pending"]
-        return status("WAITING", f"🕓 TICKET {p['code']} IN ATTESA DI APPROVAZIONE",
-                      f"Scade tra {(p['expires_ts'] - time.time()) / 60:.0f} min.")
+        return status("WAITING", f"🕓 TICKET {p['code']} IN ATTESA DI APPROVAZIONE", f"Scade tra {(p['expires_ts'] - time.time()) / 60:.0f} min.")
     cands = [e for e in ranked if e["verdict"]["ok"]]
     if not cands:
         save_state(state)
@@ -1617,15 +1691,13 @@ def _try_open_position(state, ranked, edge, macro_events, fng_val, now_str, now_
     if rev["veto"]:
         save_state(state)
         return status("WAITING", f"🤖 VETO CLAUDE su {best['code']}", rev["reason"])
-    ai_mult = rev.get("risk_mult", 1.0)
-    usdt = round(clamp(best["verdict"]["size_usdt"] * ai_mult, MIN_ORDER_USDT, INVEST_EUR * 2.0), 2)
+    cap_usable = best["verdict"].get("usable_usdt", best["verdict"]["size_usdt"])
+    usdt = round(clamp(best["verdict"]["size_usdt"] * rev.get("risk_mult", 1.0), MIN_ORDER_USDT, cap_usable), 2)
     if REQUIRE_APPROVAL and mode == "LIVE_PIONEX":
         pid = f"{random.randint(0, 0xFFFFFF):06X}"
-        state["pending"] = {
-            "id": pid, "code": best["code"], "usdt": usdt, "price": best["price"], "plan": best["plan"],
-            "setup": best["setup"], "level": best["level"], "created_ts": now_ts,
-            "expires_ts": now_ts + PENDING_TTL_MIN * 60,
-        }
+        state["pending"] = {"id": pid, "code": best["code"], "usdt": usdt, "price": best["price"], "plan": best["plan"],
+                            "setup": best["setup"], "level": best["level"], "created_ts": now_ts,
+                            "expires_ts": now_ts + PENDING_TTL_MIN * 60}
         save_state(state)
         p = best["plan"]
         return status("PENDING_APPROVAL", f"🎫 TICKET #{pid}: COMPRA {best['code']}?",
@@ -1708,7 +1780,7 @@ def run_manual_command(state, all_evals, eur_usd, command, coin, usdt_req):
         plan = ev["plan"]
         if "stop" not in plan:
             return noop("Piano non calcolabile (dati insufficienti).")
-        size, _, _ = size_position(capital, plan)
+        size, max_loss, _ = size_position(capital, plan)
         usdt = min(usdt_req if usdt_req > 0 else size, capital * (1 - CASH_BUFFER_PCT / 100.0))
         if usdt < MIN_ORDER_USDT:
             return noop(f"Importo {usdt:.2f} USDT sotto il minimo ({MIN_ORDER_USDT}).")
@@ -1869,11 +1941,9 @@ def build_telegram_report(ranked, state, ts, ctx):
     mode, why = trading_mode(state)
     pr = strategy_proof(state)
     esc = html_lib.escape
-    lines = [
-        f"🤖 <b>PIONEX NEURAL BOT {STRAT_VER}</b> ({'🟢 LIVE' if mode == 'LIVE_PIONEX' else '🧪 SIMULAZIONE'})",
-        f"🌍 {esc(ctx['session'])} | {esc(BTC_REGIME['label'])} | F&G {ctx['fng']}", "",
-        f"<b>{esc(ts['headline'])}</b>", esc(ts["detail"]),
-    ]
+    lines = [f"🤖 <b>PIONEX EDGE BOT {STRAT_VER}</b> ({'🟢 LIVE' if mode == 'LIVE_PIONEX' else '🧪 SIMULAZIONE'})",
+             f"🌍 {esc(ctx['session'])} | {esc(BTC_REGIME['label'])} | F&G {ctx['fng']}", "",
+             f"<b>{esc(ts['headline'])}</b>", esc(ts["detail"])]
     lines += [f"• {esc(a)}" for a in ts.get("alerts_fired", [])]
     if pos["is_open"]:
         lines += ["", f"📌 <b>{pos['coin_code']}</b> ({esc(pos['setup'])}) entry <code>{fmt_price(pos['entry_price'])}</code> "
@@ -1882,15 +1952,23 @@ def build_telegram_report(ranked, state, ts, ctx):
     for i, e in enumerate(ranked[:5], 1):
         flag = "🟢" if e["verdict"]["ok"] else ("🟡" if e["setup"] else "⚪")
         what = e["setup"] or f"a {e['dist_atr']:.1f} ATR dal max 24h"
-        nn = f" · NN {e['neural_p']:.2f}" if e.get("neural_p") is not None else ""
-        lines.append(f"{i}. {flag} <b>{e['code']}</b> {fmt_price(e['price'])} · score {e['score']}{nn} · {esc(what)}")
+        lines.append(f"{i}. {flag} <b>{e['code']}</b> {fmt_price(e['price'])} · score {e['score']} · {esc(what)}")
     if ranked and ranked[0]["setup"] and not ranked[0]["verdict"]["ok"]:
         lines.append("   ↳ " + esc("; ".join(ranked[0]["verdict"]["blocks"][:3])))
     ml = edge["ml"]
-    lines += ["", f"🧠 <b>Edge + Neural Ensemble</b> ({edge['n']} eventi, {edge['all']['exp_r']:+.2f}R) · MLP+Logit: " +
-              (f"ATTIVO (AUC {ml.get('auc', 0):.2f})" if ml.get("active") else "standby")]
+    mltxt = (f"attivo (AUC {ml['auc']:.2f}, tenuti {ml['kept_r']:+.2f}R vs {ml['all_r']:+.2f}R)" if ml.get("active")
+             else "spento: " + str(ml.get("why", ""))[:70])
+    lines += ["", f"🧪 <b>Edge storico</b> ({edge['n']} eventi su ~{edge.get('days', 0)}g, {edge['all']['exp_r']:+.2f}R medio)",
+              f"🧠 ML: {esc(mltxt)}"]
     for k, v in edge["by_setup"].items():
-        lines.append(f"   {k}: {v['exp_r']:+.2f}R · WR {v['wr']:.0f}% · n={v['n']}")
+        rc = edge["recent_by_setup"].get(k)
+        rtxt = f" · {RECENT_DAYS}g {rc['exp_r']:+.2f}R (n={rc['n']})" if rc else ""
+        lines.append(f"   {k}: {v['exp_r']:+.2f}R · WR {v['wr']:.0f}% · n={v['n']}{rtxt}")
+    fun = stats.get("funnel", {})
+    if fun:
+        blk = sorted(((k, v) for k, v in fun.items() if k.startswith("BLOCCO")), key=lambda x: -x[1])[:3]
+        lines.append(f"🔬 Oggi: {fun.get('valutazioni', 0)} valutazioni · {fun.get('setup_attivo', 0)} setup · {fun.get('passati', 0)} passati")
+        lines += [f"   {esc(k.replace('BLOCCO: ', ''))} ×{v}" for k, v in blk]
     wr = stats["wins"] / stats["total_trades"] * 100.0 if stats["total_trades"] else 0.0
     lines += ["", f"📊 {stats['total_trades']} trade ({stats['wins']}V/{stats['losses']}P, WR {wr:.0f}%) · tot {stats['total_pnl_usdt']:+.2f}$ · oggi {stats['daily_pnl_pct']:+.2f}%",
               f"🎓 Prova {STRAT_VER}: {pr['n']}/{PROOF_MIN_TRADES} trade · {pr['exp_r']:+.2f}R · PF {pr['pf']:.2f}"
@@ -1913,30 +1991,24 @@ def should_send_telegram_now(state, ts, ranked, force=False):
 def write_snapshot(ranked, state, ts, ctx):
     mode, why = trading_mode(state)
     edge = ctx["edge"]
-    snap = {
-        "version": STRAT_VER, "updated_ts": int(time.time()), "session": ctx["session"], "mode": mode, "mode_reason": why,
-        "btc_regime": BTC_REGIME, "fng": ctx["fng"], "status": ts, "proof": strategy_proof(state),
-        "position": state["position"], "stats": state["stats"], "history": state["history"][:40],
-        "pending": state.get("pending"), "macro": [{k: m[k] for k in ("title", "impact", "ts")} for m in ctx["macro"]],
-        "edge": {
-            "n": edge["n"], "all": edge["all"], "by_setup": edge["by_setup"],
-            "by_coin": {f"{k[0]}|{k[1]}": v for k, v in edge["by_coin"].items()},
-            "ml": {k: v for k, v in edge["ml"].items() if k in ("active", "auc", "top_r", "all_r", "n_test", "why")},
-        },
-        "limits": {
-            "risk_per_trade_pct": RISK_PER_TRADE_PCT, "daily_max_loss_pct": DAILY_MAX_LOSS_PCT,
-            "max_trades": MAX_TRADES_PER_DAY, "target_r": TARGET_R, "max_hold_h": MAX_HOLD_H, "cost_rt_pct": COST_RT,
-        },
-        "coins": [{
-            "code": e["code"], "name": e["coin"]["name"], "price": e["price"], "score": e["score"], "setup": e["setup"],
-            "level": e["level"], "near_level": e["near_level"], "dist_atr": round(e["dist_atr"], 2),
-            "rsi_1h": round(e["rsi_1h"], 1), "adx": round(e["adx"], 1), "er": round(e.get("er", 0.0), 2),
-            "vwap_z": round(e.get("vwap_z", 0.0), 2), "neural_p": round(e["neural_p"], 3) if e.get("neural_p") is not None else None,
-            "ret24_pct": round(e["ret24"] * 100, 2), "plan": {k: v for k, v in e["plan"].items()},
-            "ok": e["verdict"]["ok"], "blocks": e["verdict"]["blocks"],
-            "size_usdt": round(e["verdict"].get("size_usdt", 0.0), 2), "tm": e.get("tm"),
-        } for e in ranked],
-    }
+    snap = {"version": STRAT_VER, "updated_ts": int(time.time()), "session": ctx["session"], "mode": mode, "mode_reason": why,
+            "btc_regime": BTC_REGIME, "fng": ctx["fng"], "status": ts, "proof": strategy_proof(state),
+            "position": state["position"], "stats": state["stats"], "history": state["history"][:40],
+            "pending": state.get("pending"), "macro": [{k: m[k] for k in ("title", "impact", "ts")} for m in ctx["macro"]],
+            "edge": {"n": edge["n"], "days": edge.get("days", 0), "all": edge["all"], "by_setup": edge["by_setup"],
+                     "recent_by_setup": edge.get("recent_by_setup", {}),
+                     "by_coin": {f"{k[0]}|{k[1]}": v for k, v in edge["by_coin"].items()},
+                     "ml": {k: v for k, v in edge["ml"].items()
+                            if k in ("active", "auc", "kept_r", "all_r", "n_oos", "folds_ok", "thr", "why", "n")}},
+            "limits": {"risk_per_trade_pct": RISK_PER_TRADE_PCT, "daily_max_loss_pct": DAILY_MAX_LOSS_PCT,
+                       "max_trades": MAX_TRADES_PER_DAY, "target_r": TARGET_R, "max_hold_h": MAX_HOLD_H, "cost_rt_pct": COST_RT},
+            "coins": [{"code": e["code"], "name": e["coin"]["name"], "price": e["price"], "score": e["score"], "setup": e["setup"],
+                       "level": e["level"], "near_level": e["near_level"], "dist_atr": round(e["dist_atr"], 2),
+                       "rsi_1h": round(e["rsi_1h"], 1), "adx": round(e["adx"], 1), "er": round(e.get("er", 0.3), 2),
+                       "vwap_z": round(e.get("vwap_z", 0.0), 2), "ret24_pct": round(e["ret24"] * 100, 2),
+                       "plan": {k: v for k, v in e["plan"].items()}, "ok": e["verdict"]["ok"], "blocks": e["verdict"]["blocks"],
+                       "size_usdt": round(e["verdict"].get("size_usdt", 0.0), 2), "tm": e.get("tm"),
+                       "ml_p": None if e.get("ml_p") is None else round(e["ml_p"], 3)} for e in ranked]}
     try:
         with open(SNAPSHOT_FILE, "w", encoding="utf-8") as f:
             json.dump(snap, f, ensure_ascii=False, default=str)
@@ -1973,7 +2045,7 @@ def run_full_cycle(state, manual_override=None, force_telegram=False):
         cfg = COIN_MAP.get(pos["coin_code"], COINS[0])
         all_evals[cfg["code"]] = blank_eval(cfg, LIVE_PX.get(cfg["pionex"]) or pos["entry_price"])
     if not all_evals:
-        log("ERROR", "Nessuna coin analizzata (API Kraken non raggiungibili).")
+        log("ERROR", "Nessuna coin analizzata (API dati non raggiungibili).")
         return None
     ranked, edge, high_soon = finalize_signals(all_evals, state, eur_usd, macro, fng_val)
     expire_pending(state)
@@ -1986,6 +2058,7 @@ def run_full_cycle(state, manual_override=None, force_telegram=False):
         ts = manage_autonomous_trading(state, ranked, all_evals, edge, eur_usd, macro, fng_val)
     ctx = {"ranked": ranked, "all_evals": all_evals, "eur_usd": eur_usd, "ts": ts, "fng": fng_val,
            "session": session_label(), "macro": macro, "edge": edge}
+    save_state(state)
     write_snapshot(ranked, state, ts, ctx)
     if should_send_telegram_now(state, ts, ranked, force_telegram):
         send_telegram_message(build_telegram_report(ranked, state, ts, ctx), build_telegram_inline_keyboard(ranked, state))
@@ -2045,41 +2118,57 @@ def run_continuous_guardian(state, ctx):
 
 
 def run_backtest_cli():
+    load_hist_cache()
     series = {}
     for cfg in COINS:
-        c = drop_unfinished(fetch_kraken_ohlc(cfg["kraken"], 60), 3600)
+        c = get_hourly_history(cfg)
         if len(c) >= 150:
             series[cfg["code"]] = prep_series(c)
+    save_hist_cache()
     if not series:
-        print("Nessun dato scaricato (Kraken non raggiungibile).")
+        print("Nessun dato scaricato (Binance/Kraken non raggiungibili).")
         return
-    print(f"\nBACKTEST {STRAT_VER} (Neural Ensemble + 4 Setup): {len(series)} coin, ~{min(len(s['c']) for s in series.values()) / 24:.0f} giorni di candele 1h")
-    print(f"Costi inclusi: fee {FEE_SIDE}%/lato + slippage {SLIP_SIDE}%/lato | time-stop {MAX_HOLD_H}h | BE {BE_AT_R}R\n")
+    days = min(len(s["c"]) for s in series.values()) / 24
+    btc = series.get("BTC")
+    print(f"\nBACKTEST {STRAT_VER}: {len(series)} coin, ~{days:.0f} giorni di candele 1h")
+    print(f"Costi: fee {FEE_SIDE}%/lato + slip {SLIP_SIDE}%/lato | time-stop {MAX_HOLD_H}h | BE {BE_AT_R}R\n")
     for tr in (1.5, 2.0, 2.5, 3.0):
-        ev = [e for code, S in series.items() for e in backtest_coin(code, S, tr)]
+        ev = [e for code, S in series.items() for e in backtest_coin(code, S, tr, btc)]
         tot = summarize([e["R"] for e in ev])
-        print(f"TARGET {tr:.1f}R -> {tot['n']:3d} trade | expectancy {tot['exp_r']:+.3f}R (±{tot['se']:.2f}) | WR {tot['wr']:4.1f}% | PF {tot['pf']:.2f}")
+        print(f"TARGET {tr:.1f}R -> {tot['n']:4d} trade | expectancy {tot['exp_r']:+.3f}R (±{tot['se']:.2f}) | WR {tot['wr']:4.1f}% | PF {tot['pf']:.2f}")
         for s in SETUPS:
             x = summarize([e["R"] for e in ev if e["setup"] == s])
             if x["n"]:
-                print(f"     {s:14s} n={x['n']:3d}  {x['exp_r']:+.3f}R  WR {x['wr']:4.1f}%  PF {x['pf']:.2f}")
-    ev = [e for code, S in series.items() for e in backtest_coin(code, S)]
+                print(f"     {s:13s} n={x['n']:4d}  {x['exp_r']:+.3f}R  WR {x['wr']:4.1f}%  PF {x['pf']:.2f}")
+    ev = [e for code, S in series.items() for e in backtest_coin(code, S, None, btc)]
     print(f"\nPer coin (TARGET {TARGET_R}R):")
     for code in series:
         x = summarize([e["R"] for e in ev if e["code"] == code])
-        print(f"   {code:5s} n={x['n']:3d}  {x['exp_r']:+.3f}R  WR {x['wr']:4.1f}%")
+        print(f"   {code:5s} n={x['n']:4d}  {x['exp_r']:+.3f}R  WR {x['wr']:4.1f}%")
+    cut = time.time() - RECENT_DAYS * 86400
+    rec = [e["R"] for e in ev if e["t"] >= cut]
+    x = summarize(rec)
+    print(f"\nUltimi {RECENT_DAYS} giorni: n={x['n']}  {x['exp_r']:+.3f}R  WR {x['wr']:4.1f}%")
+    print(f"Frequenza segnali: ~{len(ev) / max(days / 7, 1):.1f} a settimana su {len(series)} coin")
     ml = train_edge_model(ev)
-    print(f"\nNeural Ensemble (MLP AdamW + Logit) walk-forward: {'ATTIVO' if ml.get('active') else 'NON validato'} "
-          f"(AUC {ml.get('auc', 0):.2f}, top 50% {ml.get('top_r', 0):+.2f}R vs tutti {ml.get('all_r', 0):+.2f}R, n_test {ml.get('n_test', 0)})")
+    if ml.get("auc") is not None:
+        print(f"\nFiltro ML walk-forward (23 feature): {'ATTIVO' if ml.get('active') else 'NON validato'} "
+              f"(AUC {ml['auc']:.2f}, tenuti {ml['kept_r']:+.2f}R vs tutti {ml['all_r']:+.2f}R, "
+              f"{ml['folds_ok']}/3 blocchi, n_oos {ml['n_oos']})")
+    else:
+        print(f"\nFiltro ML: spento ({ml.get('why')})")
+    print("\nATTENZIONE: anche 12 mesi sono pochi regimi di mercato. Usa sempre la prova in simulazione prima del live.")
 
 
 def main():
     if len(sys.argv) > 1 and sys.argv[1].lower() == "backtest":
         run_backtest_cli()
         return
+    load_hist_cache()
     state = load_state()
     mode, why = trading_mode(state)
-    log("INFO", f"Avvio Pionex Neural Bot {STRAT_VER} | evento {GITHUB_EVENT_NAME} | modo {mode} ({why}) | approvazione {REQUIRE_APPROVAL} | AI review {CLAUDE_REVIEW}")
+    log("INFO", f"Avvio Pionex Edge Bot {STRAT_VER} | evento {GITHUB_EVENT_NAME} | modo {mode} ({why}) | "
+                f"approvazione {REQUIRE_APPROVAL} | Claude review {CLAUDE_REVIEW} | ML {'on' if ML_OK and ML_ENABLED else 'off'}")
     manual = None
     force = GITHUB_EVENT_NAME == "workflow_dispatch"
     if MANUAL_COMMAND in ("close", "sell_all", "open", "status", "approve", "deny"):
