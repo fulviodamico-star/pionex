@@ -297,14 +297,14 @@
       "XRP": 1794917999
     },
     "last_tg_update_id": 990621661,
-    "last_report_ts": 1795162139,
+    "last_report_ts": 1795164108,
     "claude_last_call_ts": 0,
     "claude_last_verdict": {},
     "daily_risk_usdt": 0.0,
     "paused_until_ts": 0,
     "funnel": {
-      "valutazioni": 1100,
-      "nessun_setup": 1100
+      "valutazioni": 1110,
+      "nessun_setup": 1110
     },
     "funnel_yesterday": {
       "valutazioni": 1880,
