@@ -277,7 +277,7 @@
     "losses": 10,
     "total_pnl_pct": -4.56,
     "total_pnl_usdt": -2.42,
-    "daily_date": "2026-11-20",
+    "daily_date": "2026-11-21",
     "daily_pnl_pct": 0.0,
     "daily_trades": 0,
     "last_action": "CHIUSO SOL (-1.11%) il 18/11 11:07 UTC",
@@ -303,18 +303,12 @@
     "daily_risk_usdt": 0.0,
     "paused_until_ts": 0,
     "funnel": {
-      "valutazioni": 3000,
-      "nessun_setup": 3000
+      "valutazioni": 10,
+      "nessun_setup": 10
     },
     "funnel_yesterday": {
-      "valutazioni": 1880,
-      "nessun_setup": 1863,
-      "setup_attivo": 17,
-      "BLOCCO: edge storico insufficiente (breakout_#h: #R s": 10,
-      "BLOCCO: target poco raggiungibile in #h (MC # < #)": 17,
-      "BLOCCO: edge storico insufficiente (reclaim_ma#: #R s": 7,
-      "BLOCCO: regime recente sfavorevole (reclaim_ma#: #R s": 7,
-      "BLOCCO: XRP storicamente negativa su reclaim_ma# (#R ": 3
+      "valutazioni": 3000,
+      "nessun_setup": 3000
     }
   },
   "pending": null,
